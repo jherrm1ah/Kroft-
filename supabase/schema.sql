@@ -58,3 +58,43 @@ create trigger kv_store_set_updated_at
   before update on public.kv_store
   for each row
   execute function public.kv_store_set_updated_at();
+
+-- Stores OAuth tokens for third-party integrations (Google/Gmail/Calendar today).
+-- Deliberately has NO policies granting the anon/authenticated roles any access at all —
+-- RLS is enabled with an empty policy set, which means "no access" by default in Postgres.
+-- Access token contents (which could be used to impersonate the user against Google's API)
+-- must never be readable from the browser via the publishable key; every read/write here
+-- goes through Vercel serverless functions using the service_role key, which bypasses RLS
+-- by design and is never exposed to the client. Client code only ever learns a yes/no
+-- connected status via api/google/status.js, never the tokens themselves.
+create table if not exists public.oauth_tokens (
+  user_id       uuid not null references auth.users(id) on delete cascade,
+  provider      text not null,
+  access_token  text not null,
+  refresh_token text,
+  expires_at    timestamptz not null,
+  scope         text,
+  updated_at    timestamptz not null default now(),
+  primary key (user_id, provider)
+);
+
+comment on table public.oauth_tokens is
+  'Server-only OAuth token storage for third-party integrations. No RLS policies for anon/authenticated — accessible only via service_role from Vercel functions (api/google/*, api/gmail/*, api/calendar/*).';
+
+alter table public.oauth_tokens enable row level security;
+
+create or replace function public.oauth_tokens_set_updated_at()
+returns trigger
+language plpgsql
+set search_path = pg_catalog, public
+as $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$;
+
+create trigger oauth_tokens_set_updated_at
+  before update on public.oauth_tokens
+  for each row
+  execute function public.oauth_tokens_set_updated_at();

@@ -1752,6 +1752,16 @@ function KroftApp({ onFullReset } = {}) {
   // spinner and can't be double-submitted by an impatient extra click.
   const [authLoading, setAuthLoading] = useState(false);
   const [user, setUser] = useState({ name:"", email:"", password:"", phone:"", photo:null, businessName:"", businessType:"", currency:"USD", connected:{gmail:false,calendar:false,uber:false} });
+  // Real Google connection state, as reported by api/google/status.js — the actual source of
+  // truth for whether Gmail/Calendar are linked. user.connected.gmail/.calendar (persisted,
+  // used for the read-only status text elsewhere in Profile) is kept in sync with this rather
+  // than being toggled directly by the Link button, now that linking means a real OAuth grant
+  // rather than a local flag flip. user.connected.uber stays a plain local toggle — see the
+  // "Connect accounts" list below for why.
+  const [googleStatus, setGoogleStatus] = useState({ gmail:false, calendar:false });
+  const [googleLinking, setGoogleLinking] = useState(false);
+  const [syncingGmail, setSyncingGmail] = useState(false);
+  const [syncingCalendar, setSyncingCalendar] = useState(false);
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPw, setLoginPw] = useState("");
   const [showLoginPw, setShowLoginPw] = useState(false);
@@ -2455,6 +2465,159 @@ function KroftApp({ onFullReset } = {}) {
     toast("Biometric unlock removed for this device.");
   };
 
+  // Attaches the current Supabase session's access token to a request to one of our own
+  // api/google|gmail|calendar/* endpoints — every one of them authenticates the caller this
+  // way (see api/_lib/google.js's getAuthedUser), the same token Supabase's own client already
+  // manages, refreshes and persists.
+  const authedFetch = async (path, opts = {}) => {
+    if (!isSupabaseConfigured) throw new Error("Supabase isn't configured, so there's no account to authenticate this request with.");
+    const { data: { session } = {} } = await supabase.auth.getSession();
+    if (!session) throw new Error("Not signed in.");
+    return fetch(path, {
+      ...opts,
+      headers: {
+        ...(opts.body ? { "Content-Type": "application/json" } : {}),
+        ...opts.headers,
+        Authorization: `Bearer ${session.access_token}`,
+      },
+    });
+  };
+
+  // The actual source of truth for Gmail/Calendar connection state — called after a successful
+  // OAuth round-trip and once on reaching the dashboard, so user.connected.gmail/.calendar
+  // (used for the read-only status text in Profile) never drifts from what's really connected.
+  const refreshGoogleStatus = async () => {
+    if (!isSupabaseConfigured) return;
+    try {
+      const res = await authedFetch("/api/google/status");
+      if (!res.ok) return;
+      const status = await res.json();
+      setGoogleStatus({ gmail: !!status.gmail, calendar: !!status.calendar });
+      setUser(u => ({ ...u, connected: { ...u.connected, gmail: !!status.gmail, calendar: !!status.calendar } }));
+    } catch {
+      // Silent — this is a background status refresh, not a user-initiated action; a failed
+      // check just leaves the last-known connected state on screen rather than surfacing an
+      // error for something the user didn't ask for.
+    }
+  };
+
+  // Starts the real Google OAuth flow: asks our backend for a consent URL (api/google/start.js
+  // signs a state token identifying this user) and does a full top-level navigation to it —
+  // Google's consent screen won't render inside a fetch response or an iframe. The browser
+  // leaves the app entirely here; the flow continues on return via api/google/callback.js and
+  // the oauth=success/error query-param handling in the mount effect below.
+  const connectGoogle = async () => {
+    setGoogleLinking(true);
+    try {
+      const res = await authedFetch("/api/google/start");
+      if (!res.ok) { toast("Couldn't start Google sign-in. Try again."); setGoogleLinking(false); return; }
+      const { url } = await res.json();
+      window.location.href = url;
+    } catch {
+      toast("Couldn't start Google sign-in. Try again.");
+      setGoogleLinking(false);
+    }
+  };
+
+  const disconnectGoogle = async () => {
+    setGoogleLinking(true);
+    try {
+      const res = await authedFetch("/api/google/disconnect", { method: "POST" });
+      setGoogleLinking(false);
+      if (!res.ok) { toast("Couldn't disconnect Google. Try again."); return; }
+      setGoogleStatus({ gmail: false, calendar: false });
+      setUser(u => ({ ...u, connected: { ...u.connected, gmail: false, calendar: false } }));
+      toast("Google account disconnected.");
+    } catch {
+      setGoogleLinking(false);
+      toast("Couldn't disconnect Google. Try again.");
+    }
+  };
+
+  // Pulls the real inbox from Gmail and replaces the local `emails` list with it — including
+  // the very first pull, which is exactly what should happen to the three seed/mock emails
+  // this app starts with (see the emails useState above): connecting a real inbox should show
+  // that real inbox, not a real inbox appended after fake sample data.
+  const syncGmail = async () => {
+    setSyncingGmail(true);
+    try {
+      const res = await authedFetch("/api/gmail/messages");
+      if (!res.ok) { toast(res.status===409 ? "Gmail isn't connected." : "Couldn't load Gmail right now."); return; }
+      const { messages } = await res.json();
+      setEmails(messages);
+      toast(`Loaded ${messages.length} email${messages.length===1?"":"s"} from Gmail.`);
+    } catch {
+      toast("Couldn't load Gmail right now.");
+    } finally {
+      setSyncingGmail(false);
+    }
+  };
+
+  // Pulls upcoming events from Google Calendar and merges them into the local `appts` list,
+  // replacing any previously-synced Google events (tagged source:"google") so a re-sync
+  // doesn't pile up duplicates, while leaving purely local appointments (added directly in
+  // Kroft, never sent to Google) untouched.
+  const syncGoogleCalendar = async () => {
+    setSyncingCalendar(true);
+    try {
+      const res = await authedFetch("/api/calendar/events");
+      if (!res.ok) { toast(res.status===409 ? "Google Calendar isn't connected." : "Couldn't load Calendar right now."); return; }
+      const { appts: googleAppts } = await res.json();
+      setAppts(p => [...p.filter(a => a.source !== "google"), ...googleAppts]);
+      toast(`Loaded ${googleAppts.length} event${googleAppts.length===1?"":"s"} from Google Calendar.`);
+    } catch {
+      toast("Couldn't load Calendar right now.");
+    } finally {
+      setSyncingCalendar(false);
+    }
+  };
+
+  // Mirrors a locally-added appointment onto the user's real Google Calendar when it's
+  // connected. Deliberately fire-and-forget: the appointment already exists in Kroft's own
+  // local `appts` (the app's source of truth for what it displays) the instant it's added,
+  // regardless of whether this call succeeds, is slow, or Calendar isn't connected at all —
+  // nothing about adding an appointment should block on, or fail because of, a third-party API.
+  const mirrorAppointmentToGoogleCalendar = (appt) => {
+    if (!googleStatus.calendar) return;
+    authedFetch("/api/calendar/events", {
+      method: "POST",
+      body: JSON.stringify({ title: appt.title, date: appt.date, time: appt.time, location: appt.location, notes: appt.notes }),
+    }).catch(() => {}); // best-effort — see comment above
+  };
+
+  // Consumes the oauth=success/error query params Google's consent flow lands back on the app
+  // with (see api/google/callback.js's redirectTo) — shows the right toast once, then strips
+  // them from the URL so a manual refresh doesn't re-show a stale result. Runs once on mount;
+  // this is independent of the main hydration effect since it reflects what just happened in
+  // the browser's address bar, not persisted account data.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const oauthResult = params.get("oauth");
+    if (!oauthResult) return;
+    if (oauthResult === "success") {
+      toast("Google account connected.");
+      refreshGoogleStatus();
+      // Best-effort first pull so the newly-connected inbox/calendar aren't still showing
+      // stale mock data or an empty list the moment the user lands back on the dashboard —
+      // each call is a no-op (a handled 409) if that particular scope wasn't actually granted.
+      syncGmail();
+      syncGoogleCalendar();
+    } else if (oauthResult === "error") {
+      const reason = params.get("oauth_error") || "unknown_error";
+      toast(reason === "access_denied" ? "Google sign-in was cancelled." : "Couldn't connect Google. Try again.");
+    }
+    params.delete("oauth"); params.delete("oauth_provider"); params.delete("oauth_error");
+    const cleanUrl = window.location.pathname + (params.toString() ? `?${params}` : "") + window.location.hash;
+    window.history.replaceState({}, "", cleanUrl);
+  }, []);
+
+  // Keeps the connected badges accurate whenever the dashboard is (re)entered — covers a
+  // fresh login, a returning already-signed-in session, and finishing onboarding via "Enter
+  // KROFT", without needing each of those call sites to remember to trigger it themselves.
+  useEffect(() => {
+    if (step === "dashboard") refreshGoogleStatus();
+  }, [step]);
+
   const doSignup = async () => {
     if (!user.name||!user.email||!signupPw) { setSignupError("Please fill in all required fields."); return; }
     if (pwScore < 3) { setSignupError("Password too weak. Add uppercase, numbers and symbols."); return; }
@@ -3028,6 +3191,7 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
         const title = str(action.title); if (!title) return null;
         const item = { id:uid(), title, date:validDate(action.date)?action.date:todayISO(), time:str(action.time)||"09:00", location:str(action.location), notes:"", urgent:false, repeat:"none", contactId:null };
         setAppts(p => [...p, item]);
+        mirrorAppointmentToGoogleCalendar(item);
         return { label:`Appointment added: ${title}`, undo:() => setAppts(p => p.filter(x => x.id !== item.id)) };
       }
       case "add_note": {
@@ -4166,13 +4330,33 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
           <Mono style={{ display:"block", color:C.muted, marginBottom:22 }}>Connect the accounts KROFT should work with.</Mono>
           <div style={{ marginBottom:22 }}>
             <Mono style={{ display:"block", color:C.soft, marginBottom:11 }}>Connect accounts</Mono>
+            {!isSupabaseConfigured && (
+              <Mono style={{ display:"block", color:C.muted, fontSize:10, marginBottom:9 }}>Sign in with a real account (Supabase isn't configured) to connect Gmail or Calendar.</Mono>
+            )}
             <div style={{ display:"flex", flexDirection:"column", gap:9 }}>
-              {[{k:"gmail",n:"Gmail",d:"Read & send real emails"},{k:"calendar",n:"Google Calendar",d:"Sync appointments"},{k:"uber",n:"Uber",d:"Book rides to meetings"}].map(a => (
-                <div key={a.k} style={{ background:user.connected[a.k]?C.fillStrong:C.card, border:`1px solid ${user.connected[a.k]?C.soft:C.cardB}`, borderRadius:10, padding:"11px 14px", display:"flex", alignItems:"center", gap:12 }}>
-                  <div style={{ flex:1 }}><div style={{ fontWeight:700, fontSize:13, color:C.white, marginBottom:1 }}>{a.n}</div><Mono style={{ color:C.muted, fontSize:10 }}>{a.d}</Mono></div>
-                  <Btn sm v={user.connected[a.k]?"solid":"outline"} onClick={() => setUser(u => ({...u,connected:{...u.connected,[a.k]:!u.connected[a.k]}}))}>{user.connected[a.k]?"Linked":"Link"}</Btn>
-                </div>
-              ))}
+              {/* Gmail and Calendar go through one real Google OAuth grant (both scopes are
+                  requested together in api/google/start.js), so linking or unlinking either
+                  row acts on the whole Google connection, not just that one feature. Uber has
+                  no real integration (see api/_lib/google.js's neighbors — there's no
+                  api/uber/* at all, deliberately: Uber's ride-booking API requires their
+                  business partner program, not a self-serve OAuth app), so it keeps the
+                  original local-only toggle rather than pretending to connect to anything. */}
+              {[{k:"gmail",n:"Gmail",d:"Read & send real emails",google:true},{k:"calendar",n:"Google Calendar",d:"Sync appointments",google:true},{k:"uber",n:"Uber",d:"Book rides to meetings",google:false}].map(a => {
+                const linked = a.google ? googleStatus[a.k] : user.connected[a.k];
+                return (
+                  <div key={a.k} style={{ background:linked?C.fillStrong:C.card, border:`1px solid ${linked?C.soft:C.cardB}`, borderRadius:10, padding:"11px 14px", display:"flex", alignItems:"center", gap:12 }}>
+                    <div style={{ flex:1 }}><div style={{ fontWeight:700, fontSize:13, color:C.white, marginBottom:1 }}>{a.n}</div><Mono style={{ color:C.muted, fontSize:10 }}>{a.d}</Mono></div>
+                    {a.google ? (
+                      <Btn sm v={linked?"solid":"outline"} disabled={!isSupabaseConfigured||googleLinking}
+                        onClick={() => linked ? disconnectGoogle() : connectGoogle()}>
+                        {googleLinking ? <Spinner size={14} color={linked?C.black:C.soft} thickness={2} /> : linked ? "Unlink" : "Link"}
+                      </Btn>
+                    ) : (
+                      <Btn sm v={linked?"solid":"outline"} onClick={() => setUser(u => ({...u,connected:{...u.connected,[a.k]:!u.connected[a.k]}}))}>{linked?"Linked":"Link"}</Btn>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </div>
           <div style={{ display:"flex", gap:10 }}><Btn v="outline" onClick={() => setStep("business")} style={{ flex:1 }}>Back</Btn><Btn onClick={() => setStep("done")} style={{ flex:2 }}>Almost done</Btn></div>
@@ -4218,7 +4402,21 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
       <style>{G}</style>
       {showBriefing && <Briefing user={user} income={totalIncome} expenses={totalExpenses} emails={emails} appts={appts} onClose={() => setShowBriefing(false)} />}
       {uberDest && <UberModal dest={uberDest} onClose={() => setUberDest(null)} onBook={(type,loc) => { toast(`${type} requested to ${loc}`); setUberDest(null); }} />}
-      {composeDraft && <ComposeModal draft={composeDraft} onChange={setComposeDraft} onSend={d => {
+      {composeDraft && <ComposeModal draft={composeDraft} onChange={setComposeDraft} onSend={async d => {
+        // Real send when Gmail is actually connected — otherwise fall back to the original
+        // simulated send (a toast plus a scripted fake reply a few seconds later), so the
+        // compose flow still demos sensibly for anyone who hasn't linked a real account.
+        if (googleStatus.gmail) {
+          try {
+            const res = await authedFetch("/api/gmail/send", { method:"POST", body:JSON.stringify({ to:d.to, subject:d.subject, body:d.body }) });
+            if (!res.ok) { toast("Couldn't send — Gmail rejected the message."); return; }
+            toast(`Email sent to ${d.to}`);
+            setComposeDraft(null);
+          } catch {
+            toast("Couldn't send — check your connection and try again.");
+          }
+          return;
+        }
         toast(`Email sent to ${d.to}`);
         setComposeDraft(null);
         const replySubject = d.subject.startsWith("Re:") ? d.subject : `Re: ${d.subject}`;
@@ -4930,7 +5128,10 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
           <div style={{ animation:"fadeUp .4s ease" }}>
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:18 }}>
               <h2 style={{ fontSize:22, fontWeight:700, color:C.white, letterSpacing:-1 }}>Calendar</h2>
-              <Btn sm onClick={() => setShowAddAppt(v=>!v)}>Add Appointment</Btn>
+              <div style={{ display:"flex", alignItems:"center", gap:9 }}>
+                {googleStatus.calendar && <Btn sm v="outline" disabled={syncingCalendar} onClick={syncGoogleCalendar}>{syncingCalendar ? <Spinner size={14} color={C.soft} thickness={2} /> : "Refresh"}</Btn>}
+                <Btn sm onClick={() => setShowAddAppt(v=>!v)}>Add Appointment</Btn>
+              </div>
             </div>
             {showAddAppt && (
               <Card style={{ marginBottom:14, border:`1px solid ${C.border}` }}>
@@ -4943,7 +5144,7 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
                     <label style={{ display:"flex", alignItems:"center", gap:6, cursor:"pointer" }}><input type="checkbox" checked={newAppt.urgent} onChange={e=>setNewAppt(v=>({...v,urgent:e.target.checked}))} style={{ accentColor:C.white, width:14, height:14 }} /><Mono style={{ color:C.soft }}>Urgent</Mono></label>
                     <select value={newAppt.repeat} onChange={e=>setNewAppt(v=>({...v,repeat:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:8, padding:"7px 11px", color:C.text, fontSize:11, fontFamily:"'Space Mono',monospace", outline:"none" }}>{["none","daily","weekly","monthly"].map(r=><option key={r}>{r}</option>)}</select>
                     {contacts.length > 0 && <ContactSelect value={newAppt.contactId} onChange={id=>setNewAppt(v=>({...v,contactId:id}))} contacts={contacts} />}
-                    <Btn sm onClick={() => { if (!newAppt.title||!newAppt.date) return; setAppts(p=>[...p,{...newAppt,id:uid()}]); setNewAppt({title:"",time:"",date:todayISO(),location:"",notes:"",urgent:false,repeat:"none",contactId:null}); setShowAddAppt(false); toast(`Appointment added: ${newAppt.title}`); }}>Add</Btn>
+                    <Btn sm onClick={() => { if (!newAppt.title||!newAppt.date) return; const item = {...newAppt,id:uid()}; setAppts(p=>[...p,item]); mirrorAppointmentToGoogleCalendar(item); setNewAppt({title:"",time:"",date:todayISO(),location:"",notes:"",urgent:false,repeat:"none",contactId:null}); setShowAddAppt(false); toast(`Appointment added: ${newAppt.title}`); }}>Add</Btn>
                   </div>
                 </div>
               </Card>
@@ -5009,6 +5210,7 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
               <h2 style={{ fontSize:22, fontWeight:700, color:C.white, letterSpacing:-1 }}>Email</h2>
               <div style={{ display:"flex", alignItems:"center", gap:9 }}>
                 <Tag tone={user.connected.gmail?"positive":undefined}>{user.connected.gmail?"Gmail connected":"Gmail not linked"}</Tag>
+                {googleStatus.gmail && <Btn sm v="outline" disabled={syncingGmail} onClick={syncGmail}>{syncingGmail ? <Spinner size={14} color={C.soft} thickness={2} /> : "Refresh"}</Btn>}
                 {contacts.some(c => c.email) && <Btn sm v="outline" onClick={() => setContactPicker({ mode:"email" })}>From Contacts</Btn>}
                 <Btn sm onClick={() => setComposeDraft({to:"",subject:"",body:""})}>Compose</Btn>
               </div>
