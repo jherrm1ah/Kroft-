@@ -1,0 +1,6175 @@
+import { useState, useEffect, useRef, useCallback, useMemo, Component } from "react";
+import { BarChart, Bar, Cell, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
+
+// Theme-aware palette — black, white and off-white only, no grey scale.
+// Dark mode: near-black surfaces, white/off-white text.
+// Light mode: white/off-white surfaces, near-black text.
+// Every token below meets or exceeds WCAG AA contrast against its paired surface.
+const DARK = {
+  bg:"#000000", card:"#0d0d0d", cardB:"#242424", surface:"#141414",
+  hover:"#1a1a1a", white:"#ffffff", black:"#000000",
+  offWhite:"#f4f2ee",
+  text:"#ffffff",        // primary text — pure white on black, max contrast
+  soft:"#dcd8d0",        // secondary text — bright off-white, clearly readable (was low-contrast grey)
+  muted:"#9a968e",       // tertiary/placeholder — still readable, used sparingly
+  border:"#3a3a3a",      // visible borders / dividers on dark surfaces
+  div:"#242424",
+  invBg:"#f4f2ee", invText:"#0a0a0a", // inverse surface for chips/pills on dark
+  positive:"#4ade80", positiveBg:"rgba(74,222,128,.12)",   // income, completed, gains
+  negative:"#f87171", negativeBg:"rgba(248,113,113,.12)",  // expense, urgent, deficit
+  warning:"#fbbf24", warningBg:"rgba(251,191,36,.12)",     // on hold, pending, due soon
+  accent:"#818cf8", accentBg:"rgba(129,140,248,.14)",      // AI, links, in-progress
+  // Translucent fills for notices/inset panels. These were previously hardcoded as
+  // rgba(255,255,255,.04–.09), which is invisible against a light surface — so every error
+  // box and inset panel lost its background entirely in light mode.
+  fill:"rgba(255,255,255,.05)", fillStrong:"rgba(255,255,255,.09)",
+  // Elevation shadows, keyed to a card's role rather than one shadow used everywhere.
+  shadowRaised:"0 10px 30px rgba(0,0,0,.55)", shadowBase:"0 2px 8px rgba(0,0,0,.4)",
+};
+const LIGHT = {
+  bg:"#f4f2ee", card:"#ffffff", cardB:"#e2ded6", surface:"#ffffff",
+  hover:"#ece8e0", white:"#0a0a0a", black:"#ffffff",
+  offWhite:"#000000",
+  text:"#0a0a0a",        // primary text — near-black on off-white
+  soft:"#3a3833",        // secondary text — dark and clearly readable
+  muted:"#6b6860",       // tertiary/placeholder
+  border:"#c9c4b8",      // visible borders / dividers on light surfaces
+  div:"#e2ded6",
+  invBg:"#0a0a0a", invText:"#f4f2ee",
+  positive:"#16a34a", positiveBg:"rgba(22,163,74,.10)",
+  negative:"#dc2626", negativeBg:"rgba(220,38,38,.10)",
+  warning:"#d97706", warningBg:"rgba(217,119,6,.10)",
+  accent:"#6366f1", accentBg:"rgba(99,102,241,.10)",
+  fill:"rgba(10,10,10,.04)", fillStrong:"rgba(10,10,10,.07)",
+  shadowRaised:"0 10px 30px rgba(40,36,28,.14)", shadowBase:"0 1px 3px rgba(40,36,28,.08)",
+};
+// The Briefing plays over an always-dark scrim for focus, so it reads its colors from DARK
+// regardless of the active theme. Without this it inherits light tokens and renders a
+// near-black "solid" button on a near-black overlay.
+const BRIEF = DARK;
+
+// Mutable active-theme object. Sub-components below close over this same reference and
+// read C.xxx at render time. The theme toggle in Kroft() reassigns these properties in place
+// (Object.assign) rather than rebinding C itself, so every existing C.xxx reference across the
+// file continues to work without needing to be rewritten individually.
+// Seeded from LIGHT because that's the default theme. It was seeded from DARK, so the very
+// first paint used dark colours before the theme effect corrected them a frame later — a
+// visible flash on every cold load.
+const C = { ...LIGHT };
+
+const FONT = `@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Space+Mono:wght@400;700&display=swap');`;
+
+const ANIM = `
+@keyframes fadeUp{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:translateY(0)}}
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+@keyframes pop{0%{transform:scale(.9);opacity:0}65%{transform:scale(1.02)}100%{transform:scale(1);opacity:1}}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes wave{0%,100%{transform:scaleY(.2)}50%{transform:scaleY(1)}}
+@keyframes slideIn{from{transform:translateX(108%);opacity:0}to{transform:translateX(0);opacity:1}}
+@keyframes stepIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
+`;
+
+// Uses Intl's native currency formatting instead of a hand-maintained symbol map, so any
+// valid ISO 4217 code (NGN, GHS, INR, JPY, ...) formats correctly out of the box — adding
+// support for a new currency never requires a code change here. Falls back to "<CODE> <amount>"
+// only if the code itself is invalid/unrecognized, rather than silently mislabeling it as $.
+const fmtCur = (n, cur = "USD") => {
+  try {
+    return new Intl.NumberFormat("en-US", { style:"currency", currency:cur, currencyDisplay:"narrowSymbol", minimumFractionDigits:2, maximumFractionDigits:2 }).format(n);
+  } catch {
+    const neg = n < 0;
+    const formatted = new Intl.NumberFormat("en-US", { minimumFractionDigits:2, maximumFractionDigits:2 }).format(Math.abs(n));
+    return `${neg ? "-" : ""}${cur} ${formatted}`;
+  }
+};
+// A curated, region-grouped starting list for the currency picker — not exhaustive, since any
+// valid ISO 4217 code works correctly via fmtCur's Intl formatting above. The picker also takes
+// free-text entry for anything not listed here (see the CURRENCY step), so a user isn't limited
+// to this set — this just surfaces the common ones without scrolling through all ~180 codes.
+const CURRENCY_GROUPS = {
+  "Africa": ["NGN","GHS","KES","ZAR","EGP","MAD","TZS","UGX","RWF","ETB","XOF","XAF"],
+  "Americas": ["USD","CAD","BRL","MXN","ARS","CLP","COP"],
+  "Europe": ["EUR","GBP","CHF","SEK","NOK","DKK","PLN","TRY"],
+  "Asia-Pacific": ["INR","CNY","JPY","KRW","SGD","HKD","AUD","NZD","THB","PHP","IDR","VND","PKR","BDT"],
+  "Middle East": ["AED","SAR","QAR","ILS"],
+};
+// Confirms a 3-letter code is an actual, currently-assigned ISO 4217 currency before it's
+// accepted from the free-text entry. Intl.NumberFormat's constructor does NOT reject a
+// well-formed-but-nonexistent code (e.g. "ZZZ") — it just silently falls back to printing the
+// code as text — so real validation needs the actual list, not just a try/catch on Intl.
+const ISO_4217_CODES = new Set(["AED","AFN","ALL","AMD","ANG","AOA","ARS","AUD","AWG","AZN","BAM","BBD","BDT","BGN","BHD","BIF","BMD","BND","BOB","BRL","BSD","BTN","BWP","BYN","BZD","CAD","CDF","CHF","CLP","CNY","COP","CRC","CUP","CVE","CZK","DJF","DKK","DOP","DZD","EGP","ERN","ETB","EUR","FJD","FKP","GBP","GEL","GHS","GIP","GMD","GNF","GTQ","GYD","HKD","HNL","HTG","HUF","IDR","ILS","INR","IQD","IRR","ISK","JMD","JOD","JPY","KES","KGS","KHR","KMF","KPW","KRW","KWD","KYD","KZT","LAK","LBP","LKR","LRD","LSL","LYD","MAD","MDL","MGA","MKD","MMK","MNT","MOP","MRU","MUR","MVR","MWK","MXN","MYR","MZN","NAD","NGN","NIO","NOK","NPR","NZD","OMR","PAB","PEN","PGK","PHP","PKR","PLN","PYG","QAR","RON","RSD","RUB","RWF","SAR","SBD","SCR","SDG","SEK","SGD","SHP","SLE","SOS","SRD","SSP","STN","SYP","SZL","THB","TJS","TMT","TND","TOP","TRY","TTD","TWD","TZS","UAH","UGX","USD","UYU","UZS","VES","VND","VUV","WST","XAF","XCD","XOF","XPF","YER","ZAR","ZMW","ZWL"]);
+const isValidCurrencyCode = code => /^[A-Za-z]{3}$/.test(code) && ISO_4217_CODES.has(code.toUpperCase());
+const timeStr = () => new Date().toLocaleTimeString("en-US", { hour:"2-digit", minute:"2-digit" });
+const dateStr = () => new Date().toLocaleDateString("en-US", { weekday:"long", month:"long", day:"numeric" });
+const rand = arr => arr[Math.floor(Math.random() * arr.length)];
+// Collision-safe ID generator. Date.now() alone can produce duplicate IDs when two items
+// are created in the same millisecond (fast typing+Enter, rapid taps, batch actions) — every
+// edit/delete/toggle keyed on that ID would then silently affect both items at once.
+const uid = () => Date.now() + Math.random();
+const todayISO = () => new Date().toISOString().slice(0, 10);
+const fmtDate = iso => { if (!iso) return ""; const d = new Date(iso + "T00:00:00"); return isNaN(d) ? iso : d.toLocaleDateString("en-US", { month:"short", day:"numeric", year:"numeric" }); };
+// Advances an ISO date string forward by one occurrence of the given repeat cadence. Used to
+// roll a recurring appointment to its next date once its current one has passed — daily/weekly
+// add fixed day counts, monthly advances the calendar month (and lets JS Date normalize
+// end-of-month overflow, e.g. Jan 31 + 1 month -> Mar 3, same as a real calendar app would).
+const advanceRepeatDate = (iso, repeat) => {
+  const d = new Date(iso + "T00:00:00");
+  if (isNaN(d)) return iso;
+  if (repeat === "daily") d.setDate(d.getDate() + 1);
+  else if (repeat === "weekly") d.setDate(d.getDate() + 7);
+  else if (repeat === "monthly") d.setMonth(d.getMonth() + 1);
+  else return iso;
+  return d.toISOString().slice(0, 10);
+};
+const monthLabel = iso => { if (!iso) return ""; const d = new Date(iso + "T00:00:00"); return isNaN(d) ? "" : d.toLocaleDateString("en-US", { month:"long", year:"numeric" }); };
+
+// Turns written text into something that reads aloud cleanly. AI replies come back with
+// markdown, and a speech engine reads it literally — "star star Net profit star star",
+// "hash hash Summary", "dash" before every bullet — so it has to be stripped first.
+// Strips numeric figures from text before it's spoken, for the one read-aloud in the app that's
+// deliberately summary-only. The daily briefing already avoids announcing net profit since it
+// fires automatically and could play in front of anyone nearby; this covers the monthly report,
+// which is opt-in (the person taps the icon themselves) but whose generated text still embeds
+// real amounts and percentages mid-sentence — "$520" isn't a separate stat here, it's inside the
+// AI's own sentences, so it has to be pulled out of the text itself rather than just left unread.
+const stripFiguresForSpeech = text => String(text)
+  .replace(/[₦$€£]\s?\d[\d,]*(\.\d+)?/g, "a certain amount")
+  .replace(/\d+(\.\d+)?\s?%/g, "a certain percentage")
+  .replace(/\b\d[\d,]*(\.\d+)?\b/g, "a number")
+  .replace(/\s{2,}/g, " ")
+  .trim();
+
+const speechText = raw => String(raw)
+  .replace(/```[\s\S]*?```/g, " Code block omitted. ")   // don't read code out character by character
+  .replace(/`([^`]+)`/g, "$1")
+  .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")             // links/images -> just their label
+  .replace(/^\s{0,3}#{1,6}\s+/gm, "")                    // heading marks
+  .replace(/(\*\*|__)(.*?)\1/g, "$2")                    // bold
+  .replace(/(\*|_)(.*?)\1/g, "$2")                       // italic
+  .replace(/^\s*[-*+]\s+/gm, "")                         // bullet markers
+  .replace(/^\s*(\d+)\.\s+/gm, "$1. ")                   // keep numbered lists as "1."
+  .replace(/^\s*>\s?/gm, "")                             // block quotes
+  .replace(/^\s*([-*_]\s*){3,}$/gm, "")                  // horizontal rules
+  .replace(/[|]/g, " ")                                  // table pipes
+  .replace(/\s*&\s*/g, " and ")
+  .replace(/(\d)\s*%/g, "$1 percent")
+  .replace(/\.{3,}/g, ". ")                              // ellipses become a pause, not "dot dot dot"
+  .replace(/([.!?])\s*\n+/g, "$1 ")                      // paragraph breaks -> sentence pause
+  .replace(/\n+/g, ". ")                                 // remaining line breaks need a beat
+  .replace(/\s{2,}/g, " ")
+  .trim();
+
+// Splits into utterances short enough to speak reliably. Chrome/Edge garble or cut off a single
+// utterance once it runs past roughly 15 seconds (a long-standing browser bug), so text is split
+// on sentence boundaries — and any sentence still too long is split again at commas rather than
+// mid-word, which is where an arbitrary character-count split would land.
+const MAX_CHUNK = 180;
+const speechChunks = text => {
+  // Split only at a period/question/exclamation that is followed by a space and a new sentence.
+  // The lookbehind for a digit keeps "$1,234.56" and list markers like "1. Cut costs" intact —
+  // a naive split on [.!?] cut those apart and the engine read "one dollar two three four" then
+  // paused mid-number.
+  const sentences = text.split(/(?<![0-9])(?<=[.!?])\s+(?=[^\s])/);
+  const parts = [];
+  sentences.forEach(sentence => {
+    const s = sentence.trim();
+    if (!s) return;
+    if (s.length <= MAX_CHUNK) { parts.push(s); return; }
+    // Still too long for one utterance — break at commas rather than mid-word.
+    let buf = "";
+    s.split(/(?<=,)\s+/).forEach(piece => {
+      if ((buf + " " + piece).trim().length > MAX_CHUNK && buf) { parts.push(buf.trim()); buf = piece; }
+      else buf = (buf + " " + piece).trim();
+    });
+    if (buf) parts.push(buf.trim());
+  });
+  // Merge consecutive short sentences back together. Every utterance boundary is an audible
+  // gap, so speaking "Summary." then "Your net profit is..." as two utterances sounds stilted
+  // when they comfortably fit in one.
+  const merged = [];
+  parts.forEach(p => {
+    const last = merged[merged.length - 1];
+    if (last && (last + " " + p).length <= MAX_CHUNK) merged[merged.length - 1] = last + " " + p;
+    else merged.push(p);
+  });
+  return merged;
+};
+
+// getVoices() returns an empty list on the first call in Chrome until the engine finishes
+// loading them and fires voiceschanged — so picking a voice synchronously silently failed on
+// the very first read-aloud of a session, falling back to the default robotic voice.
+const pickVoice = () => {
+  const vs = window.speechSynthesis.getVoices();
+  if (!vs.length) return null;
+  return vs.find(v => /Samantha|Google US English|Karen|Serena/i.test(v.name))
+      || vs.find(v => v.lang === "en-US" && !/compact/i.test(v.name))
+      || vs.find(v => v.lang?.startsWith("en"))
+      || null;
+};
+
+function speak(raw) {
+  if (!("speechSynthesis" in window)) return;
+  const text = speechText(raw);
+  if (!text) return;
+  window.speechSynthesis.cancel();
+  const chunks = speechChunks(text);
+  const run = () => {
+    const voice = pickVoice();
+    let i = 0;
+    const next = () => {
+      if (i >= chunks.length) return;
+      const u = new SpeechSynthesisUtterance(chunks[i++]);
+      u.rate = 0.95; u.pitch = 1.0; u.lang = voice?.lang || "en-US";
+      if (voice) u.voice = voice;
+      u.onend = next;
+      u.onerror = next;
+      window.speechSynthesis.speak(u);
+    };
+    next();
+  };
+  if (!window.speechSynthesis.getVoices().length) {
+    // Wait one tick for voices to arrive rather than speaking with none selected.
+    window.speechSynthesis.addEventListener("voiceschanged", run, { once:true });
+    setTimeout(() => { if (!window.speechSynthesis.speaking) run(); }, 250);
+  } else run();
+}
+const stopSpeaking = () => { if ("speechSynthesis" in window) window.speechSynthesis.cancel(); };
+
+// Speaks a list of lines in order, reporting which line is currently being read. Lets the UI
+// follow the audio instead of guessing with a fixed timer — a timer drifts as soon as one line
+// is longer than another, so the highlighted line stops matching the words being spoken.
+// Speaks a reply as it is still being generated. Waiting for the whole response before saying
+// anything is the single worst part of a voice assistant — several seconds of silence where the
+// person can't tell if it heard them. This queues each complete sentence the moment it lands, so
+// KROFT starts talking almost immediately and the rest arrives while it's still speaking.
+function createSpeechQueue({ onStart, onDone } = {}) {
+  let spokenUpTo = 0;      // how much of the incoming text has been queued
+  let queue = [];
+  let speaking = false;
+  let finished = false;
+  let cancelled = false;
+  let started = false;
+  let voice = null;
+
+  const drain = () => {
+    if (cancelled || speaking) return;
+    if (!queue.length) { if (finished) onDone?.(); return; }
+    speaking = true;
+    if (!started) { started = true; onStart?.(); }
+    if (!voice) voice = pickVoice();
+    const u = new SpeechSynthesisUtterance(queue.shift());
+    u.rate = 0.95; u.pitch = 1.0; u.lang = voice?.lang || "en-US";
+    if (voice) u.voice = voice;
+    const next = () => { speaking = false; drain(); };
+    u.onend = next; u.onerror = next;
+    window.speechSynthesis.speak(u);
+  };
+
+  return {
+    // Called with the full text so far on each token; only the newly completed sentences are
+    // queued. A trailing partial sentence is held back until it's terminated, so words aren't
+    // spoken mid-clause.
+    push(fullText) {
+      if (cancelled) return;
+      const ready = fullText.slice(spokenUpTo);
+      const lastStop = Math.max(ready.lastIndexOf("."), ready.lastIndexOf("!"), ready.lastIndexOf("?"));
+      if (lastStop === -1) return;
+      const complete = ready.slice(0, lastStop + 1);
+      spokenUpTo += complete.length;
+      speechChunks(speechText(complete)).forEach(c => queue.push(c));
+      drain();
+    },
+    // Flushes whatever is left once generation ends (a reply may not end in punctuation).
+    end(fullText) {
+      if (cancelled) return;
+      const rest = fullText.slice(spokenUpTo).trim();
+      if (rest) speechChunks(speechText(rest)).forEach(c => queue.push(c));
+      finished = true;
+      drain();
+    },
+    cancel() { cancelled = true; queue = []; window.speechSynthesis.cancel(); },
+  };
+}
+
+function speakSequence(lines, { onLine, onDone } = {}) {
+  if (!("speechSynthesis" in window)) { lines.forEach((_, i) => onLine?.(i)); onDone?.(); return () => {}; }
+  window.speechSynthesis.cancel();
+  let cancelled = false;
+  const start = () => {
+    const voice = pickVoice();
+    let li = 0;
+    const speakLine = () => {
+      if (cancelled) return;
+      if (li >= lines.length) { onDone?.(); return; }
+      const current = li;
+      onLine?.(current);
+      const chunks = speechChunks(speechText(lines[current]));
+      let ci = 0;
+      const nextChunk = () => {
+        if (cancelled) return;
+        if (ci >= chunks.length) { li++; speakLine(); return; }
+        const u = new SpeechSynthesisUtterance(chunks[ci++]);
+        u.rate = 0.95; u.pitch = 1.0; u.lang = voice?.lang || "en-US";
+        if (voice) u.voice = voice;
+        u.onend = nextChunk;
+        u.onerror = nextChunk;
+        window.speechSynthesis.speak(u);
+      };
+      nextChunk();
+    };
+    speakLine();
+  };
+  if (!window.speechSynthesis.getVoices().length) {
+    window.speechSynthesis.addEventListener("voiceschanged", start, { once:true });
+    setTimeout(() => { if (!cancelled && !window.speechSynthesis.speaking) start(); }, 250);
+  } else start();
+  return () => { cancelled = true; window.speechSynthesis.cancel(); };
+}
+
+function generatePassword() {
+  const u="ABCDEFGHJKLMNPQRSTUVWXYZ", l="abcdefghjkmnpqrstuvwxyz", n="23456789", s="!@#$%&*";
+  const all = u + l + n + s;
+  let pw = u[Math.floor(Math.random()*u.length)] + l[Math.floor(Math.random()*l.length)] + n[Math.floor(Math.random()*n.length)] + s[Math.floor(Math.random()*s.length)];
+  for (let i = 0; i < 8; i++) pw += all[Math.floor(Math.random() * all.length)];
+  return pw.split("").sort(() => Math.random() - .5).join("");
+}
+
+// Three levels so a card's weight matches its role, instead of one radius + one shadow on
+// every surface regardless of importance:
+//   raised — top-level summaries and modals; largest radius, real elevation
+//   base   — the default content card (unchanged from before, so existing usage is untouched)
+//   inset  — nested rows inside another card; tighter radius, border only, no shadow
+const CARD_LEVELS = {
+  raised: { radius:22, pad:20, shadow:() => C.shadowRaised },
+  base:   { radius:18, pad:16, shadow:() => C.shadowBase },
+  inset:  { radius:12, pad:12, shadow:() => "none" },
+};
+const Card = ({ children, style, onClick, hi, level="base", ...rest }) => {
+  const L = CARD_LEVELS[level] || CARD_LEVELS.base;
+  return (
+    <div onClick={onClick} {...rest} style={{ background:C.card, border:`1px solid ${hi?C.border:C.cardB}`, borderRadius:L.radius, padding:L.pad, boxShadow:hi?`0 0 0 1px ${C.border},${C.shadowRaised}`:L.shadow(), cursor:onClick?"pointer":"default", transition:"border-color .18s", ...style }}>
+      {children}
+    </div>
+  );
+};
+
+// Solid white = primary action. Outline = secondary. Ghost = minor/destructive.
+const Btn = ({ children, onClick, v="solid", sm, disabled, full, style, "aria-label":ariaLabel }) => {
+  const m = {
+    solid: { bg:C.white, bc:C.white, col:C.black },
+    outline: { bg:"transparent", bc:C.muted, col:C.soft },
+    ghost: { bg:"transparent", bc:"transparent", col:C.border },
+  };
+  const s = m[v] || m.solid;
+  // Icon-only buttons (e.g. a lone "✕" or "✓") get a minimum square footprint so a
+  // one-character label doesn't collapse into a hard-to-tap sliver on touch devices.
+  const isIconOnly = typeof children === "string" && children.trim().length <= 2;
+  return (
+    <button onClick={onClick} disabled={disabled} aria-label={ariaLabel} style={{ width:full?"100%":"auto", minWidth:sm&&isIconOnly?36:"auto", minHeight:sm?36:44, background:s.bg, border:`1px solid ${s.bc}`, borderRadius:12, padding:sm?"8px 14px":"10px 22px", cursor:disabled?"not-allowed":"pointer", color:s.col, fontWeight:700, fontSize:sm?12:13, fontFamily:"'Space Grotesk',sans-serif", letterSpacing:.3, transition:"all .14s", opacity:disabled?.4:1, display:"inline-flex", alignItems:"center", justifyContent:"center", gap:6, boxSizing:"border-box", ...style }}>
+      {children}
+    </button>
+  );
+};
+
+// Parses a money input, returning null for anything that shouldn't reach the ledger. A bare
+// type="number" field still accepts a leading minus, so "-500" was storable as income — and a
+// single negative (or a NaN from a partial entry like "-" or "1e") silently corrupts net
+// profit, the category breakdowns and the monthly report, with nothing on screen explaining why
+// the totals look wrong.
+// "Good afternoon" was shown for everything from noon to midnight — at 11pm that reads as a bug.
+const greeting = (d = new Date()) => { const h = d.getHours(); return h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening"; };
+
+const fmtMemoLength = secs => {
+  if (!secs && secs !== 0) return "";
+  const m = Math.floor(secs / 60), sec = secs % 60;
+  return m ? `${m}:${String(sec).padStart(2,"0")}` : `${sec}s`;
+};
+
+// Browser notifications. These reach the person when KROFT isn't the visible tab, which is the
+// entire point — an in-app toast about a meeting in ten minutes only works if they happen to be
+// looking at the app already.
+// Honest limitation: without a service worker and a push server, these only fire while the page
+// is open somewhere (including backgrounded). A fully closed browser delivers nothing, and the
+// settings copy says so rather than implying otherwise.
+// Makes a modal usable without a mouse. Every overlay in the app previously left focus loose in
+// the page behind it, so Tab walked into content the user couldn't see and there was no way to
+// dismiss from the keyboard at all.
+// Handles three things: Escape closes, Tab cycles within the modal, and focus returns to
+// wherever it was when the modal closes.
+const useModalA11y = (onClose, active = true) => {
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!active) return;
+    const previouslyFocused = document.activeElement;
+    const node = ref.current;
+    const selector = 'a[href],button:not([disabled]),textarea,input:not([disabled]),select,[tabindex]:not([tabindex="-1"])';
+
+    // Move focus into the dialog so the next Tab starts inside it rather than at the top of
+    // the document.
+    const focusables = () => Array.from(node?.querySelectorAll(selector) || []).filter(el => el.offsetParent !== null);
+    const first = focusables()[0];
+    (first || node)?.focus?.();
+
+    const onKey = e => {
+      if (e.key === "Escape") { e.stopPropagation(); onClose?.(); return; }
+      if (e.key !== "Tab") return;
+      const items = focusables();
+      if (!items.length) return;
+      const firstEl = items[0], lastEl = items[items.length - 1];
+      // Wrap at both ends so focus can never escape behind the overlay.
+      if (e.shiftKey && document.activeElement === firstEl) { e.preventDefault(); lastEl.focus(); }
+      else if (!e.shiftKey && document.activeElement === lastEl) { e.preventDefault(); firstEl.focus(); }
+    };
+    document.addEventListener("keydown", onKey, true);
+    return () => {
+      document.removeEventListener("keydown", onKey, true);
+      // Returning focus matters: without it, dismissing a dialog drops the user back at the
+      // top of the document with no idea where they were.
+      previouslyFocused?.focus?.();
+    };
+  }, [active, onClose]);
+  return ref;
+};
+
+// How long an undo stays available. Shared so the toast and the blob cleanup below can never
+// disagree — if the URL is revoked before the toast expires, undoing a file or memo restores an
+// entry whose audio or download is already dead.
+const UNDO_MS = 12000;
+
+// One shared heartbeat for the app's periodic checks. There were five independent intervals
+// (reminders, recurring transactions, wellness rollover, notification delivery, key pruning),
+// each waking the device on its own schedule and all of them continuing to run while the tab was
+// hidden — which on a phone means holding the CPU awake for work nobody can see.
+// Subscribers run on a single timer, and the timer stops entirely when the tab is backgrounded,
+// then fires once immediately on return so anything missed is caught up at once.
+const heartbeat = (() => {
+  const subs = new Set();
+  let timer = null;
+  const fire = () => subs.forEach(fn => { try { fn(); } catch { /* one bad subscriber shouldn't stop the rest */ } });
+  const start = () => { if (!timer) timer = setInterval(fire, 30000); };
+  const stop = () => { if (timer) { clearInterval(timer); timer = null; } };
+  if (typeof document !== "undefined") {
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") { fire(); start(); } else stop();
+    });
+  }
+  return fn => {
+    subs.add(fn);
+    if (typeof document === "undefined" || document.visibilityState === "visible") start();
+    return () => { subs.delete(fn); if (!subs.size) stop(); };
+  };
+})();
+
+const notifySupported = () => typeof window !== "undefined" && "Notification" in window;
+
+const requestNotifyPermission = async () => {
+  if (!notifySupported()) return "unsupported";
+  if (Notification.permission === "granted") return "granted";
+  if (Notification.permission === "denied") return "denied";
+  try { return await Notification.requestPermission(); } catch { return "denied"; }
+};
+
+const sendNotification = (title, body, tag) => {
+  if (!notifySupported() || Notification.permission !== "granted") return false;
+  try {
+    // The tag collapses repeats: re-firing the same reminder replaces the old notification
+    // instead of stacking a second copy in the tray.
+    const n = new Notification(title, { body, tag, badge:undefined, icon:undefined });
+    n.onclick = () => { window.focus(); n.close(); };
+    return true;
+  } catch { return false; }
+};
+
+// Placeholder blocks shown while stored data is still loading. Without these the app renders
+// its empty states first — a finance app briefly announcing "No financial data yet" to someone
+// who has months of records is alarming, and indistinguishable from real data loss.
+const Skeleton = ({ h = 14, w = "100%", r = 8, style }) => (
+  <div aria-hidden="true" style={{ height:h, width:w, borderRadius:r, background:C.fill, animation:"pulse 1.4s ease-in-out infinite", ...style }} />
+);
+
+const SkeletonCard = ({ lines = 3 }) => (
+  <div style={{ background:C.card, border:`1px solid ${C.cardB}`, borderRadius:18, padding:16, marginBottom:11 }}>
+    <Skeleton h={11} w="38%" style={{ marginBottom:12 }} />
+    {Array.from({ length: lines }).map((_, i) => (
+      <Skeleton key={i} h={13} w={i === lines - 1 ? "62%" : "100%"} style={{ marginBottom:8 }} />
+    ))}
+  </div>
+);
+
+const parseAmount = raw => {
+  const n = parseFloat(String(raw).replace(/,/g, ""));
+  if (!Number.isFinite(n) || n <= 0) return null;
+  if (n > 1e12) return null;                 // beyond any plausible entry; almost certainly a typo
+  return Math.round(n * 100) / 100;          // money is 2dp — avoids 0.1+0.2 style drift in totals
+};
+
+const Inp = ({ id, placeholder, value, onChange, type="text", inputMode, style, onKeyDown, ...rest }) => (
+  <input id={id} type={type} inputMode={inputMode} placeholder={placeholder} value={value} onChange={onChange} onKeyDown={onKeyDown} {...rest}
+    style={{ width:"100%", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 14px", color:C.text, fontSize:13, fontFamily:"'Space Grotesk',sans-serif", outline:"none", transition:"border-color .18s", boxSizing:"border-box", ...style }}
+    onFocus={e => { e.target.style.borderColor=C.accent; e.target.style.boxShadow=`0 0 0 3px ${C.accentBg}`; }} onBlur={e => { e.target.style.borderColor=C.cardB; e.target.style.boxShadow="none"; }} />
+);
+
+const Mono = ({ children, style }) => (
+  <span style={{ fontFamily:"'Space Mono',monospace", fontSize:11, color:C.soft, ...style }}>{children}</span>
+);
+
+const CategorySelect = ({ value, onChange, cats, onAddCategory, style }) => {
+  const [adding, setAdding] = useState(false);
+  const [draft, setDraft] = useState("");
+  if (adding) {
+    return (
+      <div style={{ display:"flex", gap:5, ...style }}>
+        <input autoFocus value={draft} onChange={e=>setDraft(e.target.value)} placeholder="New category" onKeyDown={e=>{ if (e.key==="Enter" && draft.trim()) { onAddCategory(draft.trim()); onChange(draft.trim()); setDraft(""); setAdding(false); } if (e.key==="Escape") { setAdding(false); setDraft(""); } }} style={{ width:100, background:C.surface, border:`1px solid ${C.soft}`, borderRadius:12, padding:"11px 10px", color:C.text, fontSize:12, fontFamily:"'Space Mono',monospace", outline:"none" }} />
+        <button onClick={() => { if (draft.trim()) { onAddCategory(draft.trim()); onChange(draft.trim()); } setDraft(""); setAdding(false); }} style={{ background:C.white, border:"none", borderRadius:12, padding:"0 10px", color:C.black, fontSize:12, fontWeight:700, cursor:"pointer" }}>✓</button>
+      </div>
+    );
+  }
+  return (
+    <select value={value} onChange={e => e.target.value==="__add__" ? setAdding(true) : onChange(e.target.value)} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 12px", color:C.text, fontSize:12, fontFamily:"'Space Mono',monospace", outline:"none", ...style }}>
+      {cats.map(c => <option key={c}>{c}</option>)}
+      <option value="__add__">+ Add category…</option>
+    </select>
+  );
+};
+
+const Tag = ({ children, hi, tone, style }) => {
+  const toneColor = tone && { positive:C.positive, negative:C.negative, warning:C.warning, accent:C.accent }[tone];
+  const toneBg = tone && { positive:C.positiveBg, negative:C.negativeBg, warning:C.warningBg, accent:C.accentBg }[tone];
+  return (
+    <span style={{
+      background: toneColor ? toneBg : (hi?C.text:C.surface),
+      color: toneColor || (hi?C.invText:C.soft),
+      border: toneColor ? `1px solid ${toneColor}55` : (hi?"none":`1px solid ${C.border}`),
+      borderRadius:7, padding:"2px 8px", fontSize:10, fontWeight:600, letterSpacing:.4, whiteSpace:"nowrap", fontFamily:"'Space Mono',monospace",
+      ...style
+    }}>
+      {children}
+    </span>
+  );
+};
+
+// Splash screen — matches the KROFT brand reference: white bg, scattered icon cards,
+// orange accent underlines, centered wordmark. Always light/white regardless of app theme,
+// since this is a fixed branding moment, not a themed screen.
+const SPLASH_ORANGE = "#F97316";
+const SPLASH_CARDS = [
+  { top:"14%", left:"11%", rot:-6, icon:<svg viewBox="0 0 24 24" width={26} height={26}><path d="M4.5 6.5a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H10l-4 3.5v-3.5H6.5a2 2 0 0 1-2-2z" stroke="#0a0a0a" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" fill="none" /><circle cx="9" cy="10.3" r=".9" fill="#0a0a0a" /><circle cx="12.3" cy="10.3" r=".9" fill="#0a0a0a" /><circle cx="15.6" cy="10.3" r=".9" fill="#0a0a0a" /></svg> },
+  { top:"20%", left:"66%", rot:5, icon:<svg viewBox="0 0 24 24" width={26} height={26}><rect x="3.5" y="7" width="17" height="12" rx="2.2" stroke="#0a0a0a" strokeWidth={1.6} fill="none" /><path d="M3.5 10h17" stroke="#0a0a0a" strokeWidth={1.6} /><circle cx="16.5" cy="14.2" r="1.1" fill="#0a0a0a" /></svg> },
+  { top:"39%", left:"2%", rot:-4, icon:<svg viewBox="0 0 24 24" width={26} height={26}><rect x="4" y="5.5" width="16" height="15" rx="2" stroke="#0a0a0a" strokeWidth={1.6} fill="none" /><path d="M4 9.5h16M8 3.5v3M16 3.5v3" stroke="#0a0a0a" strokeWidth={1.6} strokeLinecap="round" /></svg> },
+  { top:"55%", left:"78%", rot:6, icon:<svg viewBox="0 0 24 24" width={26} height={26}><rect x="4" y="4" width="16" height="16" rx="3.2" stroke="#0a0a0a" strokeWidth={1.6} fill="none" /><path d="M8 12.3l2.6 2.6L16.5 9" stroke="#0a0a0a" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round" fill="none" /></svg> },
+  { top:"72%", left:"4%", rot:4, icon:<svg viewBox="0 0 24 24" width={26} height={26}><path d="M6 19v-4.5M12 19V9M18 19V6" stroke="#0a0a0a" strokeWidth={2} strokeLinecap="round" /></svg> },
+  { top:"78%", left:"66%", rot:-5, icon:<svg viewBox="0 0 24 24" width={26} height={26}><path d="M6 4.5h9l3 3V19a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V5.5a1 1 0 0 1 1-1z" stroke="#0a0a0a" strokeWidth={1.6} fill="none" /><path d="M8.5 11h7M8.5 14.3h7M8.5 17.6h4" stroke="#0a0a0a" strokeWidth={1.4} strokeLinecap="round" /></svg> },
+  { top:"91%", left:"38%", rot:0, icon:<svg viewBox="0 0 24 24" width={26} height={26}><circle cx="12" cy="8.2" r="3.4" stroke="#0a0a0a" strokeWidth={1.6} fill="none" /><path d="M5 20c0-3.6 3.1-6.4 7-6.4s7 2.8 7 6.4" stroke="#0a0a0a" strokeWidth={1.6} fill="none" strokeLinecap="round" /></svg> },
+];
+function SplashScreen({ fading }) {
+  return (
+    <div style={{ position:"fixed", inset:0, zIndex:9999, background:"#ffffff", overflow:"hidden", opacity:fading?0:1, transition:"opacity .6s ease", pointerEvents:fading?"none":"all" }}>
+      <div style={{ position:"absolute", top:"30%", left:"50%", transform:"translate(-50%,-50%)", width:340, height:340, borderRadius:"50%", border:"1px solid rgba(0,0,0,.06)" }} />
+      {SPLASH_CARDS.map((c,i) => (
+        <div key={i} style={{ position:"absolute", top:c.top, left:c.left, width:76, height:76, borderRadius:20, background:"#fff", boxShadow:"0 10px 28px rgba(0,0,0,.08)", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:7, transform:`rotate(${c.rot}deg)`, animation:`fadeUp .6s ease ${i*0.08}s both` }}>
+          {c.icon}
+          <div style={{ width:16, height:3, borderRadius:2, background:SPLASH_ORANGE }} />
+        </div>
+      ))}
+      <div style={{ position:"absolute", top:"50%", left:"50%", transform:"translate(-50%,-50%)", textAlign:"center", width:"80%" }}>
+        <div style={{ fontSize:44, fontWeight:800, letterSpacing:10, color:"#0a0a0a", fontFamily:"'Space Grotesk',sans-serif" }}>KROFT</div>
+        <div style={{ width:28, height:3, borderRadius:2, background:SPLASH_ORANGE, margin:"14px auto" }} />
+        <div style={{ fontSize:15, color:"#4a4a4a", lineHeight:1.5, fontFamily:"'Space Grotesk',sans-serif" }}>Your AI Assistant<br/>for Life &amp; Business.</div>
+      </div>
+      <div style={{ position:"absolute", bottom:"7%", left:"50%", transform:"translateX(-50%)", fontSize:13, color:"#8a8a8a", fontFamily:"'Space Grotesk',sans-serif", letterSpacing:.3 }}>Smart. Simple. All in one.</div>
+    </div>
+  );
+}
+
+const WaveBar = ({ active, color=C.white }) => (
+  <div style={{ display:"flex", alignItems:"center", gap:3, height:16 }}>
+    {[...Array(5)].map((_, i) => (
+      <div key={i} style={{ width:3, height:14, borderRadius:2, background:color, transformOrigin:"center", transform:"scaleY(.2)", animation:active?`wave .65s ease-in-out ${i*.1}s infinite`:"none", transition:"transform .3s" }} />
+    ))}
+  </div>
+);
+
+// Simple dot indicator used instead of emoji for status/unread markers
+const Dot = ({ color=C.white, size=6 }) => (
+  <div style={{ width:size, height:size, borderRadius:"50%", background:color, flexShrink:0 }} />
+);
+
+// Shared loading spinner — used everywhere the app is waiting on an async/AI action
+// (fingerprint check, Around Me search, Generate Report, AI Suggest) so "working on it"
+// looks and feels the same throughout the app instead of some spots getting a spinner
+// and others only a text swap.
+const Spinner = ({ size=14, color=C.white, thickness=2 }) => (
+  <div style={{ width:size, height:size, border:`${thickness}px solid ${color}`, borderTopColor:"transparent", borderRadius:"50%", animation:"spin .7s linear infinite", flexShrink:0 }} />
+);
+
+// Minimal location pin icon, drawn with SVG to match the monochrome aesthetic — no emoji
+const PinIcon = ({ size=14, color="currentColor" }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" style={{ flexShrink:0 }}>
+    <path d="M12 21s-7-6.2-7-11.5A7 7 0 0 1 19 9.5C19 14.8 12 21 12 21z" stroke={color} strokeWidth="1.6" strokeLinejoin="round" />
+    <circle cx="12" cy="9.5" r="2.4" stroke={color} strokeWidth="1.6" />
+  </svg>
+);
+
+// Bottom-nav icon set, drawn in the same thin-stroke style as PinIcon — one per core page.
+const NavIcon = ({ id, size=20, color="currentColor" }) => {
+  const s = { width:size, height:size, flexShrink:0 };
+  const p = { stroke:color, strokeWidth:1.6, strokeLinecap:"round", strokeLinejoin:"round", fill:"none" };
+  switch (id) {
+    case "home":
+      return <svg viewBox="0 0 24 24" style={s}><path d="M4 11.5 12 4l8 7.5" {...p} /><path d="M6 10v9.5a1 1 0 0 0 1 1h3.5v-5.5h3v5.5H17a1 1 0 0 0 1-1V10" {...p} /></svg>;
+    case "wellness": // simple pulse line
+      return <svg viewBox="0 0 24 24" style={s}><path d="M3.5 12h4l1.8-4.2 3 8.4 1.9-4.2H20.5" {...p} /></svg>;
+    case "nova": // chat bubble for Ask Kroft
+      return <svg viewBox="0 0 24 24" style={s}><path d="M4.5 6.5a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H10l-4 3.5v-3.5H6.5a2 2 0 0 1-2-2z" {...p} /></svg>;
+    case "workspace": // stacked layers / documents
+      return <svg viewBox="0 0 24 24" style={s}><rect x="4.5" y="5" width="15" height="4.5" rx="1.2" {...p} /><rect x="4.5" y="10.8" width="15" height="4.5" rx="1.2" {...p} /><rect x="4.5" y="16.6" width="10" height="2.4" rx="1.2" {...p} /></svg>;
+    case "profile":
+      return <svg viewBox="0 0 24 24" style={s}><circle cx="12" cy="8.2" r="3.4" {...p} /><path d="M5 20c0-3.6 3.1-6.4 7-6.4s7 2.8 7 6.4" {...p} /></svg>;
+    case "copy":
+      return <svg viewBox="0 0 24 24" style={s}><rect x="8.5" y="8.5" width="11" height="11" rx="2" {...p} /><path d="M15.5 8.5V6.5a2 2 0 0 0-2-2h-8a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" {...p} /></svg>;
+    case "share":
+      return <svg viewBox="0 0 24 24" style={s}><path d="M12 15V4" {...p} /><path d="M8 8l4-4 4 4" {...p} /><path d="M5 13v5a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-5" {...p} /></svg>;
+    case "play":
+      return <svg viewBox="0 0 24 24" style={s}><path d="M6.5 5.5v13l11-6.5z" {...p} /></svg>;
+    case "thumbsUp":
+      return <svg viewBox="0 0 24 24" style={s}><path d="M7 20V10.5l4.5-6.2c.5-.7 1.6-.3 1.5.6l-.7 4.1h5.4c1 0 1.7 1 1.4 1.9l-2 6.4a1.8 1.8 0 0 1-1.7 1.2H9.5A2.5 2.5 0 0 1 7 20z" {...p} /><path d="M7 10.5H4.5v9.5H7" {...p} /></svg>;
+    case "thumbsDown":
+      return <svg viewBox="0 0 24 24" style={s}><path d="M17 4v9.5l-4.5 6.2c-.5.7-1.6.3-1.5-.6l.7-4.1H6.3c-1 0-1.7-1-1.4-1.9l2-6.4A1.8 1.8 0 0 1 8.6 5.5h6.9A2.5 2.5 0 0 1 17 4z" {...p} /><path d="M17 13.5h2.5V4H17" {...p} /></svg>;
+    case "retry":
+      return <svg viewBox="0 0 24 24" style={s}><path d="M4.5 12a7.5 7.5 0 0 1 12.6-5.5M19.5 12a7.5 7.5 0 0 1-12.6 5.5" {...p} /><path d="M17.5 3.5v3.5H14" {...p} /><path d="M6.5 20.5V17H10" {...p} /></svg>;
+    case "mic":
+      return <svg viewBox="0 0 24 24" style={s}><rect x="9" y="3" width="6" height="11" rx="3" {...p} /><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0" {...p} /><path d="M12 18v3" {...p} /></svg>;
+    case "send":
+      return <svg viewBox="0 0 24 24" style={s}><path d="M4.5 12h14" {...p} /><path d="M12.5 5.5 19 12l-6.5 6.5" {...p} /></svg>;
+    default:
+      return null;
+  }
+};
+
+const OSTEPS = ["login","signup","photo","business","prefs","done"];
+const OSTEP_LABELS = ["Photo","Business","Prefs","Ready"];
+
+function OShell({ step, children }) {
+  const idx = OSTEPS.indexOf(step);
+  const showBar = !["login","signup"].includes(step);
+  const barIdx = Math.max(0, idx - 2);
+  const pct = showBar ? Math.round((barIdx / (OSTEP_LABELS.length - 1)) * 100) : 0;
+  return (
+    <div style={{ minHeight:"100vh", background:C.bg, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:"24px 20px", position:"relative", overflow:"hidden" }}>
+      <div style={{ position:"absolute", inset:0, backgroundImage:`radial-gradient(circle,${C.border} 1px,transparent 1px)`, backgroundSize:"32px 32px", opacity:.15, pointerEvents:"none" }} />
+      <div style={{ position:"absolute", top:0, left:"50%", transform:"translateX(-50%)", width:500, height:180, background:`radial-gradient(ellipse at 50% 0%,rgba(255,255,255,.05) 0%,transparent 70%)`, pointerEvents:"none" }} />
+      {showBar && (
+        <div style={{ width:"100%", maxWidth:460, marginBottom:26, zIndex:1, position:"relative" }}>
+          <div style={{ display:"flex", justifyContent:"space-between", marginBottom:10 }}>
+            {OSTEP_LABELS.map((l, i) => {
+              const si = i + 2; const active = idx === si; const done = idx > si;
+              return (
+                <div key={l} style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:3, opacity:idx>=si?1:.2 }}>
+                  <div style={{ width:26, height:26, borderRadius:"50%", background:done?C.white:active?C.white:C.border, border:`1px solid ${done||active?C.white:C.muted}`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:10, fontWeight:800, color:C.black, boxShadow:active?"0 0 0 4px rgba(255,255,255,.12)":"none" }}>
+                    {done ? "✓" : i + 1}
+                  </div>
+                  <Mono style={{ fontSize:8, color:active?C.white:C.muted, fontWeight:700, letterSpacing:.8 }}>{l.toUpperCase()}</Mono>
+                </div>
+              );
+            })}
+          </div>
+          <div style={{ height:2, background:C.border, borderRadius:99, overflow:"hidden" }}>
+            <div style={{ height:"100%", width:`${pct}%`, background:C.white, borderRadius:99, transition:"width .5s ease" }} />
+          </div>
+        </div>
+      )}
+      <div style={{ width:"100%", maxWidth:460, animation:"stepIn .4s ease", position:"relative", zIndex:1 }}>{children}</div>
+    </div>
+  );
+}
+
+// Press-and-hold to reveal an item's actions. Destructive actions used to sit permanently on
+// every row as a bare ✕ — one mistap and a finance entry (or note, task, contact) was gone,
+// which for finance meant silently corrupting the running totals. Holding is deliberate in a
+// way that tapping isn't, so delete now costs intent to reach.
+// Cancels if the finger moves (that's a scroll, not a hold), and maps to right-click on desktop.
+// Written as a plain factory rather than a hook so list rows can call it inside .map() — and
+// since only one press can be in flight at a time, the press state lives here at module level.
+const LP = { timer:null, x:0, y:0, fired:false };
+const lpClear = () => { if (LP.timer) { clearTimeout(LP.timer); LP.timer = null; } };
+const longPress = (onLongPress, delay = 500) => ({
+  onTouchStart: e => {
+    LP.fired = false;
+    const t = e.touches?.[0];
+    if (t) { LP.x = t.clientX; LP.y = t.clientY; }
+    lpClear();
+    LP.timer = setTimeout(() => { LP.fired = true; LP.timer = null; onLongPress(); }, delay);
+  },
+  onTouchMove: e => {
+    const t = e.touches?.[0];
+    if (!t || !LP.timer) return;
+    if (Math.abs(t.clientX-LP.x) > 10 || Math.abs(t.clientY-LP.y) > 10) lpClear();
+  },
+  onTouchEnd: lpClear,
+  onTouchCancel: lpClear,
+  onMouseDown: () => { LP.fired = false; lpClear(); LP.timer = setTimeout(() => { LP.fired = true; LP.timer = null; onLongPress(); }, delay); },
+  onMouseUp: lpClear,
+  onMouseLeave: lpClear,
+  onContextMenu: e => { e.preventDefault(); if (!LP.fired) onLongPress(); },
+  // Suppresses the tap that follows a completed hold, so opening the sheet doesn't also
+  // trigger the row's own click (which would open the edit form behind it).
+  onClickCapture: e => { if (LP.fired) { e.stopPropagation(); e.preventDefault(); LP.fired = false; } },
+});
+
+// Bottom sheet listing an item's actions, opened by holding the item. Delete asks a second
+// time inside the sheet rather than firing straight from the first tap.
+function ActionSheet({ title, subtitle, actions, onClose }) {
+  const [confirming, setConfirming] = useState(null);
+  const ref = useModalA11y(onClose);
+  return (
+    <div ref={ref} role="dialog" aria-modal="true" aria-label={title} tabIndex={-1} style={{ position:"fixed", inset:0, zIndex:960, background:"rgba(0,0,0,.6)", display:"flex", alignItems:"flex-end", justifyContent:"center", animation:"fadeIn .15s ease" }} onClick={onClose}>
+      <div onClick={e => e.stopPropagation()} style={{ background:C.card, borderTop:`1px solid ${C.cardB}`, borderRadius:"22px 22px 0 0", padding:"18px 18px calc(18px + env(safe-area-inset-bottom))", width:"100%", maxWidth:520, boxShadow:C.shadowRaised, animation:"stepIn .2s ease" }}>
+        <div style={{ width:38, height:4, borderRadius:99, background:C.border, margin:"0 auto 16px" }} />
+        <div style={{ fontSize:15, fontWeight:700, color:C.text, marginBottom:subtitle?2:14, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{title}</div>
+        {subtitle && <Mono style={{ display:"block", color:C.muted, marginBottom:14 }}>{subtitle}</Mono>}
+        <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+          {actions.map(a => (
+            confirming === a.label ? (
+              <div key={a.label} style={{ background:C.negativeBg, border:`1px solid ${C.negative}55`, borderRadius:12, padding:12 }}>
+                <Mono style={{ display:"block", color:C.soft, marginBottom:10, lineHeight:1.6 }}>{a.confirmText || "This can't be undone once the undo window passes."}</Mono>
+                <div style={{ display:"flex", gap:8 }}>
+                  <Btn sm v="outline" onClick={() => setConfirming(null)} style={{ flex:1 }}>Keep</Btn>
+                  <Btn sm onClick={() => { a.onClick(); onClose(); }} style={{ flex:1, background:C.negative, borderColor:C.negative, color:"#fff" }}>Delete</Btn>
+                </div>
+              </div>
+            ) : (
+              <button key={a.label} onClick={() => { if (a.destructive) setConfirming(a.label); else { a.onClick(); onClose(); } }}
+                style={{ width:"100%", textAlign:"left", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"13px 15px", cursor:"pointer", color:a.destructive?C.negative:C.text, fontSize:14, fontWeight:600, fontFamily:"'Space Grotesk',sans-serif", minHeight:48 }}>
+                {a.label}
+              </button>
+            )
+          ))}
+        </div>
+        <Btn v="outline" full onClick={onClose} style={{ marginTop:12 }}>Cancel</Btn>
+      </div>
+    </div>
+  );
+}
+
+// Particle orb for voice mode — a deforming sphere of dots, rendered on a canvas because a
+// few thousand DOM nodes would stutter on a phone. Points are laid out with a Fibonacci
+// spiral (even coverage, no clumping at the poles the way lat/long grids do), then the radius
+// is displaced by summed sine waves so the surface rolls organically instead of pulsing as a
+// rigid ball. Live mic level pushes that displacement further, so the shape reacts to the
+// voice rather than animating on a fixed loop.
+function VoiceOrb({ state, levelRef, size = 300 }) {
+  const canvasRef = useRef(null);
+  const stateRef = useRef(state);
+  stateRef.current = state;
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    canvas.width = size * dpr;
+    canvas.height = size * dpr;
+    ctx.scale(dpr, dpr);
+
+    const COUNT = 2600;
+    const pts = [];
+    const golden = Math.PI * (3 - Math.sqrt(5));
+    for (let i = 0; i < COUNT; i++) {
+      const y = 1 - (i / (COUNT - 1)) * 2;
+      const r = Math.sqrt(Math.max(0, 1 - y * y));
+      const th = golden * i;
+      pts.push({ x: Math.cos(th) * r, y, z: Math.sin(th) * r });
+    }
+
+    let raf, t = 0, smooth = 0;
+    const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+    const cx = size / 2, cy = size / 2, R = size * 0.33;
+
+    const draw = () => {
+      const st = stateRef.current;
+      // Idle breathes gently; listening tracks the mic; thinking churns; speaking swells.
+      const target = st === "listening" ? (levelRef?.current ?? 0) : st === "speaking" ? 0.55 : st === "thinking" ? 0.3 : 0.12;
+      smooth += (target - smooth) * 0.12;
+      t += reduce ? 0.002 : (st === "thinking" ? 0.016 : 0.009);
+
+      ctx.clearRect(0, 0, size, size);
+      const spin = t * (st === "thinking" ? 0.9 : 0.45);
+      const cosS = Math.cos(spin), sinS = Math.sin(spin);
+
+      for (let i = 0; i < COUNT; i++) {
+        const p = pts[i];
+        // Organic displacement — three sine waves at different frequencies so the surface
+        // never repeats in an obviously periodic way.
+        const n =
+          Math.sin(p.x * 2.6 + t * 1.5) * 0.5 +
+          Math.sin(p.y * 3.1 - t * 1.1) * 0.4 +
+          Math.sin(p.z * 2.2 + t * 0.8) * 0.35 +
+          Math.sin((p.x + p.y) * 4.1 - t * 0.6) * 0.2;
+        const rad = 1 + n * (0.14 + smooth * 0.26);
+
+        let x = p.x * rad, y = p.y * rad, z = p.z * rad;
+        const rx = x * cosS - z * sinS;
+        const rz = x * sinS + z * cosS;
+        x = rx; z = rz;
+
+        const persp = 1 / (1.9 - z * 0.55);
+        const sx = cx + x * R * persp * 1.9;
+        const sy = cy + y * R * persp * 1.9;
+        const depth = (z + 1) / 2;
+
+        // Cyan at the top, through blue, to magenta at the base — y runs downward in screen
+        // space, so the ramp follows +y rather than against it.
+        const hue = 192 + ((y + 1) / 2) * 98;
+        const alpha = (0.25 + depth * 0.72) * (st === "idle" ? 0.8 : 1);
+        const dot = 0.6 + depth * 1.7;
+
+        ctx.fillStyle = `hsla(${hue}, 95%, ${60 + depth * 12}%, ${alpha})`;
+        ctx.beginPath();
+        ctx.arc(sx, sy, dot, 0, 6.283);
+        ctx.fill();
+      }
+      raf = requestAnimationFrame(draw);
+    };
+    draw();
+    return () => cancelAnimationFrame(raf);
+  }, [size]);
+
+  return <canvas ref={canvasRef} style={{ width:size, height:size, display:"block" }} />;
+}
+
+// Full-screen one-on-one voice conversation. Entered deliberately rather than running
+// ambiently, so the mic permission prompt and the pause while KROFT thinks read as part of the
+// mode instead of the app behaving oddly.
+// Full-screen incoming-call screen for a scheduled Plus call. Not a real phone call — there's no
+// telephony behind this — but the framing (ringing orb, Answer/Decline) is deliberate: answering
+// hands straight into voice mode with KROFT speaking first, which is the actual point of the
+// feature, so it should feel like picking up rather than opening a chat.
+function IncomingCallScreen({ call, onAnswer, onDecline }) {
+  const ref = useModalA11y(onDecline);
+  const size = Math.min(260, (typeof window !== "undefined" ? window.innerWidth : 360) - 100);
+  return (
+    <div ref={ref} role="dialog" aria-modal="true" aria-label={`Incoming call: ${call.title}`} tabIndex={-1}
+      style={{ position:"fixed", inset:0, zIndex:1300, background:"#000", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"space-between", padding:"14vh 24px calc(40px + env(safe-area-inset-bottom))" }}>
+      <div style={{ textAlign:"center" }}>
+        <Mono style={{ color:"rgba(255,255,255,.5)", display:"block", marginBottom:8 }}>Incoming call</Mono>
+        <div style={{ fontSize:22, fontWeight:700, color:"#fff", letterSpacing:-.4 }}>KROFT</div>
+        <div style={{ fontSize:14, color:"rgba(255,255,255,.65)", marginTop:6 }}>{call.title}</div>
+      </div>
+
+      <VoiceOrb state="thinking" levelRef={{ current:0 }} size={size} />
+
+      <div style={{ display:"flex", gap:28, alignItems:"center" }}>
+        <button onClick={onDecline} aria-label="Decline call" style={{ width:64, height:64, borderRadius:"50%", border:"none", background:"#dc2626", color:"#fff", fontSize:22, cursor:"pointer" }}>✕</button>
+        <button onClick={onAnswer} aria-label="Answer call" style={{ width:64, height:64, borderRadius:"50%", border:"none", background:"#16a34a", color:"#fff", fontSize:22, cursor:"pointer" }}>✓</button>
+      </div>
+    </div>
+  );
+}
+
+function VoiceMode({ state, transcript, reply, error, onStart, onStop, onClose, supported, levelRef, primed, subscribed, turnsLeft }) {
+  // Keeps the tail of a long streaming reply in view without the person having to scroll.
+  const replyEndRef = useRef(null);
+  useEffect(() => { replyEndRef.current?.scrollIntoView?.({ block:"end" }); }, [reply]);
+  const label = { idle:"Tap to speak", listening:"Listening", thinking:"Thinking", speaking:"Speaking" }[state] || "";
+  const size = Math.min(320, (typeof window !== "undefined" ? window.innerWidth : 360) - 60);
+  const ref = useModalA11y(onClose);
+  return (
+    <div ref={ref} role="dialog" aria-modal="true" aria-label="Voice conversation" tabIndex={-1} style={{ position:"fixed", inset:0, zIndex:1200, background:"#000", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"space-between", padding:"22px 20px calc(28px + env(safe-area-inset-bottom))" }}>
+      {/* Left-aligned so it doesn't sit under the toast stack, which now renders above this overlay. */}
+      <div style={{ width:"100%", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+        <button onClick={onClose} aria-label="Close voice mode" style={{ background:"rgba(255,255,255,.08)", border:"none", borderRadius:"50%", width:40, height:40, color:"#fff", fontSize:17, cursor:"pointer" }}>✕</button>
+        {/* Quiet, and only once it's worth mentioning — matches the same low-key threshold used
+            for the chat message counter, so usage isn't nagging from the first turn. */}
+        {!subscribed && turnsLeft <= 3 && (
+          <Mono style={{ color: turnsLeft === 0 ? "#f87171" : "rgba(255,255,255,.5)" }}>
+            {turnsLeft === 0 ? "resets tomorrow" : `${turnsLeft} voice turns left`}
+          </Mono>
+        )}
+      </div>
+
+      <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:22, flex:1, justifyContent:"center", width:"100%" }}>
+        <div
+          role="button"
+          tabIndex={0}
+          aria-label={state === "idle" ? "Start listening" : "Stop"}
+          onClick={() => (state === "idle" ? onStart() : onStop())}
+          onKeyDown={e => { if (e.key==="Enter"||e.key===" ") { e.preventDefault(); state==="idle" ? onStart() : onStop(); } }}
+          style={{ cursor:"pointer", borderRadius:"50%" }}>
+          <VoiceOrb state={state} levelRef={levelRef} size={size} />
+        </div>
+
+        <div style={{ fontSize:13, fontWeight:600, color:"rgba(255,255,255,.62)", letterSpacing:.4, minHeight:18 }}>{label}</div>
+
+        <div style={{ minHeight:96, maxHeight:170, overflowY:"auto", width:"100%", maxWidth:460, textAlign:"center", padding:"0 4px" }}>
+          {error && <div style={{ fontSize:14, color:"#f87171", lineHeight:1.6 }}>{error}</div>}
+          {!error && transcript && <div style={{ fontSize:17, color:"#fff", lineHeight:1.5, fontWeight:500 }}>{transcript}</div>}
+          {!error && !transcript && reply && <div ref={replyEndRef} style={{ fontSize:15, color:"rgba(255,255,255,.78)", lineHeight:1.7, textAlign:"left" }}>{reply}</div>}
+          {!error && !transcript && !reply && state === "idle" && (
+            <div style={{ fontSize:14, color:"rgba(255,255,255,.42)", lineHeight:1.7 }}>
+              {!supported
+                ? "This browser can't do live speech recognition. Chrome or Edge on Android and desktop work best."
+                : primed
+                  ? "Ask about your finances, your day, or anything else."
+                  // Said before the browser prompt appears, not after. An unexplained permission
+                  // dialog is the single biggest reason people tap Deny — and once denied, the
+                  // browser remembers it and the feature is dead until they dig through settings.
+                  : "KROFT needs your microphone to hear you. Your browser will ask next — audio is only used for the words you speak and isn't stored."}
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div style={{ width:"100%", maxWidth:460, display:"flex", gap:10 }}>
+        {state === "idle"
+          ? <button onClick={onStart} disabled={!supported} style={{ flex:1, minHeight:52, borderRadius:16, border:"none", background:supported?"#fff":"rgba(255,255,255,.14)", color:supported?"#000":"rgba(255,255,255,.4)", fontSize:15, fontWeight:700, fontFamily:"'Space Grotesk',sans-serif", cursor:supported?"pointer":"not-allowed" }}>{primed ? "Start talking" : "Allow microphone"}</button>
+          : <button onClick={onStop} style={{ flex:1, minHeight:52, borderRadius:16, border:"1px solid rgba(255,255,255,.28)", background:"transparent", color:"#fff", fontSize:15, fontWeight:700, fontFamily:"'Space Grotesk',sans-serif", cursor:"pointer" }}>{state==="speaking" ? "Interrupt" : state==="thinking" ? "Cancel" : "Stop"}</button>}
+      </div>
+    </div>
+  );
+}
+
+function UberModal({ dest, onClose, onBook }) {
+  return (
+    <div style={{ position:"fixed", inset:0, zIndex:950, background:"rgba(0,0,0,.93)", display:"flex", alignItems:"center", justifyContent:"center", padding:24 }} onClick={onClose}>
+      <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:18, padding:28, maxWidth:380, width:"100%", animation:"pop .3s ease" }} onClick={e => e.stopPropagation()}>
+        <div style={{ fontSize:12, fontWeight:600, color:C.muted, marginBottom:6 }}>Ride estimate</div>
+        <div style={{ fontSize:19, fontWeight:700, color:C.white, marginBottom:3 }}>To: {dest.location || dest.name}</div>
+        <Mono style={{ display:"block", color:C.soft, marginBottom:22 }}>{dest.time ? `${dest.time} · ${dest.date}` : dest.dist ? `${dest.dist} away` : "Nearby"}</Mono>
+        {[{type:"UberX",eta:"4 min",price:"$8–11"},{type:"Comfort",eta:"6 min",price:"$12–15"},{type:"UberXL",eta:"8 min",price:"$16–20"}].map(r => (
+          <div key={r.type} onClick={() => onBook(r.type, dest.location || dest.name)} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"13px 8px", borderBottom:`1px solid ${C.div}`, cursor:"pointer", borderRadius:8, transition:"background .14s" }} onMouseEnter={e => e.currentTarget.style.background=C.hover} onMouseLeave={e => e.currentTarget.style.background="transparent"}>
+            <div>
+              <div style={{ fontWeight:700, fontSize:14, color:C.white }}>{r.type}</div>
+              <Mono style={{ color:C.muted }}>{r.eta}</Mono>
+            </div>
+            <Mono style={{ color:C.white, fontWeight:700, fontSize:13 }}>{r.price}</Mono>
+          </div>
+        ))}
+        <Btn v="outline" full onClick={onClose} style={{ marginTop:18 }}>Cancel</Btn>
+      </div>
+    </div>
+  );
+}
+
+function ComposeModal({ draft, onChange, onSend, onClose }) {
+  const ref = useModalA11y(onClose);
+  return (
+    <div ref={ref} role="dialog" aria-modal="true" aria-label="New email" tabIndex={-1} style={{ position:"fixed", inset:0, zIndex:950, background:"rgba(0,0,0,.93)", display:"flex", alignItems:"center", justifyContent:"center", padding:24 }} onClick={onClose}>
+      <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:18, padding:26, maxWidth:480, width:"100%", animation:"pop .3s ease" }} onClick={e => e.stopPropagation()}>
+        <div style={{ fontSize:17, fontWeight:700, color:C.text, letterSpacing:-.3, marginBottom:16 }}>New email</div>
+        <div style={{ display:"flex", flexDirection:"column", gap:10, marginBottom:14 }}>
+          <Inp placeholder="To: email address" type="email" inputMode="email" value={draft.to} onChange={e => onChange({...draft, to:e.target.value})} />
+          <Inp placeholder="Subject" value={draft.subject} onChange={e => onChange({...draft, subject:e.target.value})} />
+          <textarea placeholder="Write your message…" value={draft.body} onChange={e => onChange({...draft, body:e.target.value})} rows={6} style={{ width:"100%", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 14px", color:C.text, fontSize:13, fontFamily:"'Space Grotesk',sans-serif", outline:"none", resize:"vertical", boxSizing:"border-box" }} onFocus={e => { e.target.style.borderColor=C.accent; e.target.style.boxShadow=`0 0 0 3px ${C.accentBg}`; }} onBlur={e => { e.target.style.borderColor=C.cardB; e.target.style.boxShadow="none"; }} />
+        </div>
+        <div style={{ display:"flex", gap:10 }}>
+          <Btn v="outline" onClick={onClose} style={{ flex:1 }}>Cancel</Btn>
+          <Btn onClick={() => onSend(draft)} style={{ flex:2 }}>Send Email</Btn>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Reusable picker used to connect saved Contacts to Email compose instead of leaving the
+// recipient typed blank. `filter` narrows to contacts that actually have the field the
+// destination action needs.
+function PickContactModal({ contacts, filter, title, emptyHint, onPick, onClose }) {
+  const list = contacts.filter(filter);
+  const business = list.filter(c => c.category === "business");
+  const family = list.filter(c => c.category === "family");
+  const Group = ({ label, items }) => items.length === 0 ? null : (
+    <div style={{ marginBottom:14 }}>
+      <div style={{ fontSize:12, fontWeight:600, color:C.muted, marginBottom:8 }}>{label} ({items.length})</div>
+      <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+        {items.map(c => (
+          <div key={c.id} onClick={() => onPick(c)} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"10px 12px", borderRadius:12, border:`1px solid ${C.cardB}`, cursor:"pointer", transition:"border-color .14s" }} onMouseEnter={e=>e.currentTarget.style.borderColor=C.soft} onMouseLeave={e=>e.currentTarget.style.borderColor=C.cardB}>
+            <div style={{ minWidth:0 }}>
+              <div style={{ fontWeight:700, fontSize:13, color:C.white, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{c.name}</div>
+              <Mono style={{ color:C.muted, display:"block", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{c.phone || c.email}</Mono>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+  return (
+    <div style={{ position:"fixed", inset:0, zIndex:950, background:"rgba(0,0,0,.93)", display:"flex", alignItems:"center", justifyContent:"center", padding:24 }} onClick={onClose}>
+      <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:18, padding:26, maxWidth:420, width:"100%", maxHeight:"78vh", overflowY:"auto", animation:"pop .3s ease" }} onClick={e => e.stopPropagation()}>
+        <Mono style={{ display:"block", color:C.muted, letterSpacing:1.2, marginBottom:16 }}>{title}</Mono>
+        {list.length === 0 ? (
+          <Mono style={{ display:"block", color:C.soft, marginBottom:18 }}>{emptyHint}</Mono>
+        ) : (
+          <>
+            <Group label="Business" items={business} />
+            <Group label="Family" items={family} />
+          </>
+        )}
+        <Btn v="outline" full onClick={onClose}>Cancel</Btn>
+      </div>
+    </div>
+  );
+}
+
+// Shared "link to a contact" dropdown used by Tasks and Reminders forms, so either can
+// be optionally tied to someone in the Contacts book.
+const ContactSelect = ({ value, onChange, contacts, style }) => {
+  const business = contacts.filter(c => c.category === "business");
+  const family = contacts.filter(c => c.category === "family");
+  return (
+    <select value={value || ""} onChange={e => onChange(e.target.value ? Number(e.target.value) : null)} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 12px", color:C.text, fontSize:12, fontFamily:"'Space Mono',monospace", outline:"none", ...style }}>
+      <option value="">No contact</option>
+      {business.length > 0 && <optgroup label="Business">{business.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</optgroup>}
+      {family.length > 0 && <optgroup label="Family">{family.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</optgroup>}
+    </select>
+  );
+};
+
+// Drill-down for a single contact — shows their KROFT call/email history plus everything
+// linked to them (tasks, reminders, appointments, notes, files) in one place.
+function ContactActivityModal({ contact, tasks, reminders, appts, notes, files, onToggleTask, onToggleReminder, onClose }) {
+  const Section = ({ label, items, render }) => items.length === 0 ? null : (
+    <div style={{ marginBottom:16 }}>
+      <div style={{ fontSize:12, fontWeight:600, color:C.muted, marginBottom:8 }}>{label} ({items.length})</div>
+      <div style={{ display:"flex", flexDirection:"column", gap:8 }}>{items.map(render)}</div>
+    </div>
+  );
+  const modalRef = useModalA11y(onClose);
+  const empty = tasks.length===0 && reminders.length===0 && appts.length===0 && notes.length===0 && files.length===0 && (contact.log||[]).length===0;
+  return (
+    <div ref={modalRef} role="dialog" aria-modal="true" aria-label={`Activity for ${contact.name}`} tabIndex={-1} style={{ position:"fixed", inset:0, zIndex:950, background:"rgba(0,0,0,.93)", display:"flex", alignItems:"center", justifyContent:"center", padding:24 }} onClick={onClose}>
+      <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:18, padding:26, maxWidth:460, width:"100%", maxHeight:"80vh", overflowY:"auto", animation:"pop .3s ease" }} onClick={e => e.stopPropagation()}>
+        <div style={{ fontSize:19, fontWeight:700, color:C.text, letterSpacing:-.3, marginBottom:2 }}>{contact.name}</div>
+        <Mono style={{ display:"block", color:C.muted, marginBottom:18 }}>Everything linked to this contact</Mono>
+        {empty ? (
+          <Mono style={{ display:"block", color:C.soft, marginBottom:18 }}>Nothing here yet. Calls and emails you place from KROFT show up here, along with any task, reminder, appointment, note or file you assign to {contact.name}. Calls dialled outside KROFT aren't visible to the app.</Mono>
+        ) : (
+          <>
+            <Section label="Calls & emails" items={contact.log||[]} render={l => (
+              <div key={l.id} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:10, padding:"9px 11px", borderRadius:10, border:`1px solid ${C.cardB}` }}>
+                <div style={{ fontSize:12, color:C.text }}>{l.type==="call" ? "Called from KROFT" : "Emailed from KROFT"}</div>
+                <Mono style={{ color:C.muted, flexShrink:0 }}>{new Date(l.at).toLocaleString("en-US", { month:"short", day:"numeric", hour:"2-digit", minute:"2-digit" })}</Mono>
+              </div>
+            )} />
+            <Section label="Tasks" items={tasks} render={t => (
+              <div key={t.id} style={{ display:"flex", alignItems:"center", gap:10, padding:"9px 11px", borderRadius:10, border:`1px solid ${C.cardB}` }}>
+                <button onClick={() => onToggleTask(t.id)} style={{ width:18, height:18, borderRadius:5, border:`1.5px solid ${t.done?C.white:C.soft}`, background:t.done?C.white:"transparent", cursor:"pointer", flexShrink:0, display:"flex", alignItems:"center", justifyContent:"center", color:C.black, fontSize:11, fontWeight:900 }}>{t.done?"✓":""}</button>
+                <div style={{ fontSize:12, color:C.text, textDecoration:t.done?"line-through":"none" }}>{t.title}</div>
+              </div>
+            )} />
+            <Section label="Reminders" items={reminders} render={r => (
+              <div key={r.id} style={{ display:"flex", alignItems:"center", gap:10, padding:"9px 11px", borderRadius:10, border:`1px solid ${C.cardB}` }}>
+                <button onClick={() => onToggleReminder(r.id)} style={{ width:18, height:18, borderRadius:5, border:`1.5px solid ${r.done?C.white:C.soft}`, background:r.done?C.white:"transparent", cursor:"pointer", flexShrink:0, display:"flex", alignItems:"center", justifyContent:"center", color:C.black, fontSize:11, fontWeight:900 }}>{r.done?"✓":""}</button>
+                <div style={{ flex:1, minWidth:0 }}>
+                  <div style={{ fontSize:12, color:C.text, textDecoration:r.done?"line-through":"none" }}>{r.text}</div>
+                  <Mono style={{ color:C.muted }}>{r.when}</Mono>
+                </div>
+              </div>
+            )} />
+            <Section label="Appointments" items={appts} render={a => (
+              <div key={a.id} style={{ padding:"9px 11px", borderRadius:10, border:`1px solid ${C.cardB}` }}>
+                <div style={{ fontSize:12, fontWeight:700, color:C.text }}>{a.title}</div>
+                <Mono style={{ color:C.muted }}>{a.time} · {fmtDate(a.date)||a.date}</Mono>
+              </div>
+            )} />
+            <Section label="Notes" items={notes} render={n => (
+              <div key={n.id} style={{ padding:"9px 11px", borderRadius:10, border:`1px solid ${C.cardB}` }}>
+                <div style={{ fontSize:12, fontWeight:700, color:C.text, marginBottom:2 }}>{n.title || "Untitled note"}</div>
+                <Mono style={{ color:C.muted }}>{n.date}</Mono>
+              </div>
+            )} />
+            <Section label="Files" items={files} render={f => (
+              <div key={f.id} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:10, padding:"9px 11px", borderRadius:10, border:`1px solid ${C.cardB}` }}>
+                <div style={{ minWidth:0, flex:1 }}>
+                  <div style={{ fontSize:12, fontWeight:700, color:C.text, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{f.name}</div>
+                  <Mono style={{ color:C.muted }}>{(f.size/1024).toFixed(0)} KB · {f.date}</Mono>
+                </div>
+                <a href={f.url} download={f.name} style={{ textDecoration:"none", flexShrink:0 }}><Btn sm v="outline">Open</Btn></a>
+              </div>
+            )} />
+          </>
+        )}
+        <Btn v="outline" full onClick={onClose}>Close</Btn>
+      </div>
+    </div>
+  );
+}
+
+function Briefing({ user, income, expenses, emails, appts, onClose }) {
+  const net = income - expenses;
+  const unread = emails.filter(e => !e.read).length;
+  const first = emails.find(e => !e.read);
+  const lines = [
+    `${greeting()}, ${user.name}. Today is ${dateStr()}.`,
+    appts.length>0 ? `You have ${appts.length} appointment${appts.length!==1?"s":""}. First: ${appts[0].title} at ${appts[0].time}.` : `No appointments today.`,
+    unread>0 ? `You have ${unread} unread email${unread!==1?"s":""}. Most recent: ${first?.subject}.` : `Your inbox is clear.`,
+    // The briefing plays out loud, often with other people nearby. It says whether the figures
+  // are worth a look without announcing the amount — the number is one tap away on screen.
+  income>0 ? `Your finances are up to date — the figures are in Finance whenever you want them.` : `No financial data yet.`,
+    `Stay hydrated and take short breaks throughout your day.`,
+    `I am with you all day, ${user.name}. Let's make it count.`,
+  ];
+  const [idx, setIdx] = useState(0);
+  const [done, setDone] = useState(false);
+  useEffect(() => {
+    // The reveal follows the audio: each line lights up as it is actually read. If speech isn't
+    // available (or is blocked until the user interacts), fall back to the old fixed cadence so
+    // the briefing still plays through visually rather than freezing on line one.
+    const canSpeak = "speechSynthesis" in window;
+    if (canSpeak) {
+      const stop = speakSequence(lines, {
+        onLine: i => setIdx(i),
+        onDone: () => { setIdx(lines.length - 1); setDone(true); },
+      });
+      const failsafe = setTimeout(() => { if (!window.speechSynthesis.speaking) { setIdx(lines.length - 1); setDone(true); } }, 1500);
+      return () => { clearTimeout(failsafe); stop(); };
+    }
+    const t = setInterval(() => setIdx(i => { if (i >= lines.length-1) { setDone(true); clearInterval(t); return i; } return i+1; }), 3200);
+    return () => clearInterval(t);
+  }, []);
+  return (
+    <div style={{ position:"fixed", inset:0, zIndex:1000, background:"rgba(0,0,0,.97)", display:"flex", alignItems:"center", justifyContent:"center", padding:24 }}>
+      <div style={{ maxWidth:500, width:"100%", textAlign:"center" }}>
+        <div style={{ fontSize:20, fontWeight:700, color:BRIEF.text, letterSpacing:-.4, marginBottom:4 }}>Your day so far</div>
+        <Mono style={{ color:BRIEF.muted, display:"block", marginBottom:28 }}>{timeStr()}, {dateStr()}</Mono>
+        <div style={{ textAlign:"left", padding:26, marginBottom:24, background:BRIEF.card, border:`1px solid ${BRIEF.border}`, borderRadius:22, boxShadow:BRIEF.shadowRaised }}>
+          {lines.map((l, i) => (
+            <div key={i} style={{ display:"flex", alignItems:"flex-start", gap:10, marginBottom:10, opacity:i<=idx?1:.07, transition:"opacity .5s" }}>
+              <Mono style={{ color:i===idx?BRIEF.text:BRIEF.muted, marginTop:2, flexShrink:0 }}>{i===idx?"—":"·"}</Mono>
+              <div style={{ fontSize:14, lineHeight:1.75, color:i===idx?BRIEF.text:BRIEF.soft, fontWeight:i===idx?500:400, transition:"color .4s" }}>{l}</div>
+            </div>
+          ))}
+        </div>
+        <div style={{ display:"flex", justifyContent:"center", marginBottom:22 }}><WaveBar active={!done} color={BRIEF.text} /></div>
+        <button onClick={onClose} style={{ minHeight:44, padding:"11px 28px", fontSize:13, fontWeight:700, fontFamily:"'Space Grotesk',sans-serif", letterSpacing:.3, borderRadius:12, cursor:"pointer", background:done?BRIEF.white:"transparent", border:`1px solid ${done?BRIEF.white:BRIEF.muted}`, color:done?BRIEF.black:BRIEF.soft }}>{done?`Let's go, ${user.name}`:"Skip"}</button>
+      </div>
+    </div>
+  );
+}
+
+// ── PROFILE PAGE ───────────────────────────────────────────────────────────────
+// A single row in a profile section. Tapping expands an inline detail area so every
+// item does something real — no dead placeholder rows.
+// A compact top-level category row on the Profile hub — title, subtitle, chevron, nothing more.
+// Tapping navigates to a dedicated screen rather than expanding inline.
+function ProfileCategoryRow({ label, sub, onClick, isLast }) {
+  return (
+    <div onClick={onClick} style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"15px 2px", cursor:"pointer", borderBottom:isLast?"none":`1px solid ${C.div}` }}>
+      <div>
+        <div style={{ fontSize:14, fontWeight:700, color:C.white }}>{label}</div>
+        {sub && <Mono style={{ display:"block", color:C.muted, marginTop:2 }}>{sub}</Mono>}
+      </div>
+      <Mono style={{ color:C.muted, fontSize:16 }}>›</Mono>
+    </div>
+  );
+}
+
+// Header bar for a Profile drill-down screen: back button + screen title.
+function ProfileScreenHeader({ title, onBack }) {
+  return (
+    <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:20 }}>
+      <button onClick={onBack} aria-label="Back" style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:10, width:34, height:34, display:"flex", alignItems:"center", justifyContent:"center", cursor:"pointer", color:C.white, fontSize:16, flexShrink:0 }}>
+        ‹
+      </button>
+      <h2 style={{ fontSize:19, fontWeight:800, color:C.white, letterSpacing:-.6 }}>{title}</h2>
+    </div>
+  );
+}
+
+function ProfileRow({ label, sub, expanded, onToggle, children, right }) {
+  return (
+    <div style={{ borderBottom:`1px solid ${C.div}` }}>
+      <div onClick={onToggle} style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"13px 2px", cursor:"pointer" }}>
+        <div>
+          <div style={{ fontSize:13, fontWeight:600, color:C.white }}>{label}</div>
+          {sub && <Mono style={{ display:"block", color:C.muted, marginTop:2 }}>{sub}</Mono>}
+        </div>
+        <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+          {right}
+          <Mono style={{ color:C.muted, fontSize:14, transform:expanded?"rotate(90deg)":"none", transition:"transform .16s", display:"inline-block" }}>›</Mono>
+        </div>
+      </div>
+      {expanded && children && (
+        <div style={{ padding:"0 2px 16px", animation:"fadeIn .2s ease" }}>{children}</div>
+      )}
+    </div>
+  );
+}
+
+function ProfileSwitch({ value, onChange }) {
+  return (
+    <button onClick={e => { e.stopPropagation(); onChange(!value); }} style={{ width:38, height:22, borderRadius:99, border:`1px solid ${value?C.accent:C.muted}`, background:value?C.accentBg:"transparent", position:"relative", cursor:"pointer", flexShrink:0, transition:"all .16s" }}>
+      <div style={{ position:"absolute", top:2, left:value?18:2, width:16, height:16, borderRadius:"50%", background:value?C.accent:C.border, transition:"left .16s, background .16s" }} />
+    </button>
+  );
+}
+
+function ProfileSection({ user, onEditPreferences, onSignOut, theme, onToggleTheme, toast, subscribed, onSetSubscribed, dailyMessageCount, freeLimit, usageStats, voiceReplies, onSetVoiceReplies, proactiveInsights, onSetProactiveInsights, onSetupBiometric, onRemoveBiometric, onExportData, onImportData, notifPermission, notifPrefs, onEnableNotifications, onSetNotifPref, onTestNotification, aiExtrasCount, extrasLimit, monthlyReportCount, reportLimit, reportsLeftThisMonth, onUpgradeFromNotifs, voiceTurnsCount, voiceLimit }) {
+  // null = main hub. Otherwise one of: "ai" | "productivity" | "privacy" | "subscription" | "support"
+  const [screen, setScreen] = useState(null);
+  const [openRow, setOpenRow] = useState(null);
+  const fileInputRef = useRef(null);
+  const toggle = k => setOpenRow(openRow===k ? null : k);
+  const initials = user.name ? user.name.split(" ").map(n=>n[0]).join("").toUpperCase().slice(0,2) : "?";
+  const goTo = key => { setOpenRow(null); setScreen(key); };
+  const goBack = () => { setOpenRow(null); setScreen(null); };
+
+  // Local, in-memory-only preference toggles for this session — presentational until wired to a backend.
+  // voiceReplies and proactiveInsights now live in Kroft() (lifted up) since they actually gate
+  // behavior there; the rest stay local since nothing in-app depends on them yet.
+  const [supportMsg, setSupportMsg] = useState("");
+  const [supportSent, setSupportSent] = useState(false);
+  const [feedbackMsg, setFeedbackMsg] = useState("");
+  const [feedbackSent, setFeedbackSent] = useState(false);
+
+  // ── DRILL-DOWN: AI & PERSONALIZATION ──
+  if (screen === "ai") return (
+    <div style={{ animation:"fadeUp .25s ease" }}>
+      <ProfileScreenHeader title="AI & Personalization" onBack={goBack} />
+      <Card style={{ padding:"2px 16px" }}>
+        <ProfileRow label="Personal Preferences" sub="Name, business, currency" expanded={openRow==="prefs"} onToggle={()=>toggle("prefs")}>
+          <Mono style={{ display:"block", color:C.soft, lineHeight:1.7, marginBottom:10 }}>Business: {user.businessName || "Not set"} · Currency: {user.currency}</Mono>
+          <Btn sm onClick={onEditPreferences}>Edit details</Btn>
+        </ProfileRow>
+        <ProfileRow label="AI Memory" sub="What KROFT remembers about you" expanded={openRow==="memory"} onToggle={()=>toggle("memory")}>
+          <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>KROFT keeps context from this session only — your finances, appointments, and mood — to give relevant answers. Nothing is shared outside this session.</Mono>
+        </ProfileRow>
+        <ProfileRow label="Voice & Language" sub="English (US) · Voice replies" expanded={openRow==="voice"} onToggle={()=>toggle("voice")}
+          right={<ProfileSwitch value={voiceReplies} onChange={onSetVoiceReplies} />}>
+          <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>{voiceReplies ? "KROFT speaks replies and reminders aloud." : "KROFT will stay silent unless you tap Read Aloud."}</Mono>
+        </ProfileRow>
+        <ProfileRow label="Appearance" sub={theme==="dark" ? "Dark mode" : "Light mode"} expanded={openRow==="appearance"} onToggle={()=>toggle("appearance")}>
+          <Mono style={{ display:"block", color:C.soft, lineHeight:1.7, marginBottom:12 }}>Switch between dark and light. Both use only black, white and off-white — no grey.</Mono>
+          <div style={{ display:"flex", gap:8 }}>
+            <button onClick={() => onToggleTheme("dark")} style={{ flex:1, padding:"11px 6px", borderRadius:10, cursor:"pointer", textAlign:"center", background:theme==="dark"?C.white:C.surface, border:`1px solid ${theme==="dark"?C.white:C.cardB}`, color:theme==="dark"?C.black:C.text, fontSize:12, fontWeight:700, fontFamily:"'Space Grotesk',sans-serif" }}>
+              Dark
+            </button>
+            <button onClick={() => onToggleTheme("light")} style={{ flex:1, padding:"11px 6px", borderRadius:10, cursor:"pointer", textAlign:"center", background:theme==="light"?C.white:C.surface, border:`1px solid ${theme==="light"?C.white:C.cardB}`, color:theme==="light"?C.black:C.text, fontSize:12, fontWeight:700, fontFamily:"'Space Grotesk',sans-serif" }}>
+              Light
+            </button>
+          </div>
+        </ProfileRow>
+        <ProfileRow label="Assistant Personality" sub="Direct, warm, concise" expanded={openRow==="personality"} onToggle={()=>toggle("personality")}>
+          <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>KROFT responds in a clear, grounded tone by default — no filler, no forced enthusiasm.</Mono>
+        </ProfileRow>
+        <ProfileRow label="Notifications"
+          sub={notifPermission === "granted" ? "On for this device" : notifPermission === "denied" ? "Blocked in browser settings" : notifPermission === "unsupported" ? "Not supported here" : "Not enabled"}
+          expanded={openRow==="notifs"} onToggle={()=>toggle("notifs")}>
+
+          {notifPermission === "unsupported" && (
+            <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>
+              This browser doesn't support notifications.
+            </Mono>
+          )}
+
+          {notifPermission === "denied" && (
+            <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>
+              Notifications are blocked for this site. Your browser only asks once, so you'll need to
+              re-allow them in site settings — usually the icon beside the address bar.
+            </Mono>
+          )}
+
+          {notifPermission === "default" && (
+            <>
+              {/* Explained before the prompt, for the same reason as the microphone: browsers ask
+                  once, and a denial is effectively permanent. */}
+              <Mono style={{ display:"block", color:C.soft, lineHeight:1.7, marginBottom:12 }}>
+                Get told about an appointment ten minutes before it starts, a reminder when it's due,
+                and a category going over budget. Nothing else.
+              </Mono>
+              <Btn sm onClick={onEnableNotifications}>Turn on notifications</Btn>
+            </>
+          )}
+
+          {notifPermission === "granted" && (
+            <>
+              {[
+                { k:"appointments", label:"Appointments", sub:"10 minutes before" },
+                { k:"reminders",    label:"Reminders",    sub:"When one is due" },
+                { k:"budgets",      label:"Budget alerts", sub:"At 80% and over" },
+              ].map(row => (
+                <div key={row.k} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10, gap:12 }}>
+                  <div style={{ minWidth:0 }}>
+                    <Mono style={{ color:C.soft, display:"block" }}>{row.label}</Mono>
+                    <Mono style={{ color:C.muted, display:"block" }}>{row.sub}</Mono>
+                  </div>
+                  <ProfileSwitch value={!!notifPrefs[row.k]} onChange={v => onSetNotifPref(row.k, v)} />
+                </div>
+              ))}
+              {/* The one notification a free account can't get at all — shown either way so
+                  free users see what upgrading buys them, rather than the feature simply not
+                  existing on their screen. */}
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:4, gap:12 }}>
+                <div style={{ minWidth:0 }}>
+                  <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                    <Mono style={{ color:C.soft }}>Daily brief</Mono>
+                    {!subscribed && <Tag tone="accent">Plus</Tag>}
+                  </div>
+                  <Mono style={{ color:C.muted, display:"block" }}>{subscribed ? "One AI summary, around 8am" : "Upgrade to get an unprompted morning summary"}</Mono>
+                </div>
+                {subscribed
+                  ? <ProfileSwitch value={!!notifPrefs.dailyBrief} onChange={v => onSetNotifPref("dailyBrief", v)} />
+                  : <Btn sm v="outline" onClick={onUpgradeFromNotifs}>Upgrade</Btn>}
+              </div>
+              <Btn sm v="outline" onClick={onTestNotification} style={{ marginTop:4 }}>Send a test</Btn>
+              {/* Stated plainly rather than letting people assume background delivery works. */}
+              <Mono style={{ display:"block", color:C.muted, lineHeight:1.7, marginTop:11 }}>
+                These arrive while KROFT is open in a tab, including in the background. They won't
+                arrive once the browser is fully closed.
+              </Mono>
+            </>
+          )}
+        </ProfileRow>
+      </Card>
+    </div>
+  );
+
+  // ── DRILL-DOWN: PRODUCTIVITY ──
+  if (screen === "productivity") return (
+    <div style={{ animation:"fadeUp .25s ease" }}>
+      <ProfileScreenHeader title="Productivity" onBack={goBack} />
+      <Card style={{ padding:"2px 16px" }}>
+        <ProfileRow label="Calendar Connections" sub={user.connected.calendar ? "Google Calendar linked" : "Not linked"} expanded={openRow==="cal"} onToggle={()=>toggle("cal")}>
+          <Btn sm v="outline" onClick={onEditPreferences}>Manage connections</Btn>
+        </ProfileRow>
+        <ProfileRow label="Email Accounts" sub={user.connected.gmail ? "Gmail linked" : "Not linked"} expanded={openRow==="mail"} onToggle={()=>toggle("mail")}>
+          <Btn sm v="outline" onClick={onEditPreferences}>Manage connections</Btn>
+        </ProfileRow>
+        <ProfileRow label="Linked Apps" sub={`${Object.values(user.connected).filter(Boolean).length} connected`} expanded={openRow==="apps"} onToggle={()=>toggle("apps")}>
+          <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>Gmail, Google Calendar and Uber can be linked from Preferences.</Mono>
+        </ProfileRow>
+        <ProfileRow label="Smart Automations" sub="Reminders, briefings, insights" expanded={openRow==="auto"} onToggle={()=>toggle("auto")}
+          right={<ProfileSwitch value={proactiveInsights} onChange={onSetProactiveInsights} />}>
+          <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>{proactiveInsights ? "KROFT proactively surfaces reminders and daily insights." : "KROFT will only respond when asked."}</Mono>
+        </ProfileRow>
+      </Card>
+    </div>
+  );
+
+  // ── DRILL-DOWN: PRIVACY & SECURITY ──
+  if (screen === "privacy") return (
+    <div style={{ animation:"fadeUp .25s ease" }}>
+      <ProfileScreenHeader title="Privacy & Security" onBack={goBack} />
+      <Card style={{ padding:"2px 16px" }}>
+        <ProfileRow label="Face ID" sub={user.webauthnCredentialId ? "Enabled for this device" : "Not set up"} expanded={openRow==="faceid"} onToggle={()=>toggle("faceid")}
+          right={<ProfileSwitch value={!!user.webauthnCredentialId} onChange={v => v ? onSetupBiometric() : onRemoveBiometric()} />}>
+          <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>Biometric sign-in uses your device's real WebAuthn platform authenticator (Face ID, Touch ID, or Windows Hello) — turning this on will prompt an actual biometric check on this device, not just a toggle.</Mono>
+        </ProfileRow>
+        <ProfileRow label="Passcode" sub="Backup unlock method" expanded={openRow==="passcode"} onToggle={()=>toggle("passcode")}>
+          <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>Used to unlock KROFT if Face ID fails or is unavailable.</Mono>
+        </ProfileRow>
+        <ProfileRow label="Devices" sub="1 active session" expanded={openRow==="devices"} onToggle={()=>toggle("devices")}>
+          <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>This device — signed in now.</Mono>
+        </ProfileRow>
+        <ProfileRow label="Privacy Controls" sub="Data sharing, visibility" expanded={openRow==="privacy"} onToggle={()=>toggle("privacy")}>
+          <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>Your data stays scoped to your own account and is never shared with other KROFT users.</Mono>
+        </ProfileRow>
+        <ProfileRow label="Backup & Restore" sub="Download a copy of everything" expanded={openRow==="data"} onToggle={()=>toggle("data")}>
+          <Mono style={{ display:"block", color:C.soft, lineHeight:1.7, marginBottom:12 }}>
+            KROFT keeps your data on this device only — nothing is uploaded. That also means clearing your
+            browser data erases it permanently, so download a backup you can keep somewhere safe.
+            Your password is never included in the file.
+          </Mono>
+          <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+            <Btn sm onClick={onExportData}>Download backup</Btn>
+            <Btn sm v="outline" onClick={() => fileInputRef.current?.click()}>Restore from file</Btn>
+          </div>
+          <input ref={fileInputRef} type="file" accept="application/json,.json" style={{ display:"none" }}
+            onChange={e => { const f = e.target.files?.[0]; if (f) onImportData(f); e.target.value = ""; }} />
+          <Mono style={{ display:"block", color:C.muted, lineHeight:1.7, marginTop:11 }}>
+            Restoring replaces everything currently on this device.
+          </Mono>
+        </ProfileRow>
+      </Card>
+    </div>
+  );
+
+  // ── DRILL-DOWN: SUBSCRIPTION ──
+  if (screen === "subscription") return (
+    <div style={{ animation:"fadeUp .25s ease" }}>
+      <ProfileScreenHeader title="Subscription" onBack={goBack} />
+
+      <Card style={{ marginBottom:16, border:`1px solid ${C.border}` }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
+          <div style={{ fontSize:16, fontWeight:800, color:C.white }}>{subscribed ? "KROFT Plus" : "Free Plan"}</div>
+          <Tag tone={subscribed?"positive":undefined}>{subscribed ? "Active" : "Current"}</Tag>
+        </div>
+        {/* Three real usage pools shown as meters, not one vague "limit." Each is a genuinely
+            different habit — chatting a lot, drafting a handful of emails, generating one report
+            a month — so a person can see exactly what's actually constrained rather than a single
+            number that hides which of three different things they're running low on. */}
+        {!subscribed && [
+          { label:"AI chat", used:dailyMessageCount, limit:freeLimit },
+          { label:"Voice mode", used:voiceTurnsCount, limit:voiceLimit },
+          { label:"AI drafts & suggestions", used:aiExtrasCount, limit:extrasLimit },
+          { label:"Monthly reports", used:monthlyReportCount, limit:reportLimit, period:"this month" },
+        ].map(row => {
+          const pct = Math.min(100, (row.used/row.limit)*100);
+          const barColor = pct>=90?C.negative:pct>=70?C.warning:C.accent;
+          return (
+            <div key={row.label} style={{ marginBottom:11 }}>
+              <div style={{ display:"flex", justifyContent:"space-between", marginBottom:4 }}>
+                <Mono style={{ color:C.soft }}>{row.label}</Mono>
+                <Mono style={{ color:C.muted }}>{row.used}/{row.limit}{row.period ? ` ${row.period}` : " today"}</Mono>
+              </div>
+              <div style={{ background:C.surface, borderRadius:99, height:6, overflow:"hidden" }}>
+                <div style={{ height:"100%", width:`${pct}%`, background:barColor, borderRadius:99, transition:"width .3s ease" }} />
+              </div>
+            </div>
+          );
+        })}
+        {subscribed && (
+          <Mono style={{ display:"block", color:C.soft, marginBottom:14 }}>Unlimited chat, voice, drafts and reports.</Mono>
+        )}
+        {subscribed
+          ? <Btn sm v="outline" onClick={() => { onSetSubscribed(false); toast("Downgraded to the free plan."); }}>Cancel KROFT Plus</Btn>
+          : <Btn sm onClick={() => { onSetSubscribed(true); toast("KROFT Plus enabled — no charge, this build has no payment set up."); }}>Upgrade to KROFT Plus</Btn>}
+      </Card>
+
+      <Card style={{ padding:"2px 16px" }}>
+        <ProfileRow label="What's in Plus" sub={subscribed ? "Active" : "Free plan"} expanded={openRow==="plus"} onToggle={()=>toggle("plus")}>
+          {/* The free tier isn't a stripped-down trial — finances, budgets, contacts, notes,
+              recurring transactions and notifications are complete and stay free permanently.
+              Plus is specifically the AI calls that cost real money per use, so upgrading is
+              paying for more of a genuinely limited resource rather than unlocking basics that
+              were artificially held back. */}
+          <div style={{ display:"flex", flexDirection:"column", gap:10, marginBottom:12 }}>
+            {[
+              { t:"Unlimited AI chat", d:`No daily cap on Ask KROFT — free plan gets ${freeLimit} messages a day.` },
+              { t:"Unlimited voice mode", d:`Talk to KROFT as much as you want, hands-free — free plan gets ${voiceLimit} voice turns a day, separate from chat.` },
+              { t:"Unlimited AI drafts & suggestions", d:`Email replies and smart reminders, as many as you need — free plan gets ${extrasLimit} a day.` },
+              { t:"Monthly reports on demand", d:"Generate your finance summary whenever you want — free plan gets one a month." },
+              { t:"Budget rollover", d:"Unused budget carries into next month instead of resetting to zero." },
+              { t:"Longer conversation memory", d:"KROFT remembers more of a long conversation — 60 messages of context instead of 20." },
+              { t:"Scheduled reminder calls", d:"Set a time and KROFT rings you in the app, speaks the reminder, and can talk it through if you answer." },
+            ].map(b => (
+              <div key={b.t} style={{ display:"flex", gap:9, alignItems:"flex-start" }}>
+                <Dot color={C.positive} />
+                <div>
+                  <div style={{ fontSize:12.5, fontWeight:600, color:C.text }}>{b.t}</div>
+                  <Mono style={{ color:C.muted, lineHeight:1.5 }}>{b.d}</Mono>
+                </div>
+              </div>
+            ))}
+          </div>
+          <Mono style={{ display:"block", color:C.muted, lineHeight:1.6, marginBottom:12, paddingTop:10, borderTop:`1px solid ${C.div}` }}>
+            Finances, budgets, contacts, notes, tasks, recurring transactions and notifications are complete on the free plan and always will be — Plus is only about the AI calls above.
+          </Mono>
+          {!subscribed && <Btn sm onClick={() => { onSetSubscribed(true); toast("KROFT Plus enabled — no charge, this build has no payment set up."); }}>Upgrade</Btn>}
+        </ProfileRow>
+        <ProfileRow label="Billing" sub={subscribed ? "No charge — this build has no payment processor connected" : "No payment method on file"} expanded={openRow==="billing"} onToggle={()=>toggle("billing")}>
+          <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>
+            KROFT Plus is currently free to toggle in this build since no payment provider (Stripe, App Store, Play Billing) is connected yet. Nothing is charged.
+          </Mono>
+        </ProfileRow>
+        <ProfileRow label="Payment Methods" sub="None on file" expanded={openRow==="paymethods"} onToggle={()=>toggle("paymethods")}>
+          <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>Card management will appear here once a real payment provider is integrated.</Mono>
+        </ProfileRow>
+        <ProfileRow label="Usage Statistics" sub="Real activity from this session" expanded={openRow==="usage"} onToggle={()=>toggle("usage")}>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:9 }}>
+            {[
+              { l:"AI messages today", v: dailyMessageCount, ai:true },
+              { l:"Voice turns today", v: voiceTurnsCount, ai:true },
+              { l:"AI drafts today", v: aiExtrasCount, ai:true },
+              { l:"Reports this month", v: monthlyReportCount, ai:true },
+              { l:"Total AI messages", v: usageStats.totalMessages, ai:true },
+              { l:"Appointments", v: usageStats.appts },
+              { l:"Finance entries", v: usageStats.financeEntries },
+              { l:"Notes", v: usageStats.notes },
+              { l:"Tasks", v: usageStats.tasks },
+            ].map(s => (
+              <div key={s.l} style={{ background:s.ai?C.accentBg:C.surface, borderRadius:12, padding:"10px 12px", border:s.ai?`1px solid ${C.accent}33`:"none" }}>
+                <div style={{ fontSize:18, fontWeight:800, color:s.ai?C.accent:C.white }}>{s.v}</div>
+                <Mono style={{ display:"block", color:C.muted, marginTop:2 }}>{s.l}</Mono>
+              </div>
+            ))}
+          </div>
+        </ProfileRow>
+        <ProfileRow label="Manage Subscription" sub={subscribed ? "Change or cancel plan" : "You're on the free plan"} expanded={openRow==="managesub"} onToggle={()=>toggle("managesub")}>
+          {subscribed ? (
+            <>
+              <Mono style={{ display:"block", color:C.soft, lineHeight:1.7, marginBottom:10 }}>You're on KROFT Plus. Cancel any time — you'll return to the free plan's daily message limit immediately.</Mono>
+              <Btn sm v="outline" onClick={() => { onSetSubscribed(false); toast("Downgraded to the free plan."); }}>Cancel KROFT Plus</Btn>
+            </>
+          ) : (
+            <>
+              <Mono style={{ display:"block", color:C.soft, lineHeight:1.7, marginBottom:10 }}>Nothing to manage yet — upgrade to KROFT Plus to remove your daily message limit.</Mono>
+              <Btn sm onClick={() => { onSetSubscribed(true); toast("KROFT Plus enabled — no charge, this build has no payment set up."); }}>Upgrade</Btn>
+            </>
+          )}
+        </ProfileRow>
+      </Card>
+    </div>
+  );
+
+  // ── DRILL-DOWN: SUPPORT ──
+  if (screen === "support") return (
+    <div style={{ animation:"fadeUp .25s ease" }}>
+      <ProfileScreenHeader title="Support" onBack={goBack} />
+      <Card style={{ padding:"2px 16px" }}>
+        <ProfileRow label="Help Center" sub="Guides and answers" expanded={openRow==="help"} onToggle={()=>toggle("help")}>
+          <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>Help articles will appear here once connected to Virt Technologies' support content.</Mono>
+        </ProfileRow>
+        <ProfileRow label="Contact Support" sub="Something not working right" expanded={openRow==="report"} onToggle={()=>toggle("report")}>
+          <textarea
+            placeholder="Describe what happened…"
+            rows={3}
+            value={supportMsg}
+            onChange={e => { setSupportMsg(e.target.value); setSupportSent(false); }}
+            style={{ width:"100%", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"10px 12px", color:C.text, fontSize:12, fontFamily:"'Space Grotesk',sans-serif", outline:"none", resize:"vertical", boxSizing:"border-box", marginBottom:8 }}
+          />
+          <Btn
+            sm
+            disabled={!supportMsg.trim()}
+            onClick={() => {
+              window.location.href = `mailto:support@virttechnologies.com?subject=${encodeURIComponent("KROFT support request")}&body=${encodeURIComponent(supportMsg)}`;
+              setSupportSent(true);
+            }}
+          >
+            Send report
+          </Btn>
+          {supportSent && <Mono style={{ display:"block", color:C.soft, marginTop:8 }}>Opening your email app to send this to support@virttechnologies.com.</Mono>}
+        </ProfileRow>
+        <ProfileRow label="Send Feedback" sub="Tell us what to build next" expanded={openRow==="feature"} onToggle={()=>toggle("feature")}>
+          <textarea
+            placeholder="What would make KROFT better?"
+            rows={3}
+            value={feedbackMsg}
+            onChange={e => { setFeedbackMsg(e.target.value); setFeedbackSent(false); }}
+            style={{ width:"100%", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"10px 12px", color:C.text, fontSize:12, fontFamily:"'Space Grotesk',sans-serif", outline:"none", resize:"vertical", boxSizing:"border-box", marginBottom:8 }}
+          />
+          <Btn
+            sm
+            disabled={!feedbackMsg.trim()}
+            onClick={() => {
+              window.location.href = `mailto:feedback@virttechnologies.com?subject=${encodeURIComponent("KROFT feature idea")}&body=${encodeURIComponent(feedbackMsg)}`;
+              setFeedbackSent(true);
+            }}
+          >
+            Submit idea
+          </Btn>
+          {feedbackSent && <Mono style={{ display:"block", color:C.soft, marginTop:8 }}>Opening your email app to send this to feedback@virttechnologies.com.</Mono>}
+        </ProfileRow>
+        <ProfileRow label="About Kroft" sub="Version, legal, credits" expanded={openRow==="about"} onToggle={()=>toggle("about")}>
+          <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>KROFT by Virt Technologies. Your personal AI assistant.</Mono>
+        </ProfileRow>
+      </Card>
+    </div>
+  );
+
+  // ── MAIN HUB ──
+  const CATEGORIES = [
+    { key:"ai",           label:"AI & Personalization", sub:"Preferences, memory, voice, appearance" },
+    { key:"productivity",  label:"Productivity",         sub:"Calendar, email, automations" },
+    { key:"privacy",       label:"Privacy & Security",   sub:"Face ID, devices, data" },
+    { key:"subscription",  label:"Subscription",         sub:"KROFT Plus, billing, usage" },
+    { key:"support",       label:"Support",              sub:"Help, feedback, about" },
+  ];
+
+  return (
+    <div style={{ animation:"fadeUp .25s ease" }}>
+      {/* Header */}
+      <div style={{ display:"flex", flexDirection:"column", alignItems:"center", textAlign:"center", marginBottom:28 }}>
+        <div style={{ width:84, height:84, borderRadius:"50%", overflow:"hidden", background:user.photo?`url(${user.photo}) center/cover no-repeat`:C.surface, border:`2px solid ${C.border}`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:28, fontWeight:800, color:C.white, marginBottom:14 }}>
+          {!user.photo && initials}
+        </div>
+        <div style={{ fontSize:20, fontWeight:800, color:C.white, letterSpacing:-.5, marginBottom:3 }}>{user.name || "Your name"}</div>
+        <Mono style={{ color:C.muted, marginBottom:12 }}>Powered by Virt Technologies</Mono>
+        <div style={{ display:"flex", gap:7, flexWrap:"wrap", justifyContent:"center" }}>
+          <Tag tone="positive">Online</Tag>
+          <Tag tone="accent">Synced</Tag>
+          {user.webauthnCredentialId && <Tag tone="positive">Face ID enabled</Tag>}
+        </div>
+      </div>
+
+      {/* Compact category list — tap to drill in, nothing expands inline here */}
+      <Card style={{ padding:"2px 16px", marginBottom:20 }}>
+        {CATEGORIES.map((c, i) => (
+          <ProfileCategoryRow key={c.key} label={c.label} sub={c.sub} onClick={() => goTo(c.key)} isLast={i===CATEGORIES.length-1} />
+        ))}
+      </Card>
+
+      <Btn v="outline" full onClick={onSignOut} style={{ padding:"13px", fontSize:13 }}>Sign Out</Btn>
+    </div>
+  );
+}
+
+// Catches runtime errors anywhere in the app tree and shows a recoverable fallback screen
+// instead of letting React unmount everything to a blank white page. Without this, a single
+// bad state access in any one tab (a null contact, a malformed date, etc.) would crash the
+// entire app for the user with no way back in short of a full reload.
+class ErrorBoundary extends Component {
+  constructor(props) { super(props); this.state = { error: null }; }
+  static getDerivedStateFromError(error) { return { error }; }
+  componentDidCatch(error, info) { console.error("KROFT crashed:", error, info); }
+  render() {
+    if (this.state.error) {
+      return (
+        <div style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:C.bg, color:C.text, fontFamily:"'Space Grotesk',sans-serif", padding:24 }}>
+          <div style={{ maxWidth:360, textAlign:"center" }}>
+            <div style={{ fontSize:34, marginBottom:14 }}>⚠️</div>
+            <div style={{ fontSize:18, fontWeight:700, marginBottom:8 }}>Something went wrong</div>
+            <div style={{ fontSize:13, color:C.soft, marginBottom:22, lineHeight:1.5 }}>
+              KROFT hit an unexpected error. Your saved data is safe — it's stored separately and wasn't affected.
+            </div>
+            {/* Two ways out. "Try again" re-renders the same tree, which lands straight back on
+                the error if the cause hasn't changed — so a reload is offered alongside it.
+                Neither touches stored data. */}
+            <div style={{ display:"flex", gap:9, justifyContent:"center" }}>
+              <button
+                onClick={() => this.setState({ error: null })}
+                style={{ background:C.white, color:C.black, border:"none", borderRadius:12, padding:"11px 22px", fontSize:13, fontWeight:700, cursor:"pointer", fontFamily:"'Space Grotesk',sans-serif" }}
+              >
+                Try again
+              </button>
+              <button
+                onClick={() => window.location.reload()}
+                style={{ background:"transparent", color:C.text, border:`1px solid ${C.border}`, borderRadius:12, padding:"11px 22px", fontSize:13, fontWeight:700, cursor:"pointer", fontFamily:"'Space Grotesk',sans-serif" }}
+              >
+                Reload
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+// Base64url <-> ArrayBuffer helpers for WebAuthn credential IDs, which need to round-trip
+// through JSON (persisted storage) as plain strings rather than binary.
+const bufToBase64url = buf => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
+const base64urlToBuf = str => {
+  const pad = str.length % 4 === 0 ? "" : "=".repeat(4 - (str.length % 4));
+  const base64 = (str + pad).replace(/-/g,"+").replace(/_/g,"/");
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i=0; i<binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes.buffer;
+};
+
+// SHA-256 password hashing with a random per-account salt, via the Web Crypto API. This is not
+// a substitute for a real backend with a slow/memory-hard KDF (bcrypt/scrypt/argon2) — there's
+// no server here to rate-limit attempts or keep a pepper secret — but it's a real step up from
+// storing the plain-text password, which matters now that account data is written to persistent
+// storage rather than living only in memory for the session.
+const generateSalt = () => bufToBase64url(crypto.getRandomValues(new Uint8Array(16)).buffer);
+const hashPassword = async (password, salt) => {
+  const enc = new TextEncoder().encode(`${salt}:${password}`);
+  const digest = await crypto.subtle.digest("SHA-256", enc);
+  return bufToBase64url(digest);
+};
+
+// Storage key groups for window.storage persistence — module-level since the mapping never
+// changes, so it doesn't need to be recreated on every render.
+const STORAGE_KEYS = {
+  profile: "kroft:profile",
+  finance: "kroft:finance",
+  productivity: "kroft:productivity",
+  calendarData: "kroft:calendar",
+  contactsData: "kroft:contacts",
+  projectsData: "kroft:projects",
+  chatData: "kroft:chat",
+  wellnessData: "kroft:wellness",
+  emailData: "kroft:emails",
+};
+
+function KroftApp() {
+  // Theme: "dark" or "light". C's properties are reassigned in place (see effect below)
+  // rather than swapping which object C points to, since ~250 style props across this file
+  // already read C.xxx directly. themeTick forces React to re-render after that mutation,
+  // since mutating an object in place doesn't itself trigger a re-render.
+  const [theme, setTheme] = useState("light");
+  const [themeTick, setThemeTick] = useState(0);
+  // Applied during render rather than in an effect, so the mutation lands before the browser
+  // paints. Doing it in an effect meant one frame was drawn with the previous theme's colours
+  // every time the theme changed, including on the initial load.
+  const appliedTheme = useRef(null);
+  if (appliedTheme.current !== theme) {
+    Object.assign(C, theme === "dark" ? DARK : LIGHT);
+    appliedTheme.current = theme;
+  }
+  useEffect(() => { setThemeTick(t => t + 1); }, [theme]);
+
+  // Declared before the splash effect below, which reads it — a const referenced above its
+  // declaration throws on first render.
+  const [dataLoaded, setDataLoaded] = useState(false);
+
+  // Splash screen. This used to run on a hard 6-second timer regardless of how fast the app was
+  // ready — storage reads finish in milliseconds, so nearly six of those seconds were pure
+  // waiting on every single launch. For an assistant built around quick capture that was longer
+  // than the task itself. It now clears as soon as data is loaded, with a short floor so it
+  // doesn't flash past too fast to read, and a ceiling so a slow or failed read can't strand
+  // anyone behind it. Skeletons cover whatever is still loading underneath.
+  const SPLASH_MIN = 900, SPLASH_MAX = 4000;
+  const [showSplash, setShowSplash] = useState(true);
+  const [splashFading, setSplashFading] = useState(false);
+  const splashStart = useRef(Date.now());
+  useEffect(() => {
+    if (!showSplash) return;
+    const dismiss = () => {
+      setSplashFading(true);
+      setTimeout(() => setShowSplash(false), 420);
+    };
+    if (dataLoaded) {
+      const elapsed = Date.now() - splashStart.current;
+      const wait = Math.max(0, SPLASH_MIN - elapsed);
+      const t = setTimeout(dismiss, wait);
+      return () => clearTimeout(t);
+    }
+    // Safety net: never hold someone here because storage stalled.
+    const t = setTimeout(dismiss, SPLASH_MAX);
+    return () => clearTimeout(t);
+  }, [dataLoaded, showSplash]);
+
+  // Persistent storage — window.storage is the only persistence layer available in this
+  // sandbox (localStorage/sessionStorage are unsupported here and would silently fail).
+  // Data is grouped into a handful of keys rather than one per array, since storage writes
+  // are rate-limited and every keystroke touching its own key would burn through that fast.
+  // NOT persisted, by design: Files and Voice Memos, whose blob: URLs are only valid for the
+  // current page load — restoring them after a reload would just show broken/unopenable
+  // entries, which is worse than an honest "these don't survive a refresh yet." Also not
+  // persisted: purely transient UI state (which modal is open, draft form fields).
+
+  // Voice Replies preference — lives here (not in ProfileSection) because it needs to gate
+  // the auto-speak calls below (chat replies, appointment reminders, mood check-ins). Explicit
+  // "Read Aloud"/"Play" taps elsewhere always speak regardless of this setting.
+  const [voiceReplies, setVoiceReplies] = useState(true);
+
+  // Proactive Insights preference — same reasoning: gates the passive 3x-daily finance nudge
+  // below. When off, KROFT should only respond when asked, not surface unprompted toasts.
+  const [proactiveInsights, setProactiveInsights] = useState(true);
+
+  // Starts at signup: a fresh device has no account, so a login form there is a dead end.
+  // The load effect below switches to login once a saved account is found.
+  const [step, setStep] = useState("signup");
+  const [user, setUser] = useState({ name:"", email:"", password:"", phone:"", photo:null, businessName:"", businessType:"", currency:"USD", connected:{gmail:false,calendar:false,uber:false} });
+  const [loginEmail, setLoginEmail] = useState("");
+  const [loginPw, setLoginPw] = useState("");
+  const [showLoginPw, setShowLoginPw] = useState(false);
+  const [loginError, setLoginError] = useState("");
+  const [loginAttempts, setLoginAttempts] = useState(0);
+  const [locked, setLocked] = useState(false);
+  const [lockTimer, setLockTimer] = useState(0);
+  const [fpLoading, setFpLoading] = useState(false);
+  const [fpSuccess, setFpSuccess] = useState(false);
+  const [showSignupPw, setShowSignupPw] = useState(false);
+  const [showConfirmPw, setShowConfirmPw] = useState(false);
+  // The signup password draft lives here, separate from `user` — `user` autosaves to
+  // persistent storage on every change (see the profile save effect), so keeping the raw
+  // plaintext password there while someone is mid-typing would risk writing it to storage on
+  // every keystroke before it ever gets hashed. Only the resulting hash+salt join `user`.
+  const [signupPw, setSignupPw] = useState("");
+  const [confirmPw, setConfirmPw] = useState("");
+  const [signupError, setSignupError] = useState("");
+  const [customCurrency, setCustomCurrency] = useState("");
+  const [customCurrencyError, setCustomCurrencyError] = useState("");
+  const galleryRef = useRef(null);
+  const videoRef = useRef(null);
+  const canvasRef = useRef(null);
+  const [cameraMode, setCameraMode] = useState(false);
+  const [cameraReady, setCameraReady] = useState(false);
+  const [cameraError, setCameraError] = useState("");
+  const [camStream, setCamStream] = useState(null);
+  const [photoSource, setPhotoSource] = useState("");
+  const [tab, setTab] = useState("home");
+  const [homeSection, setHomeSection] = useState("overview");
+  const [workspaceSection, setWorkspaceSection] = useState(null); // null = hub screen
+  const [workspaceSearch, setWorkspaceSearch] = useState("");
+  const [showAllTools, setShowAllTools] = useState(false);
+  const [income, setIncome] = useState([]);
+  const [expenses, setExpenses] = useState([]);
+  const [incomeCats, setIncomeCats] = useState(["Invoice","Sales","Consulting","Freelance","Other"]);
+  const [expenseCats, setExpenseCats] = useState(["Operations","Tech","Marketing","Travel","Rent","Other"]);
+  // Monthly spending limits per category, as { [category]: amount }. Tracking spend without ever
+  // warning about it means the app only tells you about a problem after the month is over.
+  const [budgets, setBudgets] = useState({});
+  // Categories already warned about this month, so an alert fires once at each threshold rather
+  // than on every render or every new expense.
+  const [budgetAlerts, setBudgetAlerts] = useState({});
+  // Plus feature: unused budget carries into the next month instead of resetting to zero. Stored
+  // as { [category]: amount } — computed once at each month's rollover from the previous month's
+  // actual leftover, not accumulated further, so it rewards last month specifically rather than
+  // letting an unused budget hoard indefinitely.
+  const [budgetCarryover, setBudgetCarryover] = useState({});
+  // The last month rollover was processed for, so it runs exactly once per month rather than
+  // every time the heartbeat ticks.
+  const [budgetRolloverMonth, setBudgetRolloverMonth] = useState(() => todayISO().slice(0, 7));
+  // Notification settings, lifted out of ProfileSection where they were local state that nothing
+  // read and nothing persisted. Each maps to a real trigger below.
+  const [notifPrefs, setNotifPrefs] = useState({ appointments:true, reminders:true, budgets:true, dailyBrief:true });
+  // The last date a daily brief notification was sent, so it fires exactly once per day rather
+  // than every time the heartbeat ticks after the target hour.
+  const [dailyBriefSentDate, setDailyBriefSentDate] = useState("");
+  const [notifPermission, setNotifPermission] = useState(() => (typeof window !== "undefined" && "Notification" in window) ? Notification.permission : "unsupported");
+  // Keys of notifications already delivered, so a reminder fires once rather than every minute
+  // the checker runs. Persisted so a reload doesn't re-announce everything.
+  const [notifSent, setNotifSent] = useState({});
+  const [showBudgetEditor, setShowBudgetEditor] = useState(false);
+  const [newInc, setNewInc] = useState({ label:"", amount:"", cat:"Invoice", date:todayISO(), repeat:"none" });
+  const [newExp, setNewExp] = useState({ label:"", amount:"", cat:"Operations", date:todayISO(), repeat:"none" });
+  const [showAddInc, setShowAddInc] = useState(false);
+  const [showAddExp, setShowAddExp] = useState(false);
+  const [monthlyReport, setMonthlyReport] = useState(null);
+  const [generatingReport, setGeneratingReport] = useState(false);
+  const [editingEntry, setEditingEntry] = useState(null); // { kind:"income"|"expenses", id, label, amount, date, cat }
+  const [remindersFired, setRemindersFired] = useState({ date:"", slots:[] }); // tracks which of today's 3 nudges already fired
+  const [emails, setEmails] = useState([
+    { id:1, from:"Amaka Obi <amaka@brightpath.co>", subject:"Follow-up on our call", tag:"Client", time:"9:14 AM", read:false, body:"Hi, thanks for the walkthrough yesterday — could you send over the pricing sheet we discussed? Also wanted to confirm the timeline for the first milestone." },
+    { id:2, from:"Sir Mubarak Isa Ibrahim <mi@ventures.ng>", subject:"Quick check-in", tag:"Investor", time:"Yesterday", read:false, body:"How's progress on the current build? Would like a short update whenever you have a moment — no rush." },
+    { id:3, from:"Notion <team@notion.so>", subject:"Your weekly workspace summary", tag:"", time:"2 days ago", read:true, body:"Here's what happened in your workspace this week. 3 pages edited, 1 new comment, 0 overdue tasks." },
+  ]);
+  const [openEmail, setOpenEmail] = useState(null);
+  const [composeDraft, setComposeDraft] = useState(null);
+  const [appts, setAppts] = useState([]);
+  const [newAppt, setNewAppt] = useState({ title:"", time:"", date:todayISO(), location:"", notes:"", urgent:false, repeat:"none", contactId:null });
+  const [showAddAppt, setShowAddAppt] = useState(false);
+  const [openAppt, setOpenAppt] = useState(null);
+  const [editingAppt, setEditingAppt] = useState(null);
+
+  // Workspace — Notes
+  const [notes, setNotes] = useState([]);
+  const [newNote, setNewNote] = useState({ title:"", body:"", contactId:null });
+  const [showAddNote, setShowAddNote] = useState(false);
+  const [openNote, setOpenNote] = useState(null);
+  const [editingNote, setEditingNote] = useState(null);
+
+  // Workspace — Tasks
+  const [tasks, setTasks] = useState([]);
+  const [newTask, setNewTask] = useState({ title:"", priority:"Normal", repeat:"none", contactId:null });
+  const [showAddTask, setShowAddTask] = useState(false);
+  const [editingTask, setEditingTask] = useState(null);
+
+  // Workspace — Files
+  const [files, setFiles] = useState([]);
+
+  // Workspace — Projects
+  const [projects, setProjects] = useState([]);
+  const [newProject, setNewProject] = useState({ name:"", deadline:"", description:"", status:"Not Started" });
+  const [showAddProject, setShowAddProject] = useState(false);
+  const [openProject, setOpenProject] = useState(null);
+  const [editingProject, setEditingProject] = useState(null);
+  const [linkPicker, setLinkPicker] = useState(null); // { projectId, kind:"taskIds"|"noteIds"|"fileIds" }
+
+  // Workspace — Voice Memos
+  const [voiceMemos, setVoiceMemos] = useState([]);
+  const [editingMemo, setEditingMemo] = useState(null);
+
+  // Workspace — Documents (longer-form, structured write-ups — distinct from quick Notes)
+  const [documents, setDocuments] = useState([]);
+  const [newDocument, setNewDocument] = useState({ title:"", body:"" });
+  const [showAddDocument, setShowAddDocument] = useState(false);
+  const [openDocument, setOpenDocument] = useState(null);
+  const [editingDocument, setEditingDocument] = useState(null);
+  const [recordingMemo, setRecordingMemo] = useState(false);
+  const memoRecRef = useRef(null);
+  const memoChunksRef = useRef([]);
+
+  // Workspace — Reminders (smart, AI-suggested — separate from calendar appointment reminders)
+  const [smartReminders, setSmartReminders] = useState([]);
+  const [newReminder, setNewReminder] = useState({ text:"", when:"", contactId:null });
+  const [editingReminder, setEditingReminder] = useState(null);
+  const [showAddReminder, setShowAddReminder] = useState(false);
+  // Plus: KROFT calls at a set time instead of just showing a reminder. { id, title, note, date,
+  // time, status: "pending"|"answered"|"missed"|"declined" }. Honest limitation, same as every
+  // other notification here: this only works while KROFT is open in a tab (foreground or
+  // background) — there's no telephony behind it, so a fully closed browser gets nothing.
+  const [scheduledCalls, setScheduledCalls] = useState([]);
+  const [showScheduleCall, setShowScheduleCall] = useState(false);
+  const [newCall, setNewCall] = useState({ title:"", note:"", date:todayISO(), time:"" });
+  // The call currently ringing, if any — drives the full-screen incoming-call overlay.
+  const [incomingCall, setIncomingCall] = useState(null);
+  const callTimeoutRef = useRef(null);
+  const callNotifiedRef = useRef({}); // ids already pushed as a system notification, so ringing doesn't re-notify every tick
+
+
+  // Workspace — Contacts (KROFT's own address book, separate from the phone's real contacts —
+  // grouped into Business and Family so the two never blend together). Call/email buttons
+  // deep-link out to the device's native dialer/mail app; KROFT doesn't place calls itself.
+  const [contacts, setContacts] = useState([]);
+  const [newContact, setNewContact] = useState({ name:"", phone:"", email:"", category:"business", note:"" });
+  const [showAddContact, setShowAddContact] = useState(false);
+  const [editingContact, setEditingContact] = useState(null);
+  const [contactSearch, setContactSearch] = useState("");
+  // Which contact group cards are open. Both start collapsed so the Contacts screen is just
+  // "Business 3 / Family 0" at a glance — the people inside only appear once you open a group.
+  const [openContactGroups, setOpenContactGroups] = useState([]);
+  // Connects the Contacts book to the rest of the app: when set, shows a picker so
+  // Email "Compose" pulls a real saved contact instead of going out blank.
+  const [contactPicker, setContactPicker] = useState(null);
+  const [contactActivity, setContactActivity] = useState(null); // holds a contact object when the "View Activity" drill-down is open
+  // Holds the config for the press-and-hold action sheet: { title, subtitle, actions }.
+  const [actionSheet, setActionSheet] = useState(null);
+
+  const [mood, setMood] = useState("calm");
+  const [moodLog, setMoodLog] = useState([]);
+  // Wellness is scored for a specific day. Previously it was a single number that only ever went
+  // up — "Took a break" and "Had water" were unlimited +5/+3 buttons, so it measured how often
+  // you tapped rather than how you were doing, and the "today" label was wrong since it never
+  // reset. Now the day is recorded alongside the score, self-care credits are capped per day,
+  // and a new day starts fresh (see the rollover effect below).
+  const [wellness, setWellness] = useState(75);
+  const [wellnessDate, setWellnessDate] = useState(() => todayISO());
+  // Counts today's self-care taps so they can't be farmed to 100.
+  const [selfCare, setSelfCare] = useState({ breaks:0, water:0 });
+  const SELF_CARE_CAP = { breaks:4, water:6 };
+  const [listening, setListening] = useState(false);
+  const [transcript, setTranscript] = useState("");
+  const [toasts, setToasts] = useState([]);
+  const [hungry, setHungry] = useState(false);
+  const [showBriefing, setShowBriefing] = useState(false);
+  const [uberDest, setUberDest] = useState(null);
+  const [aiMessages, setAiMessages] = useState([]);
+  const [aiInput, setAiInput] = useState("");
+  const [aiLoading, setAiLoading] = useState(false);
+  // Lets a long reply be cut off mid-stream. Held in a ref so the Stop button can reach the
+  // controller for whichever request is currently in flight without re-rendering on every token.
+  const aiAbortRef = useRef(null);
+  const chatEnd = useRef(null);
+  const recRef = useRef(null);
+
+  // Subscription — real, session-local state. No payment processor is available in this
+  // environment, so "upgrading" flips this flag rather than charging anything. What it
+  // actually unlocks (removing the daily AI message cap) is real and enforced below.
+  const FREE_DAILY_MESSAGE_LIMIT = 15;
+  // How long until the daily allowance resets. Being told you're out with no idea whether that
+  // means an hour or a day is the difference between waiting and assuming the app is broken.
+  const resetsIn = () => {
+    const now = new Date();
+    const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 0);
+    const mins = Math.max(1, Math.round((midnight - now) / 60000));
+    if (mins < 60) return `${mins} minute${mins !== 1 ? "s" : ""}`;
+    const hrs = Math.round(mins / 60);
+    return `${hrs} hour${hrs !== 1 ? "s" : ""}`;
+  };
+  const messagesLeft = () => Math.max(0, FREE_DAILY_MESSAGE_LIMIT - dailyMessageCount);
+
+  // A second, smaller daily pool for the lighter one-off AI calls (email drafts, reminder
+  // suggestions) that aren't part of the main chat conversation. Kept separate from the message
+  // cap because someone chatting a lot shouldn't lose their ability to draft an email, and vice
+  // versa — they're different habits, not the same budget.
+  const FREE_DAILY_EXTRAS_LIMIT = 5;
+  const [aiExtrasCount, setAiExtrasCount] = useState(0);
+  const [aiExtrasDate, setAiExtrasDate] = useState(() => new Date().toDateString());
+  const extrasLeft = () => Math.max(0, FREE_DAILY_EXTRAS_LIMIT - aiExtrasCount);
+  // Call before any one-off AI action. Returns whether it's allowed to proceed, rolling the
+  // counter over on a new day and incrementing on success — mirrors the chat message gate so
+  // the two never disagree about what "a new day" means.
+  const spendAiExtra = () => {
+    const today = new Date().toDateString();
+    let count = aiExtrasCount;
+    if (today !== aiExtrasDate) { count = 0; setAiExtrasDate(today); setAiExtrasCount(0); }
+    if (!subscribed && count >= FREE_DAILY_EXTRAS_LIMIT) {
+      toast(`That's today's ${FREE_DAILY_EXTRAS_LIMIT} free AI drafts and suggestions used. Resets in about ${resetsIn()}, or KROFT Plus removes the limit.`);
+      return false;
+    }
+    if (!subscribed) setAiExtrasCount(count + 1);
+    return true;
+  };
+
+  // Voice mode used to share the same 15/day pool as typed chat — which meant the one feature
+  // built specifically for hands-free use (cooking, driving, walking) competed for quota with
+  // ordinary typing. Splitting it out means a chatty day never costs you your voice turns, and
+  // it's the clearest thing to point to when explaining why Plus is worth it: voice is what
+  // makes KROFT different from a chat window, so unlimited voice is the differentiated feature,
+  // not just "more of the same."
+  const FREE_DAILY_VOICE_LIMIT = 10;
+  const [voiceTurnsCount, setVoiceTurnsCount] = useState(0);
+  const [voiceTurnsDate, setVoiceTurnsDate] = useState(() => new Date().toDateString());
+  const voiceTurnsLeft = () => Math.max(0, FREE_DAILY_VOICE_LIMIT - voiceTurnsCount);
+  // Returns whether a voice turn may proceed, rolling the day over and incrementing on success —
+  // same shape as spendAiExtra, kept separate because it gates a different pool.
+  const spendVoiceTurn = () => {
+    const today = new Date().toDateString();
+    let count = voiceTurnsCount;
+    if (today !== voiceTurnsDate) { count = 0; setVoiceTurnsDate(today); setVoiceTurnsCount(0); }
+    if (!subscribed && count >= FREE_DAILY_VOICE_LIMIT) return false;
+    if (!subscribed) setVoiceTurnsCount(count + 1);
+    return true;
+  };
+
+  // Monthly reports are the most expensive single call (fullest context, longest output), so
+  // they get their own much smaller allowance rather than sharing the daily pools — one free
+  // report a month is still real value, without one heavy user burning through daily quota meant
+  // for quick drafts.
+  const FREE_MONTHLY_REPORT_LIMIT = 1;
+  const [monthlyReportCount, setMonthlyReportCount] = useState(0);
+  const [monthlyReportMonth, setMonthlyReportMonth] = useState(() => todayISO().slice(0, 7));
+  const reportsLeftThisMonth = () => Math.max(0, FREE_MONTHLY_REPORT_LIMIT - monthlyReportCount);
+  const [subscribed, setSubscribed] = useState(false);
+  const [dailyMessageCount, setDailyMessageCount] = useState(0);
+  const [messageCountDate, setMessageCountDate] = useState(() => new Date().toDateString());
+
+  // Hydrate all persisted groups once on mount. window.storage.get throws (not returns null)
+  // for a key that's never been written — expected for a first-ever run — so each key is
+  // caught individually rather than letting one missing key abort the whole load. Nothing is
+  // written back to storage until this finishes (see the `dataLoaded` guard on every save
+  // effect below); saving before then could overwrite real saved data with the still-default
+  // initial state.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const entries = await Promise.all(Object.entries(STORAGE_KEYS).map(async ([group, key]) => {
+        try {
+          const r = await window.storage.get(key, false);
+          return [group, r?.value ? JSON.parse(r.value) : null];
+        } catch { return [group, null]; }
+      }));
+      if (cancelled) return;
+      const data = Object.fromEntries(entries);
+      if (data.profile) {
+        const p = data.profile;
+        if (p.user) setUser(u => ({ ...u, ...p.user }));
+        if (p.theme) setTheme(p.theme);
+        if (typeof p.voiceReplies === "boolean") setVoiceReplies(p.voiceReplies);
+        if (typeof p.proactiveInsights === "boolean") setProactiveInsights(p.proactiveInsights);
+        if (p.notifPrefs) setNotifPrefs(v => ({ ...v, ...p.notifPrefs }));
+        if (typeof p.aiExtrasCount === "number") setAiExtrasCount(p.aiExtrasCount);
+        if (p.aiExtrasDate) setAiExtrasDate(p.aiExtrasDate);
+        if (typeof p.monthlyReportCount === "number") setMonthlyReportCount(p.monthlyReportCount);
+        if (p.monthlyReportMonth) setMonthlyReportMonth(p.monthlyReportMonth);
+        if (p.dailyBriefSentDate) setDailyBriefSentDate(p.dailyBriefSentDate);
+        if (typeof p.voiceTurnsCount === "number") setVoiceTurnsCount(p.voiceTurnsCount);
+        if (p.voiceTurnsDate) setVoiceTurnsDate(p.voiceTurnsDate);
+        if (typeof p.subscribed === "boolean") setSubscribed(p.subscribed);
+        if (typeof p.dailyMessageCount === "number") setDailyMessageCount(p.dailyMessageCount);
+        if (p.messageCountDate) setMessageCountDate(p.messageCountDate);
+        if (Array.isArray(p.incomeCats)) setIncomeCats(p.incomeCats);
+        if (Array.isArray(p.expenseCats)) setExpenseCats(p.expenseCats);
+        // A previously-saved account exists — show Login instead of Signup. Requires real
+        // credentials on file, not just an email, since login now verifies against them.
+        if (p.user?.email && (p.user?.passwordHash || p.user?.password)) setStep("login");
+      }
+      if (data.finance) { setIncome(data.finance.income||[]); setExpenses(data.finance.expenses||[]); setBudgets(data.finance.budgets||{}); setBudgetAlerts(data.finance.budgetAlerts||{}); setBudgetCarryover(data.finance.budgetCarryover||{}); if (data.finance.budgetRolloverMonth) setBudgetRolloverMonth(data.finance.budgetRolloverMonth); }
+      if (data.productivity) {
+        setTasks(data.productivity.tasks||[]);
+        setSmartReminders(data.productivity.smartReminders||[]);
+        setNotes(data.productivity.notes||[]);
+        // A pending call from days ago (the browser was closed the whole time) shouldn't
+        // suddenly ring on the next launch — it's stale, not due. Anything more than a day
+        // overdue is marked missed on load rather than left pending.
+        const now = Date.now();
+        setScheduledCalls((data.productivity.scheduledCalls||[]).map(c => {
+          if (c.status !== "pending") return c;
+          const due = new Date(`${c.date}T${c.time||"00:00"}:00`).getTime();
+          return (now - due > 86400000) ? { ...c, status:"missed" } : c;
+        }));
+      }
+      if (data.calendarData) { setAppts(data.calendarData.appts||[]); if (data.calendarData.remindersFired) setRemindersFired(data.calendarData.remindersFired); }
+      if (data.contactsData) setContacts(data.contactsData.contacts||[]);
+      if (data.projectsData) { setProjects(data.projectsData.projects||[]); setDocuments(data.projectsData.documents||[]); }
+      // Strip transient flags on restore. A reply interrupted mid-stream (tab closed, app
+      // backgrounded) would otherwise come back with streaming:true and sit there showing a
+      // blinking caret for a response that will never finish arriving.
+      if (data.wellnessData) {
+        const w = data.wellnessData;
+        if (typeof w.wellness === "number") setWellness(w.wellness);
+        if (w.wellnessDate) setWellnessDate(w.wellnessDate);
+        if (w.selfCare) setSelfCare(w.selfCare);
+        if (w.mood) setMood(w.mood);
+        // Backfill ids on entries saved before they carried one, so every row has a stable
+        // handle for React keys and for deletion.
+        if (Array.isArray(w.moodLog)) setMoodLog(w.moodLog.map(m => m.id ? m : { ...m, id:uid() }));
+      }
+      // Read/unread and deletions were lost on every reload — the inbox silently reset to
+      // all-unread, so marking things read never stuck.
+      if (data.emailData && Array.isArray(data.emailData.emails)) setEmails(data.emailData.emails);
+      if (data.chatData) setAiMessages((data.chatData.aiMessages||[]).map(({ streaming, ...m }) => m));
+      setDataLoaded(true);
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // Each group saves itself only once its own real data changes (not on unrelated re-renders —
+  // the dependency array lists the actual state values directly, never a freshly-built object
+  // literal, since a new object reference every render would otherwise reset the debounce timer
+  // constantly and the save would never actually fire). Debounced so rapid edits (several
+  // additions in a row) collapse into one write instead of one per change.
+  useEffect(() => {
+    if (!dataLoaded) return;
+    const t = setTimeout(() => { window.storage.set(STORAGE_KEYS.profile, JSON.stringify({ user, theme, voiceReplies, proactiveInsights, subscribed, dailyMessageCount, messageCountDate, incomeCats, expenseCats, notifPrefs, aiExtrasCount, aiExtrasDate, monthlyReportCount, monthlyReportMonth, dailyBriefSentDate, voiceTurnsCount, voiceTurnsDate }), false).catch(()=>{}); }, 900);
+    return () => clearTimeout(t);
+  }, [dataLoaded, user, theme, voiceReplies, proactiveInsights, subscribed, dailyMessageCount, messageCountDate, incomeCats, expenseCats, notifPrefs, aiExtrasCount, aiExtrasDate, monthlyReportCount, monthlyReportMonth, dailyBriefSentDate, voiceTurnsCount, voiceTurnsDate]);
+
+  useEffect(() => {
+    if (!dataLoaded) return;
+    const t = setTimeout(() => { window.storage.set(STORAGE_KEYS.finance, JSON.stringify({ income, expenses, budgets, budgetAlerts, budgetCarryover, budgetRolloverMonth }), false).catch(()=>{}); }, 900);
+    return () => clearTimeout(t);
+  }, [dataLoaded, income, expenses, budgets, budgetAlerts, budgetCarryover, budgetRolloverMonth]);
+
+  useEffect(() => {
+    if (!dataLoaded) return;
+    const t = setTimeout(() => { window.storage.set(STORAGE_KEYS.productivity, JSON.stringify({ tasks, smartReminders, notes, scheduledCalls }), false).catch(()=>{}); }, 900);
+    return () => clearTimeout(t);
+  }, [dataLoaded, tasks, smartReminders, notes, scheduledCalls]);
+
+  useEffect(() => {
+    if (!dataLoaded) return;
+    const t = setTimeout(() => { window.storage.set(STORAGE_KEYS.calendarData, JSON.stringify({ appts, remindersFired }), false).catch(()=>{}); }, 900);
+    return () => clearTimeout(t);
+  }, [dataLoaded, appts, remindersFired]);
+
+  useEffect(() => {
+    if (!dataLoaded) return;
+    const t = setTimeout(() => { window.storage.set(STORAGE_KEYS.contactsData, JSON.stringify({ contacts }), false).catch(()=>{}); }, 900);
+    return () => clearTimeout(t);
+  }, [dataLoaded, contacts]);
+
+  useEffect(() => {
+    if (!dataLoaded) return;
+    const t = setTimeout(() => { window.storage.set(STORAGE_KEYS.projectsData, JSON.stringify({ projects, documents }), false).catch(()=>{}); }, 900);
+    return () => clearTimeout(t);
+  }, [dataLoaded, projects, documents]);
+
+  useEffect(() => {
+    if (!dataLoaded) return;
+    // Capped to the most recent 60 messages — chat history grows unbounded otherwise, and
+    // storage values are size-limited.
+    const t = setTimeout(() => { window.storage.set(STORAGE_KEYS.chatData, JSON.stringify({ aiMessages: aiMessages.slice(-60).map(({ streaming, ...m }) => m) }), false).catch(()=>{}); }, 900);
+    return () => clearTimeout(t);
+  }, [dataLoaded, aiMessages]);
+
+  useEffect(() => {
+    if (!dataLoaded) return;
+    // Mood entries are capped so the log can't grow without bound; 120 covers a couple of months
+    // of normal use.
+    const t = setTimeout(() => { window.storage.set(STORAGE_KEYS.wellnessData, JSON.stringify({ wellness, wellnessDate, selfCare, mood, moodLog: moodLog.slice(-120) }), false).catch(()=>{}); }, 900);
+    return () => clearTimeout(t);
+  }, [dataLoaded, wellness, wellnessDate, selfCare, mood, moodLog]);
+
+  useEffect(() => {
+    if (!dataLoaded) return;
+    const t = setTimeout(() => { window.storage.set(STORAGE_KEYS.emailData, JSON.stringify({ emails }), false).catch(()=>{}); }, 900);
+    return () => clearTimeout(t);
+  }, [dataLoaded, emails]);
+
+
+  // Around Me feature
+  const [locationStatus, setLocationStatus] = useState("idle"); // idle | requesting | granted | denied | error
+  const [userCoords, setUserCoords] = useState(null);
+  const [locationLabel, setLocationLabel] = useState("");
+  const [aroundCategory, setAroundCategory] = useState(null);
+  const [aroundQuery, setAroundQuery] = useState("");
+  const [aroundResults, setAroundResults] = useState([]);
+  const [aroundLoading, setAroundLoading] = useState(false);
+  const [aroundError, setAroundError] = useState("");
+  const [aroundSearched, setAroundSearched] = useState(false);
+  const [lastCity, setLastCity] = useState("");
+
+  const totalIncome = income.reduce((s,r) => s+r.amount, 0);
+  const totalExpenses = expenses.reduce((s,r) => s+r.amount, 0);
+  const netProfit = totalIncome - totalExpenses;
+  const pw = signupPw;
+  const pwChecks = { length:pw.length>=8, upper:/[A-Z]/.test(pw), lower:/[a-z]/.test(pw), number:/[0-9]/.test(pw), special:/[^A-Za-z0-9]/.test(pw) };
+  const pwScore = Object.values(pwChecks).filter(Boolean).length;
+  const pwStrength = ["","Weak","Fair","Good","Strong","Very Strong"][pwScore] || "";
+  const pwColor = [C.muted,C.border,C.soft,C.soft,C.white,C.white][pwScore] || C.muted;
+  const initials = user.name ? user.name.split(" ").map(n=>n[0]).join("").toUpperCase().slice(0,2) : "?";
+
+  // Auto-scroll only when the person is already near the bottom. This fires on every token now
+  // that replies stream, so an unconditional smooth-scroll stacked ~50 animations a second and
+  // yanked the view back down whenever someone scrolled up to re-read an earlier message.
+  const chatScrollRef = useRef(null);
+  useEffect(() => {
+    const box = chatScrollRef.current;
+    if (!box) { chatEnd.current?.scrollIntoView({ behavior:"smooth" }); return; }
+    const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 120;
+    if (!nearBottom) return;
+    // "auto" rather than "smooth": at streaming speed, queued smooth animations stutter.
+    const streaming = aiMessages.some(m => m.streaming);
+    chatEnd.current?.scrollIntoView({ behavior: streaming ? "auto" : "smooth" });
+  }, [aiMessages]);
+  useEffect(() => {
+    if (!locked) return;
+    let t = 30; setLockTimer(t);
+    const iv = setInterval(() => { t--; setLockTimer(t); if (t<=0) { setLocked(false); setLoginAttempts(0); clearInterval(iv); } }, 1000);
+    return () => clearInterval(iv);
+  }, [locked]);
+  useEffect(() => {
+    if (step !== "photo" && camStream) { camStream.getTracks().forEach(t => t.stop()); setCamStream(null); setCameraMode(false); setCameraReady(false); }
+  }, [step]);
+  useEffect(() => {
+    if (step === "dashboard") {
+      // Only seed the welcome message for a genuinely empty conversation — otherwise this
+      // fires on every login (and every prefs round-trip) and silently discards whatever
+      // history was just restored from persistent storage.
+      setAiMessages(p => p.length > 0 ? p : [{ role:"assistant", content:`Hey ${user.name||"there"} — I'm KROFT, your personal AI assistant by Virt Technologies. Ask me anything — finances, schedule, general knowledge, advice, or just chat. I'm here for all of it.` }]);
+      toast(`Welcome to KROFT, ${user.name||"there"}.`);
+    }
+  }, [step]);
+
+  const toast = useCallback((msg, onUndo) => {
+    const id = uid();
+    setToasts(p => [{ id, msg, onUndo }, ...p.slice(0,3)]);
+    // Undo gets meaningfully longer than a plain confirmation. Six seconds is fine at a desk,
+    // but it's tight on a phone while walking, and a screen reader may still be queuing the
+    // announcement when the only chance to reverse a deletion disappears.
+    setTimeout(() => setToasts(p => p.filter(t => t.id !== id)), onUndo ? UNDO_MS : 4200);
+  }, []);
+
+  const remind = appt => {
+    const msg = `Hey ${user.name||"there"}, reminder: "${appt.title}" at ${appt.time}${appt.date?" on "+appt.date:""}${appt.location?" at "+appt.location:""}.`;
+    if (voiceReplies) speak(msg);
+    toast(`Reminder sent: ${appt.title}`);
+  };
+
+  // Nudge the user 3x a day (morning/afternoon/evening) to log today's first finance entry,
+  // as long as they haven't logged one yet today. In-app only — real push notifications
+  // need a service worker + backend once this moves out of the artifact sandbox.
+  const REMINDER_SLOTS = [9, 14, 20]; // 9am, 2pm, 8pm
+  useEffect(() => {
+    const checkReminders = () => {
+      if (step !== "dashboard" || !proactiveInsights) return;
+      const today = todayISO();
+      const loggedToday = income.some(r => r.date === today) || expenses.some(r => r.date === today);
+      if (loggedToday) return;
+      const hour = new Date().getHours();
+      // dueSlot is set as a side-effect-free local inside the updater (safe even if React
+      // re-invokes the updater, e.g. under Strict Mode); the actual toast — a real side effect
+      // via setToasts — fires exactly once, outside the updater, only if something came due.
+      let dueSlot = null;
+      setRemindersFired(prev => {
+        const slots = prev.date === today ? prev.slots : [];
+        const due = REMINDER_SLOTS.find(s => hour >= s && !slots.includes(s));
+        if (due === undefined) return prev.date === today ? prev : { date:today, slots };
+        dueSlot = due;
+        return { date:today, slots:[...slots, due] };
+      });
+      if (dueSlot !== null) {
+        toast(`${user.name||"Hey"} — you haven't logged an income or expense entry today. Add one so KROFT can track your month.`);
+      }
+    };
+    checkReminders();
+    return heartbeat(checkReminders);
+  }, [step, income, expenses, user.name, proactiveInsights]);
+
+  // Recurring appointments (repeat: daily/weekly/monthly) previously just stored that value
+  // and displayed it as a tag — nothing ever actually advanced the date, so a "daily" 9am
+  // stand-up would just sit on its original date forever once that day passed. This rolls any
+  // repeating appointment whose date has passed forward to its next due occurrence (looping in
+  // case the app was closed across more than one cycle), checked on load and once a minute
+  // alongside the other periodic checks.
+  useEffect(() => {
+    if (!dataLoaded) return;
+    const rollRecurring = () => {
+      const today = todayISO();
+      setAppts(prev => {
+        let changed = false;
+        const next = prev.map(a => {
+          if (a.repeat === "none" || !a.date || a.date >= today) return a;
+          let date = a.date;
+          while (date < today) date = advanceRepeatDate(date, a.repeat);
+          changed = true;
+          return { ...a, date };
+        });
+        return changed ? next : prev;
+      });
+    };
+    rollRecurring();
+    return heartbeat(rollRecurring);
+  }, [dataLoaded]);
+
+  const applyMood = m => {
+    // Entries carry a date as well as a time. Without one, yesterday's 9am and today's 9am were
+    // indistinguishable in the log — which didn't show while nothing persisted, but makes the
+    // history unreadable now that it does.
+    setMood(m); setMoodLog(p => [...p, { id:uid(), date:todayISO(), time:timeStr(), mood:m }]);
+    if (m==="stressed"||m==="angry") {
+      setWellness(s => Math.max(10, s-13));
+      const tip = rand(["Take 5 slow breaths.","Step away from your screen for 10 minutes.","Drink a full glass of water.","A short walk resets your focus."]);
+      if (voiceReplies) speak(`${user.name||"Hey"}, I'm sensing stress. ${tip}`); toast(tip);
+    } else if (m==="happy") { setWellness(s => Math.min(100, s+7)); toast("Great energy. Wellness score up."); }
+    else toast(`Mood: ${m}`);
+  };
+
+  // True only once an account actually exists on this device. Without this check, doLogin's
+  // `ok` flag stayed true when neither a hash nor a legacy password was present — so on a fresh
+  // install any email and any password went straight through to the dashboard.
+  const hasAccount = !!(user.passwordHash || user.password);
+
+  const doLogin = async () => {
+    if (locked) return;
+    if (!loginEmail||!loginPw) { setLoginError("Please enter your email and password."); return; }
+    if (!hasAccount) { setLoginError("No account on this device yet. Create one to get started."); return; }
+    let ok = false;
+    if (user.passwordHash) {
+      const attemptHash = await hashPassword(loginPw, user.passwordSalt || "");
+      ok = attemptHash === user.passwordHash;
+    } else if (user.password) {
+      // Legacy plaintext account from before hashing was added — verify the old way once, then
+      // transparently upgrade storage to a real hash so the plaintext doesn't linger further.
+      ok = loginPw === user.password;
+      if (ok) {
+        const salt = generateSalt();
+        const passwordHash = await hashPassword(loginPw, salt);
+        setUser(u => { const { password, ...rest } = u; return { ...rest, passwordSalt:salt, passwordHash }; });
+      }
+    }
+    // The email has to match the account too. It was previously ignored entirely, and then
+    // written over user.email on success — so a typo didn't fail, it quietly changed the
+    // account's address and saved that to storage. The error stays generic either way so it
+    // doesn't reveal which half was wrong.
+    const emailOk = (user.email||"").trim().toLowerCase() === loginEmail.trim().toLowerCase();
+    if (!ok || !emailOk) {
+      const next = loginAttempts + 1; setLoginAttempts(next);
+      const rem = 5 - next;
+      if (next >= 5) { setLocked(true); setLoginError("Too many failed attempts. Locked for 30 seconds."); }
+      else setLoginError(`Incorrect email or password. ${rem} attempt${rem!==1?"s":""} remaining.`);
+      return;
+    }
+    setLoginError(""); setLoginAttempts(0); setLoginPw("");
+    setStep("dashboard");
+    toast(`Welcome back, ${user.name||"there"}.`);
+  };
+
+  const doFingerprint = async () => {
+    // Requires a real WebAuthn credential to have been registered first (see setupBiometric in
+    // Profile) — the login button itself is hidden unless user.webauthnCredentialId exists, so
+    // reaching here without one shouldn't normally happen, but this guard keeps it safe either
+    // way. navigator.credentials.get() only resolves after the platform authenticator (Face ID/
+    // Touch ID/Windows Hello) actually approves a fresh biometric prompt on THIS device — unlike
+    // the old version of this function, nothing here can be satisfied by just clicking the
+    // button. Requires a secure context (HTTPS or localhost); some sandboxed preview iframes
+    // block WebAuthn outright, in which case this will fail with an error rather than silently
+    // granting access.
+    if (!user.webauthnCredentialId) { toast("Set up biometric unlock in Profile first."); return; }
+    if (!window.PublicKeyCredential) { toast("Biometrics not supported on this device."); return; }
+    setFpLoading(true);
+    try {
+      const challenge = crypto.getRandomValues(new Uint8Array(32));
+      const assertion = await navigator.credentials.get({
+        publicKey: {
+          challenge,
+          allowCredentials: [{ id: base64urlToBuf(user.webauthnCredentialId), type:"public-key" }],
+          userVerification: "required",
+          timeout: 60000,
+        },
+      });
+      if (!assertion) throw new Error("No assertion returned");
+      setFpSuccess(true);
+      setFpLoading(false);
+      setTimeout(() => { setLoginError(""); setLoginAttempts(0); setStep("dashboard"); toast("Fingerprint verified."); }, 500);
+    } catch {
+      setFpLoading(false);
+      setLoginError("Biometric verification failed or was cancelled.");
+    }
+  };
+
+  // Registers a real platform-authenticator (Face ID/Touch ID/Windows Hello) credential for
+  // this device, called from Profile settings. Stores only the credential's public ID (safe to
+  // persist — it can't be used to impersonate without the matching private key, which never
+  // leaves the authenticator hardware) in user.webauthnCredentialId.
+  const setupBiometric = async () => {
+    if (!window.PublicKeyCredential) { toast("Biometric unlock isn't supported on this device."); return; }
+    try {
+      const challenge = crypto.getRandomValues(new Uint8Array(32));
+      const userIdBytes = crypto.getRandomValues(new Uint8Array(16));
+      const credential = await navigator.credentials.create({
+        publicKey: {
+          challenge,
+          rp: { name: "KROFT" },
+          user: { id: userIdBytes, name: user.email || "kroft-user", displayName: user.name || "KROFT User" },
+          pubKeyCredParams: [{ type:"public-key", alg:-7 }, { type:"public-key", alg:-257 }],
+          authenticatorSelection: { authenticatorAttachment:"platform", userVerification:"required" },
+          timeout: 60000,
+          attestation: "none",
+        },
+      });
+      if (!credential) throw new Error("No credential returned");
+      setUser(u => ({ ...u, webauthnCredentialId: bufToBase64url(credential.rawId) }));
+      toast("Biometric unlock is set up on this device.");
+    } catch (err) {
+      toast(`Couldn't set up biometric unlock — ${err?.message || "try again."}`);
+    }
+  };
+  const removeBiometric = () => {
+    setUser(u => { const { webauthnCredentialId, ...rest } = u; return rest; });
+    toast("Biometric unlock removed for this device.");
+  };
+
+  const doSignup = async () => {
+    if (!user.name||!user.email||!signupPw) { setSignupError("Please fill in all required fields."); return; }
+    if (pwScore < 3) { setSignupError("Password too weak. Add uppercase, numbers and symbols."); return; }
+    if (!confirmPw) { setSignupError("Please confirm your password."); return; }
+    if (confirmPw !== signupPw) { setSignupError("Passwords do not match."); return; }
+    if (!window.crypto?.subtle) { setSignupError("This browser can't securely hash passwords — try updating it, or use HTTPS."); return; }
+    const salt = generateSalt();
+    const passwordHash = await hashPassword(signupPw, salt);
+    setUser(u => { const { password, ...rest } = u; return { ...rest, passwordSalt:salt, passwordHash }; });
+    setSignupPw(""); setConfirmPw("");
+    setSignupError(""); setStep("photo");
+  };
+
+  const openCamera = async () => {
+    setCameraError("");
+    if (!navigator.mediaDevices?.getUserMedia) { setCameraError("Camera not supported. Use gallery instead."); return; }
+    try {
+      const s = await navigator.mediaDevices.getUserMedia({ video:{facingMode:"user"}, audio:false });
+      setCamStream(s); setCameraMode(true); setCameraReady(false);
+      setTimeout(() => { if (videoRef.current) { videoRef.current.srcObject = s; videoRef.current.play().then(() => setCameraReady(true)).catch(() => setCameraReady(true)); } }, 400);
+    } catch(err) {
+      if (err.name==="NotAllowedError") setCameraError("Camera permission denied.");
+      else if (err.name==="NotFoundError") setCameraError("No camera found. Use gallery instead.");
+      else setCameraError("Could not start camera. Try gallery.");
+    }
+  };
+
+  const closeCamera = () => { camStream?.getTracks().forEach(t => t.stop()); setCamStream(null); setCameraMode(false); setCameraReady(false); setCameraError(""); };
+
+  const snapPhoto = () => {
+    if (!videoRef.current||!canvasRef.current) return;
+    const v = videoRef.current, c = canvasRef.current;
+    c.width = v.videoWidth||640; c.height = v.videoHeight||480;
+    c.getContext("2d").drawImage(v, 0, 0);
+    setUser(u => ({...u, photo:c.toDataURL("image/jpeg",.92)}));
+    setPhotoSource("camera"); closeCamera(); toast("Photo captured.");
+  };
+
+  const handleGalleryPick = e => {
+    const file = e.target.files[0]; if (!file) return;
+    if (!file.type.startsWith("image/")) { toast("Please select an image."); return; }
+    const reader = new FileReader();
+    reader.onload = ev => { setUser(u => ({...u, photo:ev.target.result})); setPhotoSource("gallery"); toast("Photo selected."); };
+    reader.readAsDataURL(file); e.target.value = "";
+  };
+
+  // ── Voice mode ────────────────────────────────────────────────────────────────────────
+  // A full turn loop: listen → transcribe → answer → speak → back to listening. The two
+  // things that make or break this are echo (the mic hearing KROFT's own voice and treating
+  // it as the next question) and barge-in (being able to cut a long answer off), so both are
+  // handled explicitly rather than left to the browser.
+  const [voiceOpen, setVoiceOpen] = useState(false);
+  const [voiceState, setVoiceState] = useState("idle"); // idle | listening | thinking | speaking
+  const [voiceTranscript, setVoiceTranscript] = useState("");
+  const [voiceReply, setVoiceReply] = useState("");
+  const [voiceError, setVoiceError] = useState("");
+  // Mic level is read on every animation frame, so it lives in a ref, not state. As state it
+  // re-rendered the entire app ~60 times a second the whole time voice mode was listening,
+  // which stutters badly on a phone. The orb reads this ref directly inside its own render loop.
+  const voiceLevelRef = useRef(0);
+  const lastLenRef = useRef(0);
+  const silenceRef = useRef(0);   // consecutive no-speech results, for the quiet retry above
+  const listeningRef = useRef(false); // true while a recognizer is live, to block a second one
+  // Whether the mic has already been granted, so the priming copy only shows the first time.
+  // Queried rather than assumed — a returning user shouldn't be re-told what they've allowed.
+  const [micPrimed, setMicPrimed] = useState(false);
+  useEffect(() => {
+    if (!voiceOpen || !navigator.permissions?.query) return;
+    navigator.permissions.query({ name:"microphone" })
+      .then(r => setMicPrimed(r.state === "granted"))
+      .catch(() => {});
+  }, [voiceOpen]);
+  // Decays the fallback nudge so the orb settles back between words instead of staying puffed
+  // out. Harmless when real amplitude is driving it, since that overwrites the value each frame.
+  useEffect(() => {
+    if (voiceState !== "listening") return;
+    const t = setInterval(() => { voiceLevelRef.current *= 0.82; }, 90);
+    return () => clearInterval(t);
+  }, [voiceState]);
+  const voiceRecRef = useRef(null);
+  const voiceAudioRef = useRef(null);   // { ctx, analyser, stream, raf }
+  const voiceStopRef = useRef(null);    // cancels in-flight speech
+  const voiceAbortRef = useRef(null);   // cancels an in-flight generation
+  const voiceOpenRef = useRef(false);
+  voiceOpenRef.current = voiceOpen;
+  const SRSupported = typeof window !== "undefined" && !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+
+  // Mic level drives the orb's deformation. Read from an AnalyserNode rather than from the
+  // recognition API, which reports no amplitude at all.
+  const startMeter = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio:true });
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 512;
+      ctx.createMediaStreamSource(stream).connect(analyser);
+      const buf = new Uint8Array(analyser.frequencyBinCount);
+      const tick = () => {
+        analyser.getByteTimeDomainData(buf);
+        let sum = 0;
+        for (let i = 0; i < buf.length; i++) { const v = (buf[i]-128)/128; sum += v*v; }
+        voiceLevelRef.current = Math.min(1, Math.sqrt(sum/buf.length) * 4.5);
+        voiceAudioRef.current.raf = requestAnimationFrame(tick);
+      };
+      voiceAudioRef.current = { ctx, stream, raf:null };
+      tick();
+    } catch { /* meter is cosmetic — the loop still works without it */ }
+  };
+  const stopMeter = () => {
+    const a = voiceAudioRef.current;
+    if (!a) return;
+    if (a.raf) cancelAnimationFrame(a.raf);
+    a.stream?.getTracks().forEach(t => t.stop());
+    a.ctx?.close?.();
+    voiceAudioRef.current = null;
+    voiceLevelRef.current = 0;
+  };
+
+  const voiceListen = () => {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) { setVoiceError("Live speech recognition isn't available in this browser."); return; }
+    // Guard against starting a second recognizer. The silence retry fires on a timer while the
+    // end-of-speech handler can also restart listening — both would construct a recognizer, but
+    // only the last one lands in the ref, leaving the first running invisibly: duplicated
+    // transcripts and a live mic that Stop can no longer reach.
+    if (listeningRef.current) return;
+    listeningRef.current = true;
+    voiceRecRef.current?.abort?.();
+    setVoiceError(""); setVoiceTranscript(""); lastLenRef.current = 0;
+    const r = new SR();
+    r.continuous = false; r.interimResults = true; r.lang = "en-US";
+    r.onstart = () => { setMicPrimed(true); setVoiceState("listening"); };
+    r.onresult = e => {
+      const text = Array.from(e.results).map(x => x[0].transcript).join("");
+      setVoiceTranscript(text);
+      // Fallback drive for the orb. On some Android builds the recognizer takes exclusive mic
+      // access, which starves the AnalyserNode and leaves the measured level flat at zero even
+      // though transcription is working. Nudging the level on each new word keeps the orb
+      // visibly reacting; when real amplitude is available it's larger and wins anyway.
+      if (text.length !== lastLenRef.current) {
+        lastLenRef.current = text.length;
+        voiceLevelRef.current = Math.max(voiceLevelRef.current, 0.55);
+      }
+      if (e.results[e.results.length-1].isFinal && text.trim()) {
+        silenceRef.current = 0;
+        r.stop();
+        voiceAnswer(text.trim());
+      }
+    };
+    r.onerror = ev => {
+      listeningRef.current = false;
+      if (ev.error === "not-allowed" || ev.error === "service-not-allowed") {
+        setVoiceState("idle");
+        setVoiceError("Microphone access was blocked. Allow it in your browser settings to use voice mode.");
+        return;
+      }
+      if (ev.error === "aborted") { setVoiceState("idle"); return; }
+      if (ev.error === "no-speech") {
+        // Silence isn't an error — it usually means the person is still thinking. Quietly
+        // re-open the mic a couple of times before giving up, instead of dropping to idle with
+        // no explanation and making them tap again.
+        silenceRef.current += 1;
+        if (silenceRef.current <= 2 && voiceOpenRef.current) { setTimeout(() => { if (voiceOpenRef.current) voiceListen(); }, 250); return; }
+        silenceRef.current = 0;
+        setVoiceState("idle");
+        setVoiceError("I didn't catch anything. Tap the orb when you're ready.");
+        return;
+      }
+      setVoiceState("idle");
+      setVoiceError("Couldn't hear that. Tap to try again.");
+    };
+    r.onend = () => { listeningRef.current = false; setVoiceState(s => (s === "listening" ? "idle" : s)); };
+    voiceRecRef.current = r;
+    try { r.start(); startMeter(); } catch { listeningRef.current = false; }
+  };
+
+  const voiceAnswer = async question => {
+    // The recognizer is stopped before KROFT speaks. Left running, it transcribes KROFT's own
+    // voice out of the speaker and feeds it straight back as the next question, and the
+    // conversation runs away with itself.
+    voiceRecRef.current?.abort?.();
+    listeningRef.current = false;
+    stopMeter();
+    setVoiceState("thinking");
+    setVoiceTranscript(question);
+
+    // Voice mode has its own daily allowance, separate from typed chat, so a busy voice
+    // conversation and a busy typing session never compete for the same quota.
+    if (!spendVoiceTurn()) {
+      const msg = `That's today's ${FREE_DAILY_VOICE_LIMIT} free voice turns. They reset in about ${resetsIn()}, or KROFT Plus removes the limit — typed chat still works.`;
+      setVoiceTranscript(""); setVoiceReply(msg); setVoiceState("speaking");
+      voiceStopRef.current = speakSequence([msg], { onDone: () => { voiceStopRef.current = null; setVoiceState("idle"); } });
+      return;
+    }
+
+    const convo = [...aiMessages, { role:"user", content:question }];
+    setAiMessages(convo);
+
+    // "Call Samson" is more useful spoken than typed — hands are busy, which is the whole point
+    // of voice mode. Acts on it directly rather than asking to confirm, since a confirmation
+    // step read aloud costs more than it saves.
+    const action = resolveContactAction(question);
+    if (action) {
+      const verb = { email:"Opening an email to", call:"Calling", text:"Texting" }[action.type];
+      const line = `${verb} ${action.contact.name}.`;
+      setAiMessages(p => [...p, { role:"assistant", content:line }]);
+      setVoiceTranscript(""); setVoiceReply(line); setVoiceState("speaking");
+      voiceStopRef.current = speakSequence([line], {
+        onDone: () => {
+          voiceStopRef.current = null;
+          setVoiceOpen(false);
+          runContactAction(action);
+        },
+      });
+      return;
+    }
+
+    // Speech is queued sentence-by-sentence as the reply generates, rather than after it
+    // completes. That cuts the dead air before KROFT starts talking from several seconds to
+    // roughly one.
+    const controller = new AbortController();
+    voiceAbortRef.current = controller;
+    const queue = createSpeechQueue({
+      onStart: () => { setVoiceTranscript(""); setVoiceState("speaking"); },
+      onDone: () => {
+        voiceStopRef.current = null;
+        // Hand the turn straight back so it stays a conversation instead of making the
+        // person tap between every exchange.
+        if (voiceOpenRef.current) voiceListen();
+      },
+    });
+    voiceStopRef.current = () => queue.cancel();
+
+    let raw = "", failed = null, aborted = false;
+    // Tracks the newest partial so an interrupted reply can still be saved. Cutting KROFT off
+    // used to discard the answer entirely — the words were spoken, then vanished from history,
+    // leaving no record of what was said.
+    let latest = "";
+    try {
+      raw = await runKroftCompletion(convo, {
+        signal: controller.signal,
+        onDelta: partial => {
+          if (!voiceOpenRef.current) return;
+          latest = partial;
+          setVoiceReply(partial);
+          queue.push(partial);
+        },
+      });
+    } catch (err) {
+      if (err.name === "AbortError") aborted = true;
+      else failed = err instanceof KroftError ? err.message : "Something went wrong just then. Try me again.";
+    }
+    voiceAbortRef.current = null;
+
+    // Keep whatever had been generated when the person interrupted, marked so the history shows
+    // it was cut short rather than silently looking like a complete answer.
+    if (aborted) {
+      queue.cancel();
+      const partial = extractAction(latest).clean.trim();
+      if (partial) setAiMessages(p => [...p, { role:"assistant", content:partial, stopped:true }]);
+      setVoiceState("idle");
+      return;
+    }
+    if (!voiceOpenRef.current) { queue.cancel(); return; }
+
+    if (failed) {
+      queue.cancel();
+      setVoiceTranscript(""); setVoiceReply(failed); setVoiceState("speaking");
+      voiceStopRef.current = speakSequence([failed], { onDone: () => { voiceStopRef.current = null; setVoiceState("idle"); } });
+      return;
+    }
+    if (!raw) { setVoiceState("idle"); return; }
+
+    const { clean, action: aiAction } = extractAction(raw);
+    const actionResult = aiAction ? applyAiAction(aiAction) : null;
+    setAiMessages(p => [...p, { role:"assistant", content:clean }]);
+    if (actionResult) toast(actionResult.label, actionResult.undo);
+    setVoiceReply(clean);
+    queue.end(clean);
+  };
+
+  // Holds a screen wake lock while voice mode is open. Without it the phone dims and sleeps
+  // during a hands-free conversation — which suspends the recognizer and kills the turn
+  // mid-sentence, exactly when the person is least able to reach over and tap the screen.
+  useEffect(() => {
+    if (!voiceOpen || !("wakeLock" in navigator)) return;
+    let lock = null, released = false;
+    const acquire = async () => {
+      try { lock = await navigator.wakeLock.request("screen"); } catch { /* denied or unsupported */ }
+    };
+    acquire();
+    // Wake locks are dropped when the tab is backgrounded, so re-acquire on return.
+    const onVisible = () => { if (document.visibilityState === "visible" && !released) acquire(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      released = true;
+      document.removeEventListener("visibilitychange", onVisible);
+      lock?.release?.().catch(() => {});
+    };
+  }, [voiceOpen]);
+
+  const voiceStop = () => {
+    // Barge-in: cuts speech, listening, or an in-flight reply immediately and returns to idle.
+    voiceAbortRef.current?.abort(); voiceAbortRef.current = null;
+    voiceStopRef.current?.(); voiceStopRef.current = null;
+    stopSpeaking();
+    listeningRef.current = false;
+    voiceRecRef.current?.abort?.();
+    stopMeter();
+    setVoiceState("idle");
+  };
+
+  const closeVoice = () => { voiceStop(); setVoiceOpen(false); setVoiceTranscript(""); setVoiceReply(""); setVoiceError(""); };
+
+  // A call that rings without being answered eventually stops, the way a real one does, rather
+  // than sitting on screen forever.
+  useEffect(() => {
+    if (!incomingCall) { if (callTimeoutRef.current) { clearTimeout(callTimeoutRef.current); callTimeoutRef.current = null; } return; }
+    callTimeoutRef.current = setTimeout(() => {
+      setScheduledCalls(p => p.map(x => x.id===incomingCall.id ? { ...x, status:"missed" } : x));
+      setIncomingCall(null);
+    }, 25000);
+    // A gentle buzz on supported devices — the closest this can get to an actual ring, since a
+    // background browser tab can't play audio without having already been granted that.
+    navigator.vibrate?.([300, 150, 300]);
+    return () => { if (callTimeoutRef.current) clearTimeout(callTimeoutRef.current); };
+  }, [incomingCall]);
+
+  const answerCall = () => {
+    const call = incomingCall;
+    if (!call) return;
+    setScheduledCalls(p => p.map(x => x.id===call.id ? { ...x, status:"answered" } : x));
+    setIncomingCall(null);
+    // Opens voice mode with KROFT speaking first rather than waiting to be asked — that's the
+    // difference between "a reminder you can talk to" and an ordinary voice-mode session.
+    setVoiceOpen(true);
+    setVoiceState("speaking");
+    setVoiceReply("");
+    const msg = `Hey ${user.name||"there"}, this is your reminder call — ${call.title}.${call.note ? ` ${call.note}` : ""}`;
+    voiceStopRef.current = speakSequence([msg], {
+      onDone: () => { voiceStopRef.current = null; if (voiceOpenRef.current) voiceListen(); },
+    });
+  };
+
+  const declineCall = () => {
+    if (!incomingCall) return;
+    setScheduledCalls(p => p.map(x => x.id===incomingCall.id ? { ...x, status:"declined" } : x));
+    setIncomingCall(null);
+  };
+
+  // Never leave the mic hot or speech playing if voice mode unmounts.
+  useEffect(() => () => { voiceAbortRef.current?.abort(); voiceStopRef.current?.(); stopSpeaking(); voiceRecRef.current?.abort?.(); stopMeter(); }, []);
+
+  const toggleListen = useCallback(() => {
+    if (listening) { recRef.current?.stop(); setListening(false); return; }
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) { toast("Speech recognition needs Chrome or Edge."); return; }
+    const r = new SR(); r.continuous=false; r.interimResults=true; r.lang="en-US";
+    r.onstart = () => setListening(true); r.onend = () => setListening(false);
+    r.onresult = e => { const t = Array.from(e.results).map(x => x[0].transcript).join(""); setTranscript(t); if (e.results[0].isFinal) { setAiInput(t); setTab("nova"); setTranscript(""); } };
+    r.onerror = () => { setListening(false); toast("Mic error — check permissions."); };
+    recRef.current = r; r.start();
+  }, [listening]);
+
+  // Voice Memos — real MediaRecorder audio capture, with live transcript via SpeechRecognition
+  const toggleVoiceMemo = useCallback(async () => {
+    if (recordingMemo) {
+      memoRecRef.current?.stop();
+      setRecordingMemo(false);
+      return;
+    }
+    if (!navigator.mediaDevices?.getUserMedia) { toast("Microphone not supported on this device."); return; }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio:true });
+      memoChunksRef.current = [];
+      const mr = new MediaRecorder(stream);
+      let liveTranscript = "";
+
+      const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+      let sr = null;
+      if (SR) {
+        sr = new SR(); sr.continuous = true; sr.interimResults = true; sr.lang = "en-US";
+        sr.onresult = e => { liveTranscript = Array.from(e.results).map(x => x[0].transcript).join(" "); };
+        sr.onerror = () => {};
+        sr.start();
+      }
+
+      mr.ondataavailable = e => { if (e.data.size > 0) memoChunksRef.current.push(e.data); };
+      // Timed from the recorder itself. The duration field was stored as null and never
+      // computed, so every memo card showed its length as blank.
+      const startedAt = Date.now();
+      mr.onstop = () => {
+        const blob = new Blob(memoChunksRef.current, { type:"audio/webm" });
+        const url = URL.createObjectURL(blob);
+        const duration = Math.max(1, Math.round((Date.now() - startedAt) / 1000));
+        setVoiceMemos(p => [{ id:uid(), title:"", url, transcript: liveTranscript || "No speech detected.", date: dateStr(), time: timeStr(), duration }, ...p]);
+        stream.getTracks().forEach(t => t.stop());
+        sr?.stop();
+        toast("Voice memo saved.");
+      };
+      memoRecRef.current = mr;
+      mr.start();
+      setRecordingMemo(true);
+    } catch {
+      toast("Couldn't access microphone — check permissions.");
+    }
+  }, [recordingMemo]);
+
+  // KROFT's view of the user's world. Previously this passed only totals, mood and a flat list
+  // of appointment titles — so the assistant couldn't answer "what's on today?", "what's due
+  // this week?" or "where is my money going?", which is most of what a personal assistant is
+  // for. Everything is capped and summarised rather than dumped, so context stays affordable.
+  const krofSysPrompt = () => {
+    const now = new Date();
+    const today = todayISO();
+    const cur = user.currency;
+    const money = n => fmtCur(n, cur);
+
+    const list = (arr, n, fn) => arr.slice(0, n).map(fn).join("; ") || "none";
+    const thisMonth = iso => (iso || "").slice(0, 7) === today.slice(0, 7);
+
+    // Finance: totals plus where the money actually goes, and how this month compares.
+    const byCat = {};
+    expenses.forEach(e => { byCat[e.cat] = (byCat[e.cat] || 0) + e.amount; });
+    const topCats = Object.entries(byCat).sort((a,b) => b[1]-a[1]).slice(0,5)
+      .map(([c,v]) => `${c} ${money(v)}`).join(", ") || "none";
+    const monthIncome = income.filter(r => thisMonth(r.date)).reduce((s,r) => s+r.amount, 0);
+    const monthExpenses = expenses.filter(r => thisMonth(r.date)).reduce((s,r) => s+r.amount, 0);
+
+    // Schedule: split so "today" and "coming up" are distinguishable, and past ones don't
+    // pollute the answer.
+    const dated = appts.filter(a => a.date);
+    const todays = dated.filter(a => a.date === today);
+    const upcoming = dated.filter(a => a.date > today).sort((a,b) => a.date.localeCompare(b.date));
+
+    const openTasks = tasks.filter(t => !t.done);
+    const openReminders = smartReminders.filter(r => !r.done);
+    const unread = emails.filter(e => !e.read);
+
+    return `You are KROFT, a personal AI assistant by Virt Technologies. You can answer any question on any topic, and you also have live access to this user's own data (below). Use it whenever the question touches their money, schedule, work or people — quote real figures and real titles rather than speaking generally. If the data below doesn't cover something, say so plainly instead of guessing.
+
+CURRENT MOMENT
+Date: ${now.toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric",year:"numeric"})} (${today})
+Time: ${now.toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit"})}
+
+USER
+Name: ${user.name||"not set"}
+Business: ${user.businessName||"not set"}${user.businessType?` (${user.businessType})`:""}
+Currency: ${cur}
+Current mood: ${mood||"not set"}
+
+FINANCE
+All-time income: ${money(totalIncome)} | expenses: ${money(totalExpenses)} | net: ${money(netProfit)}
+This month: income ${money(monthIncome)}, expenses ${money(monthExpenses)}, net ${money(monthIncome-monthExpenses)}
+Top expense categories: ${topCats}
+Budgets this month: ${budgetStatus().length
+  ? budgetStatus().map(b => `${b.cat} ${money(b.spent)} of ${money(b.limit)}${b.pct>=1?" (OVER)":b.pct>=0.8?" (close)":""}`).join(", ")
+  : "none set"}
+Recent income: ${list(income.slice().reverse(), 5, r => `${r.label} ${money(r.amount)} (${r.date})`)}
+Recent expenses: ${list(expenses.slice().reverse(), 5, r => `${r.label} ${money(r.amount)} ${r.cat} (${r.date})`)}
+
+SCHEDULE
+Today (${todays.length}): ${list(todays, 10, a => `${a.title} at ${a.time}${a.location?` — ${a.location}`:""}`)}
+Upcoming (${upcoming.length}): ${list(upcoming, 8, a => `${a.title} on ${a.date} at ${a.time}`)}
+
+TASKS (${openTasks.length} open)
+${list(openTasks, 12, t => `${t.title} [${t.priority}]`)}
+
+REMINDERS (${openReminders.length} open)
+${list(openReminders, 8, r => `${r.text}${r.when?` (${r.when})`:""}`)}
+
+PROJECTS (${projects.length})
+${list(projects, 8, p => `${p.name} — ${p.status}${p.deadline?`, due ${p.deadline}`:""}`)}
+
+NOTES (${notes.length}): ${list(notes, 8, n => n.title || "untitled")}
+DOCUMENTS (${documents.length}): ${list(documents, 8, d => d.title || "untitled")}
+CONTACTS (${contacts.length}): ${list(contacts, 12, c => `${c.name} (${c.category})`)}
+EMAIL: ${unread.length} unread${unread.length?` — latest: ${unread[0].subject} from ${unread[0].from}`:""}
+
+STYLE
+Be warm and conversational. Address ${user.name||"the user"} by name occasionally, not every message. Keep answers tight — a couple of short paragraphs unless asked for depth. Prefer plain sentences over headings and bullet lists; replies are often read aloud.
+
+LIMITS
+You are a bookkeeping and organisation assistant, not a licensed financial adviser. You can describe what is in their records, do arithmetic on it, and point out patterns. Do not recommend investments, tax positions, borrowing, insurance or financial products, and do not tell them what to do with their money. If asked for that, say plainly that it needs a qualified accountant or adviser, then offer what you can — the relevant figures from their own records.
+
+ACTIONS
+When ${user.name||"the user"} asks you to record, add, log or schedule something, actually do it by appending ONE action block to the very end of your reply, after your normal sentence confirming it:
+<action>{"type":"...","...":"..."}</action>
+Valid types and their fields:
+{"type":"add_task","title":"string","priority":"High|Medium|Low"}
+{"type":"add_expense","label":"string","amount":number,"cat":"string"}
+{"type":"add_income","label":"string","amount":number,"cat":"string"}
+{"type":"add_appointment","title":"string","date":"YYYY-MM-DD","time":"HH:MM","location":"string"}
+{"type":"add_note","title":"string","body":"string"}
+{"type":"add_reminder","text":"string","when":"string"}
+Rules: amounts are positive numbers with no currency symbol. Resolve relative dates ("tomorrow", "next Friday") against the current date above and emit an absolute YYYY-MM-DD. Expense categories to prefer: ${expenseCats.join(", ")}. Income categories to prefer: ${incomeCats.join(", ")}. Emit at most one action per reply, only when clearly asked to save something — never for a question like "how much did I spend?". You cannot delete or edit anything; if asked, say that has to be done by hand.`;
+  };
+
+  // Pulls the action block out of a reply. The block is stripped before the text is shown or
+  // spoken, so the user never sees raw JSON and it never gets read aloud.
+  const ACTION_RE = /<action>\s*([\s\S]*?)\s*<\/action>/i;
+  const extractAction = text => {
+    const m = text.match(ACTION_RE);
+    if (!m) return { clean:text, action:null };
+    let action = null;
+    try { action = JSON.parse(m[1]); } catch { action = null; }
+    return { clean:text.replace(ACTION_RE, "").trim(), action };
+  };
+
+  // Executes an action the model asked for. Deliberately additive only — nothing here can
+  // delete or overwrite existing data, so a misread instruction can at worst create one stray
+  // item, which the undo toast covers. Every write is validated locally rather than trusted:
+  // the model can hallucinate an amount or a malformed date.
+  const applyAiAction = action => {
+    if (!action || typeof action !== "object") return null;
+    const str = v => (typeof v === "string" ? v.trim() : "");
+    const validDate = d => /^\d{4}-\d{2}-\d{2}$/.test(d) && !isNaN(new Date(d+"T00:00:00"));
+    switch (action.type) {
+      case "add_task": {
+        const title = str(action.title); if (!title) return null;
+        const priority = ["High","Medium","Low"].includes(action.priority) ? action.priority : "Medium";
+        const item = { id:uid(), title, priority, repeat:"none", contactId:null, done:false };
+        setTasks(p => [item, ...p]);
+        return { label:`Task added: ${title}`, undo:() => setTasks(p => p.filter(x => x.id !== item.id)) };
+      }
+      case "add_expense":
+      case "add_income": {
+        const label = str(action.label); const amt = parseAmount(action.amount);
+        if (!label || amt === null) return null;
+        const isInc = action.type === "add_income";
+        const cats = isInc ? incomeCats : expenseCats;
+        const cat = cats.includes(str(action.cat)) ? str(action.cat) : cats[0];
+        const item = { id:uid(), label, amount:amt, cat, date:validDate(action.date)?action.date:todayISO(), cur:user.currency };
+        (isInc ? setIncome : setExpenses)(p => [...p, item]);
+        return {
+          label:`${isInc?"Income":"Expense"} added: ${label} ${fmtCur(amt,user.currency)}`,
+          undo:() => (isInc ? setIncome : setExpenses)(p => p.filter(x => x.id !== item.id)),
+        };
+      }
+      case "add_appointment": {
+        const title = str(action.title); if (!title) return null;
+        const item = { id:uid(), title, date:validDate(action.date)?action.date:todayISO(), time:str(action.time)||"09:00", location:str(action.location), notes:"", urgent:false, repeat:"none", contactId:null };
+        setAppts(p => [...p, item]);
+        return { label:`Appointment added: ${title}`, undo:() => setAppts(p => p.filter(x => x.id !== item.id)) };
+      }
+      case "add_note": {
+        const body = str(action.body); const title = str(action.title);
+        if (!body && !title) return null;
+        const item = { id:uid(), title, body, date:dateStr(), contactId:null };
+        setNotes(p => [item, ...p]);
+        return { label:`Note saved${title?`: ${title}`:""}`, undo:() => setNotes(p => p.filter(x => x.id !== item.id)) };
+      }
+      case "add_reminder": {
+        const text = str(action.text); if (!text) return null;
+        const item = { id:uid(), text, when:str(action.when), done:false, aiSuggested:true, contactId:null };
+        setSmartReminders(p => [item, ...p]);
+        return { label:`Reminder set: ${text}`, undo:() => setSmartReminders(p => p.filter(x => x.id !== item.id)) };
+      }
+      default: return null;
+    }
+  };
+
+  // Only the most recent slice of the conversation is sent. The full history stays on screen,
+  // but shipping all of it on every turn means replies get slower and more expensive the longer
+  // a session runs, and eventually the request exceeds the model's context window and fails
+  // outright. Trimming from the front keeps the recent, relevant turns.
+  // Plus sends more of it — a real, honest difference: a long-running conversation about an
+  // ongoing situation ("we've been going over my Q3 numbers") stays coherent for longer instead
+  // of the model quietly losing the earlier turns. It costs more in tokens per message, which is
+  // exactly the kind of thing worth being a paid difference rather than a cosmetic one.
+  const historyLimit = () => (subscribed ? 60 : 20);
+
+  // Distinguishes failure modes. Everything used to collapse into one "couldn't process that",
+  // which gave no clue whether to check your connection, wait, or just retry.
+  class KroftError extends Error {}
+  const friendlyError = status =>
+    status === 429 ? "I'm being rate limited right now. Give it a moment and try again."
+    : status === 401 || status === 403 ? "I couldn't authenticate with the AI service."
+    : status >= 500 ? "The AI service is having trouble. Try again in a moment."
+    : status === 400 ? "That request didn't go through. Try rephrasing it."
+    : "Something went wrong reaching the AI service.";
+
+  // onDelta streams tokens as they arrive; without it the call resolves with the full text.
+  // Streaming matters most here because replies are long enough that a spinner-then-dump feels
+  // broken, and because the first sentence can start being read aloud while the rest arrives.
+  const runKroftCompletion = async (messages, { onDelta, signal } = {}) => {
+    const recent = messages.slice(-historyLimit());
+    const body = {
+      model:"claude-sonnet-4-6",
+      max_tokens:2048,
+      system:krofSysPrompt(),
+      messages:recent.map(m => ({ role:m.role, content:m.content })),
+      ...(onDelta ? { stream:true } : {}),
+    };
+    let res;
+    try {
+      res = await fetch("https://api.anthropic.com/v1/messages", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body), signal });
+    } catch (e) {
+      if (e.name === "AbortError") throw e;
+      throw new KroftError("I can't reach the network right now. Check your connection and try again.");
+    }
+    if (!res.ok) throw new KroftError(friendlyError(res.status));
+
+    if (!onDelta) {
+      const data = await res.json();
+      const text = data.content?.map(b => b.text||"").join("");
+      if (!text) throw new KroftError("I got an empty response. Try asking again.");
+      return text;
+    }
+
+    // Server-sent events: each line is `data: {...}`. Only text deltas matter here; the rest of
+    // the event types (message_start, ping, message_stop) are ignored.
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "", full = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream:true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+      for (const line of lines) {
+        if (!line.startsWith("data:")) continue;
+        const payload = line.slice(5).trim();
+        if (!payload || payload === "[DONE]") continue;
+        try {
+          const evt = JSON.parse(payload);
+          if (evt.type === "content_block_delta" && evt.delta?.text) {
+            full += evt.delta.text;
+            // The action block is stripped before display, but it arrives token by token — so
+            // hide anything from "<action" onward while streaming rather than flashing raw JSON.
+            // Hide the action block as it arrives. Matching only the complete "<action" string
+            // let a partial like "<act" through, which could be spoken aloud as stray
+            // characters — so any trailing fragment that could still become the tag is cut too.
+            let visible = full;
+            const cut = full.indexOf("<action");
+            if (cut !== -1) visible = full.slice(0, cut);
+            else {
+              const partialTag = full.match(/<a?c?t?i?o?n?$/);
+              if (partialTag) visible = full.slice(0, full.length - partialTag[0].length);
+            }
+            onDelta(visible.trimEnd());
+          }
+        } catch { /* partial JSON across chunk boundary — the buffer picks it up next round */ }
+      }
+    }
+    if (!full) throw new KroftError("I got an empty response. Try asking again.");
+    return full;
+  };
+
+  // Lightweight, local (no API call) detection for chat messages like "email Sarah about the
+  // invoice" or "call John" — matches an action verb plus a saved contact's first name. Returns
+  // a SUGGESTION, not an executed action: a fuzzy name match ("call the plumber Sarah
+  // recommended") could otherwise target the wrong person, so nothing actually dials, texts, or
+  // opens Compose until the person taps the confirm button on the suggestion.
+  const CONTACT_ACTION_VERBS = { email:["email","e-mail"], call:["call","phone","dial"], text:["text","message","sms","whatsapp"] };
+  // Personal pronouns that can precede a modal auxiliary ("I will...", "we would...") — used
+  // below to avoid mistaking a contact literally named Will/Hope/Grace/etc. for the modal verb
+  // in an ordinary sentence like "I will message the team".
+  const MODAL_PRONOUNS = ["i","you","we","they","he","she","it","who"];
+  const resolveContactAction = query => {
+    const words = query.toLowerCase().split(/\s+/).map(w => w.replace(/[^a-z']/g, ""));
+    let type = null, verbIdx = -1;
+    for (const [t, verbs] of Object.entries(CONTACT_ACTION_VERBS)) {
+      const idx = words.findIndex(w => verbs.includes(w));
+      if (idx !== -1) { type = t; verbIdx = idx; break; }
+    }
+    if (!type) return null;
+    const contact = contacts.find(c => {
+      const first = c.name.trim().split(/\s+/)[0].toLowerCase();
+      if (first.length <= 1) return false;
+      const nameIdx = words.findIndex(w => w === first);
+      if (nameIdx === -1) return false;
+      // Skip the classic false-positive shape: the "name" match is actually a modal auxiliary
+      // sitting directly in front of the action verb, itself preceded by a personal pronoun
+      // (e.g. "I will message the team" — not a request to message a contact named Will).
+      const isModalFalsePositive = nameIdx === verbIdx - 1 && MODAL_PRONOUNS.includes(words[nameIdx - 1]);
+      return !isModalFalsePositive;
+    });
+    if (!contact) return null;
+    if (type === "email" && !contact.email) return null;
+    if ((type === "call" || type === "text") && !contact.phone) return null;
+    return { type, contact };
+  };
+  // Executes a confirmed contact action from a chat suggestion — never called automatically.
+  // Everything lives on this device. Clearing browser data wipes every transaction, contact and
+  // note with no way back — for something tracking a person's finances that's an unacceptable
+  // single point of failure. Export writes the whole store to a JSON file the user keeps, which
+  // is the closest thing to a backup available without a server.
+  const exportData = async () => {
+    try {
+      const groups = {};
+      await Promise.all(Object.entries(STORAGE_KEYS).map(async ([group, key]) => {
+        try { const r = await window.storage.get(key, false); groups[group] = r?.value ? JSON.parse(r.value) : null; }
+        catch { groups[group] = null; }
+      }));
+      // Credential material is stripped. An export is a file that gets emailed, synced and left
+      // in Downloads — the password hash and salt have no business travelling in it, and nothing
+      // needs them to restore the data.
+      if (groups.profile?.user) {
+        const { passwordHash, passwordSalt, password, webauthnCredentialId, ...safeUser } = groups.profile.user;
+        groups.profile = { ...groups.profile, user: safeUser };
+      }
+      const payload = { app:"KROFT", formatVersion:1, exportedAt:new Date().toISOString(), data:groups };
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type:"application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = `kroft-backup-${todayISO()}.json`;
+      document.body.appendChild(a); a.click(); a.remove();
+      // Revoked on a delay — revoking immediately cancels the download on some browsers.
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+      toast("Backup downloaded.");
+    } catch { toast("Couldn't create the backup. Try again."); }
+  };
+
+  // Restores from a file produced above. Replaces rather than merges: merging two ledgers
+  // silently duplicates transactions, and a quietly wrong balance is worse than an obvious one.
+  const importData = async file => {
+    try {
+      const parsed = JSON.parse(await file.text());
+      if (parsed?.app !== "KROFT" || !parsed.data) { toast("That doesn't look like a KROFT backup."); return; }
+      await Promise.all(Object.entries(parsed.data).map(async ([group, value]) => {
+        const key = STORAGE_KEYS[group];
+        // Unknown groups are skipped rather than written, so a tampered file can't put
+        // arbitrary keys into storage.
+        if (!key || value == null) return;
+        try { await window.storage.set(key, JSON.stringify(value), false); } catch { /* skip */ }
+      }));
+      toast("Backup restored. Reloading…");
+      setTimeout(() => window.location.reload(), 1200);
+    } catch { toast("Couldn't read that file."); }
+  };
+
+  const runContactAction = ({ type, contact }) => {
+    if (type === "email") setComposeDraft({ to:contact.email, subject:"", body:"" });
+    else if (type === "call") window.location.href = `tel:${contact.phone}`;
+    else if (type === "text") window.location.href = `sms:${contact.phone}`;
+  };
+
+  // Runs the actual AI completion against a given conversation state. Split out from askKroft
+  // so the "Just answer normally" path (declining a contact-action suggestion) can reuse it
+  // without re-appending the user's message a second time — that message was already added
+  // when the suggestion first appeared.
+  const runNormalCompletion = async (conversationSoFar, contactAction = null) => {
+    const today = new Date().toDateString();
+    let currentCount = dailyMessageCount;
+    if (today !== messageCountDate) {
+      currentCount = 0;
+      setMessageCountDate(today);
+      setDailyMessageCount(0);
+    }
+    if (!subscribed && currentCount >= FREE_DAILY_MESSAGE_LIMIT) {
+      // Shown in the conversation rather than as a toast that disappears. Being silently
+      // stopped mid-thought, with the only explanation already faded away, reads as the app
+      // breaking rather than a limit being reached.
+      setAiMessages(p => [...p, {
+        id: uid(),
+        role: "assistant",
+        content: `That's all ${FREE_DAILY_MESSAGE_LIMIT} free messages for today — they reset in about ${resetsIn()}. Everything else in KROFT keeps working in the meantime.`,
+        limitNotice: true,
+      }]);
+      return;
+    }
+    setAiLoading(true);
+    if (!subscribed) setDailyMessageCount(currentCount + 1);
+    await streamReply(conversationSoFar, contactAction);
+  };
+
+  // Single implementation shared by a new message and by Retry. Previously Retry had its own
+  // copy of this logic, which quietly fell behind — it never streamed, never stripped or applied
+  // the action block, and still showed the old generic error text.
+  const streamReply = async (conversationSoFar, contactAction = null) => {
+    const controller = new AbortController();
+    aiAbortRef.current = controller;
+    const streamId = uid();
+    setAiMessages(p => [...p, { id:streamId, role:"assistant", content:"", streaming:true }]);
+    try {
+      const raw = await runKroftCompletion(conversationSoFar, {
+        signal: controller.signal,
+        onDelta: partial => setAiMessages(p => p.map(m => m.id === streamId ? { ...m, content:partial } : m)),
+      });
+      const { clean, action } = extractAction(raw);
+      const result = action ? applyAiAction(action) : null;
+      setAiMessages(p => p.map(m => m.id === streamId ? { ...m, content:clean, streaming:false, contactAction } : m));
+      if (result) toast(result.label, result.undo);
+      if (voiceReplies && !voiceOpenRef.current) speak(clean);
+    } catch (err) {
+      if (err.name === "AbortError") {
+        // Keep whatever had already streamed in — a stopped reply is partial, not failed, and
+        // throwing it away would lose text the person may have been reading.
+        setAiMessages(p => p.map(m => m.id === streamId
+          ? { ...m, streaming:false, content:(m.content || "").trim() || "Stopped.", stopped:true }
+          : m));
+      } else {
+        const msg = err instanceof KroftError ? err.message : "Something went wrong. Please try again.";
+        setAiMessages(p => p.map(m => m.id === streamId ? { ...m, content:msg, streaming:false, failed:true } : m));
+      }
+    }
+    aiAbortRef.current = null;
+    setAiLoading(false);
+  };
+
+  const stopReply = () => { aiAbortRef.current?.abort(); aiAbortRef.current = null; };
+
+  // Plus: an unprompted daily notification — the one thing a free account structurally can't
+  // get, since it requires KROFT to initiate rather than respond. Built from the same real data
+  // as the chat context, kept to one short sentence since it has to work as a lock-screen
+  // notification, not a message someone opens and reads.
+  const generateDailyBrief = async () => {
+    const today = todayISO();
+    const todays = appts.filter(a => a.date === today);
+    const openTasks = tasks.filter(t => !t.done);
+    const overBudget = budgetStatus().filter(b => b.pct >= 1);
+    const nearBudget = budgetStatus().filter(b => b.pct >= 0.8 && b.pct < 1);
+    const context = `Today: ${today}. Appointments today: ${todays.length ? todays.map(a=>`${a.title} at ${a.time}`).join("; ") : "none"}. Open tasks: ${openTasks.length}. Budgets over limit: ${overBudget.length ? overBudget.map(b=>b.cat).join(", ") : "none"}. Budgets close to limit: ${nearBudget.length ? nearBudget.map(b=>b.cat).join(", ") : "none"}. Name: ${user.name||"there"}.`;
+    try {
+      const res = await fetch("https://api.anthropic.com/v1/messages", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ model:"claude-sonnet-4-6", max_tokens:80, system:"Write exactly one short sentence greeting the user by name and flagging the single most useful thing about their day from the context — a tight schedule, a budget issue, or an open task count if nothing else stands out. Never state a specific dollar amount, even if one seems implied — this reads out loud on a lock screen others may see. Plain text, no preamble, no quotes, under 22 words.", messages:[{ role:"user", content:context }] }) });
+      const data = await res.json();
+      const text = data.content?.map(b=>b.text||"").join("").trim();
+      return (res.ok && text) || `Good morning, ${user.name||"there"} — ${openTasks.length} tasks open today.`;
+    } catch {
+      return null;
+    }
+  };
+
+  // Delivers notifications for things that are actually due. Runs every 30s so a 10-minute
+  // warning lands close to on time without polling aggressively.
+  useEffect(() => {
+    if (!dataLoaded || notifPermission !== "granted") return;
+    const check = () => {
+      const now = new Date();
+      const today = todayISO();
+      const mins = now.getHours() * 60 + now.getMinutes();
+      const fired = {};
+
+      const send = (key, title, body) => {
+        if (notifSent[key]) return;
+        if (sendNotification(title, body, key)) fired[key] = true;
+      };
+
+      // Fires once, in a fixed morning window, so it reads as "today's brief" rather than
+      // landing at an arbitrary moment depending on when the tab happened to be open.
+      if (subscribed && notifPrefs.dailyBrief && dailyBriefSentDate !== today && mins >= 8*60 && mins < 8*60+30) {
+        setDailyBriefSentDate(today);
+        generateDailyBrief().then(text => {
+          if (text) sendNotification("Your day", text, `brief:${today}`);
+        });
+      }
+
+      if (notifPrefs.appointments) {
+        appts.filter(a => a.date === today && a.time).forEach(a => {
+          const [h, m] = a.time.split(":").map(Number);
+          if (isNaN(h)) return;
+          const delta = (h * 60 + (m || 0)) - mins;
+          // Fires in the ten minutes before, not after — a notification for something that
+          // already started is noise.
+          if (delta <= 10 && delta >= 0) {
+            send(`appt:${today}:${a.id}`, delta <= 1 ? `${a.title} is starting` : `${a.title} in ${delta} min`,
+              [a.time, a.location].filter(Boolean).join(" · "));
+          }
+        });
+      }
+
+      if (notifPrefs.reminders) {
+        smartReminders.filter(r => !r.done && r.when).forEach(r => {
+          // `when` is free text, so only an explicit HH:MM is treated as a scheduled time.
+          // Anything vaguer is left alone rather than guessed at and fired at the wrong moment.
+          const m = String(r.when).match(/(\d{1,2}):(\d{2})/);
+          if (!m) return;
+          const target = Number(m[1]) * 60 + Number(m[2]);
+          if (mins >= target && mins - target < 30) {
+            send(`rem:${today}:${r.id}`, "Reminder", r.text);
+          }
+        });
+      }
+
+      if (Object.keys(fired).length) setNotifSent(p => ({ ...p, ...fired }));
+    };
+    check();
+    return heartbeat(check);
+  }, [dataLoaded, notifPermission, notifPrefs, appts, smartReminders, notifSent, subscribed, dailyBriefSentDate]);
+
+  // Plus: scheduled calls. Kept independent of notifPermission — the in-app ringing overlay
+  // doesn't need OS notification permission at all, only the accompanying system notification
+  // does (sendNotification no-ops quietly if that permission isn't granted). Folding this into
+  // the permission-gated effect above would have meant a call never rang in-app for anyone who
+  // hadn't separately granted notifications, which has nothing to do with whether this feature
+  // should work.
+  useEffect(() => {
+    if (!dataLoaded || !subscribed) return;
+    const check = () => {
+      const nowTs = Date.now();
+      scheduledCalls.forEach(c => {
+        if (c.status !== "pending") return;
+        const due = new Date(`${c.date}T${c.time||"00:00"}:00`).getTime();
+        const lateMins = (nowTs - due) / 60000;
+        if (lateMins < 0) return;
+        // A call rings within a 10-minute window of its time, matching the appointment
+        // reminder window elsewhere — later than that and it's marked missed rather than
+        // ringing stale, minutes late.
+        if (lateMins > 10) {
+          setScheduledCalls(p => p.map(x => x.id===c.id ? { ...x, status:"missed" } : x));
+          sendNotification("Missed call — KROFT", `${c.title}${c.note ? `: ${c.note}` : ""}`, `call:${c.id}`);
+          return;
+        }
+        if (!callNotifiedRef.current[c.id]) {
+          callNotifiedRef.current[c.id] = true;
+          sendNotification("Incoming call — KROFT", c.title, `call:${c.id}`);
+        }
+        setIncomingCall(prev => prev ? prev : c);
+      });
+    };
+    check();
+    return heartbeat(check);
+  }, [dataLoaded, subscribed, scheduledCalls]);
+
+  // Notification keys accumulate forever otherwise. Anything not from today is dropped once a
+  // day — the keys are date-scoped, so old ones can never match again.
+  useEffect(() => {
+    if (!dataLoaded) return;
+    const prune = () => {
+      const today = todayISO();
+      setNotifSent(p => {
+        const kept = Object.fromEntries(Object.entries(p).filter(([k]) => k.includes(today)));
+        return Object.keys(kept).length === Object.keys(p).length ? p : kept;
+      });
+    };
+    prune();
+    const t = setInterval(prune, 3600000);
+    return () => clearInterval(t);
+  }, [dataLoaded]);
+
+  // Spend per category for the current month, alongside its limit. Derived rather than stored so
+  // it can never drift out of sync with the underlying entries.
+  // Memoised: this was recomputed on every render and called from six places per pass, walking
+  // the whole expense list each time. It only changes when the expenses, budgets or the day do.
+  const budgetStatus = useMemo(() => () => {
+    const today = todayISO();
+    const month = today.slice(0, 7);
+    const now = new Date();
+    const dayOfMonth = now.getDate();
+    const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+    // How far through the month we are. A budget spent evenly would sit at roughly this figure,
+    // so it's the yardstick for whether someone is ahead of pace rather than merely partway
+    // through a normal month.
+    const monthProgress = dayOfMonth / daysInMonth;
+
+    return Object.entries(budgets)
+      .filter(([, limit]) => limit > 0)
+      .map(([cat, limit]) => {
+        const spent = expenses.filter(e => e.cat === cat && (e.date || "").slice(0, 7) === month)
+                              .reduce((sum, e) => sum + e.amount, 0);
+
+        // Recurring expenses still to post this month are counted toward the projection.
+        // Without this a budget looks comfortable all month and then blows out the day rent
+        // posts — which is precisely the surprise a budget exists to prevent.
+        const committed = expenses
+          .filter(e => e.cat === cat && e.repeat && e.repeat !== "none" && e.nextDate
+                       && e.nextDate.slice(0, 7) === month && e.nextDate > today)
+          .reduce((sum, e) => sum + e.amount, 0);
+
+        // Plus: last month's underspend raises this month's effective limit. `limit` stays the
+        // number the person actually typed, so the editor and "budgeted total" keep meaning what
+        // they say — only the pace/warning math and the "left" figure see the carryover.
+        const carryover = subscribed ? (budgetCarryover[cat] || 0) : 0;
+        const effectiveLimit = limit + carryover;
+
+        const pct = effectiveLimit ? spent / effectiveLimit : 0;
+        // Straight-line projection from spend so far, plus anything already committed.
+        const projected = monthProgress > 0 ? (spent / monthProgress) + committed : spent + committed;
+
+        return {
+          cat, limit, effectiveLimit, carryover, spent, committed, pct,
+          left: effectiveLimit - spent,
+          projected,
+          // "Ahead of pace" needs a floor: in the first days of a month a single ordinary
+          // purchase produces a wild projection, so it only flags once a meaningful share of
+          // the month has passed and the overshoot is more than noise.
+          aheadOfPace: monthProgress > 0.15 && pct > monthProgress * 1.25 && pct < 1,
+          willExceed: projected > effectiveLimit && pct < 1,
+          monthProgress,
+        };
+      })
+      .sort((a, b) => b.pct - a.pct);
+  }, [expenses, budgets, budgetCarryover, subscribed, todayISO()]);
+
+  // Warns as a category approaches and then passes its limit. Each threshold fires once per
+  // category per month — keyed by month so a new month starts clean, and so reopening the app
+  // doesn't re-announce something already seen.
+  useEffect(() => {
+    if (!dataLoaded) return;
+    const month = todayISO().slice(0, 7);
+    budgetStatus().forEach(({ cat, limit, spent, pct, projected, willExceed }) => {
+      // Three levels now. "pace" is the useful one: it can fire at 40% spent on the 8th, which
+      // is early enough to actually change the outcome — 80% often isn't.
+      const level = pct >= 1 ? "over" : pct >= 0.8 ? "near" : willExceed ? "pace" : null;
+      if (!level) return;
+      const key = `${month}:${cat}:${level}`;
+      if (budgetAlerts[key]) return;
+      setBudgetAlerts(p => ({ ...p, [key]: true }));
+      const msg = level === "over"
+        ? `Over budget on ${cat} — ${fmtCur(spent, user.currency)} of ${fmtCur(limit, user.currency)}.`
+        : level === "near"
+          ? `${cat} is at ${Math.round(pct * 100)}% of budget.`
+          : `At this rate ${cat} will reach ${fmtCur(projected, user.currency)} against a ${fmtCur(limit, user.currency)} budget.`;
+      toast(msg);
+      // Also pushed to the system tray when enabled, so it lands even if KROFT isn't the tab
+      // in front of them.
+      if (notifPrefs.budgets && notifPermission === "granted") {
+        sendNotification(level === "over" ? "Over budget" : level === "near" ? "Approaching budget" : "Spending ahead of pace", msg, key);
+      }
+    });
+  }, [dataLoaded, expenses, budgets]);
+
+  // Posts recurring income and expenses when they come due. A recurring entry acts as a
+  // template: it keeps its own `repeat` cadence and a `nextDate`, and each time that date passes
+  // a concrete, normal entry is written for it. The template itself is never counted twice, and
+  // catching up runs in a loop so a month away from the app still produces every missed posting
+  // rather than a single one.
+  useEffect(() => {
+    if (!dataLoaded) return;
+    const post = () => {
+      const today = todayISO();
+      const run = (list, setList) => {
+        setList(prev => {
+          const generated = [];
+          let changed = false;
+          const next = prev.map(e => {
+            if (!e.repeat || e.repeat === "none" || !e.nextDate) return e;
+            let cursor = e.nextDate;
+            let guard = 0;
+            // Guarded so a corrupted cadence can't spin forever; 60 postings covers five years
+            // of monthly or a year of weekly.
+            while (cursor <= today && guard++ < 60) {
+              generated.push({ id:uid(), label:e.label, amount:e.amount, cat:e.cat, date:cursor, cur:e.cur || user.currency, fromRecurring:e.id });
+              cursor = advanceRepeatDate(cursor, e.repeat);
+              changed = true;
+            }
+            return changed ? { ...e, nextDate:cursor } : e;
+          });
+          return changed ? [...next, ...generated] : prev;
+        });
+      };
+      run(income, setIncome);
+      run(expenses, setExpenses);
+    };
+    post();
+    return heartbeat(post);
+  }, [dataLoaded, income, expenses]);
+
+  // Rolls the wellness score over at midnight. A stale score is worse than no score — someone
+  // who had a rough Monday and next opens the app on Friday shouldn't be shown Monday's number
+  // labelled "today". Rather than resetting flat to 75, the new day starts pulled most of the
+  // way back toward neutral, so a genuinely bad stretch still shows through on consecutive days
+  // without a single bad day following you around all week.
+  useEffect(() => {
+    if (!dataLoaded) return;
+    const rollover = () => {
+      const today = todayISO();
+      if (wellnessDate === today) return;
+      setWellness(prev => Math.round(75 + (prev - 75) * 0.35));
+      setWellnessDate(today);
+      setSelfCare({ breaks:0, water:0 });
+    };
+    rollover();
+    return heartbeat(rollover);
+  }, [dataLoaded, wellnessDate]);
+
+  // Plus: carries each category's unused budget into the next month, computed once when the
+  // calendar month actually changes. Only accrues while subscribed — the benefit belongs to
+  // being on Plus when a month closes, not to having ever been on Plus, so downgrading stops
+  // future accrual without clawing back what already rolled over.
+  useEffect(() => {
+    if (!dataLoaded) return;
+    const rollover = () => {
+      const currentMonth = todayISO().slice(0, 7);
+      if (currentMonth === budgetRolloverMonth) return;
+      if (subscribed) {
+        const prevMonth = budgetRolloverMonth;
+        setBudgetCarryover(() => {
+          const next = {};
+          Object.entries(budgets).forEach(([cat, limit]) => {
+            if (!(limit > 0)) return;
+            const spent = expenses
+              .filter(e => e.cat === cat && (e.date || "").slice(0, 7) === prevMonth)
+              .reduce((sum, e) => sum + e.amount, 0);
+            const leftover = limit - spent;
+            // Only a genuine underspend carries forward — an overspent category obviously
+            // shouldn't reduce next month's limit, so it simply carries nothing.
+            if (leftover > 0) next[cat] = leftover;
+          });
+          return next;
+        });
+      } else {
+        setBudgetCarryover({});
+      }
+      setBudgetRolloverMonth(currentMonth);
+    };
+    rollover();
+    return heartbeat(rollover);
+  }, [dataLoaded, budgetRolloverMonth, subscribed, budgets, expenses]);
+
+  // Wellness suggestions derived from what's actually going on, rather than four fixed lines
+  // shown to everyone forever. The old set also asserted an invented statistic ("improves focus
+  // by roughly 40%"), which is worse than unhelpful — so these stick to plain, checkable
+  // statements and tie each one to the reason it's being shown.
+  const wellnessTips = () => {
+    const now = new Date();
+    const hour = now.getHours();
+    const today = todayISO();
+    const out = [];
+
+    const todaysAppts = appts.filter(a => a.date === today);
+    const laterToday = todaysAppts.filter(a => (a.time || "") > `${String(hour).padStart(2,"0")}:00`);
+    const openTasks = tasks.filter(t => !t.done);
+    const highPriority = openTasks.filter(t => t.priority === "High");
+    // Only today's check-ins count. Now that the log persists across days, slicing the tail
+    // blindly would let last week's bad afternoon drive today's advice.
+    const recentMoods = moodLog.filter(m => (m.date || today) === today).slice(-3).map(m => m.mood);
+    const stressed = recentMoods.filter(m => m === "stressed" || m === "angry").length >= 2;
+
+    // Money worry is a real driver of how a day feels, so it belongs here alongside mood and
+    // workload rather than only in the finance tab.
+    const overBudget = budgetStatus().filter(b => b.pct >= 1);
+    if (overBudget.length) out.push({ text:`${overBudget[0].cat} is over budget this month. Worth a look before it grows.`, why:"from your budgets" });
+
+    if (stressed) out.push({ text:`Your last few mood check-ins were tense. Try a few slow breaths before your next task.`, why:"based on your mood log" });
+    if (wellness <= 60) out.push({ text:`Your score is ${wellness}. Take a real break — step away from the screen for ten minutes.`, why:"your score is low today" });
+
+    if (todaysAppts.length >= 4) out.push({ text:`${todaysAppts.length} appointments today. Protect a gap between them so you're not running straight through.`, why:"from today's schedule" });
+    else if (laterToday.length > 0) out.push({ text:`Next up: ${laterToday[0].title} at ${laterToday[0].time}. A short walk beforehand helps you arrive settled.`, why:"from today's schedule" });
+
+    if (highPriority.length >= 3) out.push({ text:`${highPriority.length} high-priority tasks are open. Pick one to finish rather than starting several.`, why:"from your task list" });
+    else if (openTasks.length === 0 && todaysAppts.length === 0) out.push({ text:`Nothing scheduled and no open tasks. A good day to rest properly rather than filling it.`, why:"your day is clear" });
+
+    if (hour < 10) out.push({ text:`Drink a glass of water before your first coffee — you've gone all night without any.`, why:"it's morning" });
+    else if (hour >= 12 && hour < 15) out.push({ text:`Midday dip is normal. Ten minutes outside beats another coffee for getting through the afternoon.`, why:"it's the middle of the day" });
+    else if (hour >= 21) out.push({ text:`It's getting late. Putting your phone down an hour before bed makes falling asleep easier.`, why:"it's late evening" });
+
+    if (mood === "happy") out.push({ text:`You're in good form — this is the right time to start the thing you've been putting off.`, why:"based on your current mood" });
+
+    // Always leave something useful on screen, even on a blank day with no signals.
+    if (out.length === 0) out.push({ text:`Nothing's flagging today. Drink water, move every hour, and finish at a reasonable time.`, why:"a steady day" });
+    return out.slice(0, 4);
+  };
+
+  const askKroft = async override => {
+    const q = override || aiInput; if (!q.trim()) return;
+
+    // A detected contact action no longer short-circuits the model. It used to intercept the
+    // message entirely and return a "did you mean...?" card, which made sense when KROFT was
+    // blind — but now it can see your contacts and draft the actual text or email, so blocking
+    // it was a downgrade. The reply comes through as normal and the shortcut rides along
+    // underneath it as a button.
+    const contactAction = resolveContactAction(q);
+
+    // Real daily cap enforcement for the free plan. Resets when the calendar day changes.
+    const userMsg = { role:"user", content:q };
+    setAiMessages(p => [...p, userMsg]); setAiInput("");
+    await runNormalCompletion([...aiMessages, userMsg], contactAction);
+  };
+
+  // Regenerate a specific assistant reply (Retry action) — reuses the conversation up to and
+  // including the preceding user message, without re-adding a duplicate user turn.
+  const regenerateReply = async i => {
+    if (aiLoading) return;
+    const upToUser = aiMessages.slice(0, i);
+    setAiMessages(upToUser);
+    setAiLoading(true);
+    await streamReply(upToUser);
+  };
+
+  const setMsgFeedback = (i, val) => {
+    setAiMessages(p => p.map((m,idx) => idx===i ? { ...m, feedback: m.feedback===val ? null : val } : m));
+    toast(val==="up" ? "Thanks for the feedback." : "Thanks — KROFT will keep improving.");
+  };
+
+  const copyMsg = async text => {
+    try { await navigator.clipboard.writeText(text); toast("Copied to clipboard."); }
+    catch { toast("Couldn't copy — try selecting the text manually."); }
+  };
+
+  const shareMsg = async text => {
+    if (navigator.share) { try { await navigator.share({ text }); } catch {} }
+    else copyMsg(text);
+  };
+
+  const aiDraftReply = async email => {
+    if (!spendAiExtra()) return;
+    toast("KROFT is drafting a reply…");
+    try {
+      const res = await fetch("https://api.anthropic.com/v1/messages", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ model:"claude-sonnet-4-6", max_tokens:400, messages:[{ role:"user", content:`Draft a concise professional reply (under 5 sentences). From: ${email.from}, Subject: ${email.subject}, Body: "${email.body}"` }] }) });
+      const data = await res.json();
+      const body = data.content?.map(b=>b.text||"").join("").trim();
+      if (!res.ok || !body) { toast("Draft failed — try again."); return; }
+      setComposeDraft({ to:email.from, subject:"Re: "+email.subject, body });
+    } catch { toast("Draft failed."); }
+  };
+
+  // Smart Reminders — genuinely asks the AI for a useful reminder based on real context
+  const [suggestingReminder, setSuggestingReminder] = useState(false);
+  const suggestSmartReminder = async () => {
+    if (!spendAiExtra()) return;
+    setSuggestingReminder(true);
+    const context = `Appointments: ${appts.length>0 ? appts.map(a=>`${a.title} at ${a.time} on ${a.date}`).join("; ") : "none"}. Tasks: ${tasks.length>0 ? tasks.filter(t=>!t.done).map(t=>t.title).join("; ") : "none"}. Mood: ${mood}.`;
+    try {
+      const res = await fetch("https://api.anthropic.com/v1/messages", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ model:"claude-sonnet-4-6", max_tokens:120, system:"Suggest exactly ONE short, genuinely useful reminder for this user based on their context. Reply with ONLY the reminder text itself — no preamble, no quotes, under 15 words.", messages:[{ role:"user", content:context }] }) });
+      const data = await res.json();
+      const suggestion = data.content?.map(b=>b.text||"").join("").trim();
+      if (!res.ok || !suggestion) { toast("Couldn't get a suggestion — try again."); }
+      else setSmartReminders(p => [{ id:uid(), text:suggestion, when:"Suggested by KROFT", aiSuggested:true, done:false }, ...p]);
+    } catch { toast("Couldn't get a suggestion — try again."); }
+    setSuggestingReminder(false);
+  };
+
+  // Monthly finance report — aggregates this month's entries and asks the AI for real advice
+  const generateMonthlyReport = async () => {
+    const now = new Date();
+    const ym = now.toISOString().slice(0, 7); // "2026-08"
+    const monthInc = income.filter(r => (r.date||"").slice(0,7) === ym);
+    const monthExp = expenses.filter(r => (r.date||"").slice(0,7) === ym);
+    const incTotal = monthInc.reduce((s,r)=>s+r.amount,0);
+    const expTotal = monthExp.reduce((s,r)=>s+r.amount,0);
+    const net = incTotal - expTotal;
+    if (monthInc.length===0 && monthExp.length===0) { toast("No entries logged this month yet."); return; }
+    const currentMonth = ym;
+    if (currentMonth !== monthlyReportMonth) { setMonthlyReportMonth(currentMonth); setMonthlyReportCount(0); }
+    const reportCount = currentMonth !== monthlyReportMonth ? 0 : monthlyReportCount;
+    if (!subscribed && reportCount >= FREE_MONTHLY_REPORT_LIMIT) {
+      toast(`You've used this month's free report. KROFT Plus gives you one whenever you want it.`);
+      return;
+    }
+    if (!subscribed) setMonthlyReportCount(reportCount + 1);
+    const byCat = {};
+    monthExp.forEach(r => { byCat[r.cat] = (byCat[r.cat]||0) + r.amount; });
+    const topCats = Object.entries(byCat).sort((a,b)=>b[1]-a[1]).slice(0,3);
+    setGeneratingReport(true);
+    const context = `Month: ${monthLabel(now.toISOString().slice(0,10))}. Income entries: ${monthInc.length} totaling ${fmtCur(incTotal,user.currency)}. Expense entries: ${monthExp.length} totaling ${fmtCur(expTotal,user.currency)}. Net: ${fmtCur(net,user.currency)}. Top expense categories: ${topCats.length>0?topCats.map(([c,v])=>`${c} (${fmtCur(v,user.currency)})`).join(", "):"none"}. Business: ${user.businessName||"not set"} (${user.businessType||""}).`;
+    try {
+      const res = await fetch("https://api.anthropic.com/v1/messages", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ model:"claude-sonnet-4-6", max_tokens:400, system:"You are KROFT, a bookkeeping assistant. Given a user's monthly income/expense summary, write a short end-of-month summary: 2-3 sentences on what the numbers show, then 2-3 practical observations about their own spending patterns. Describe what happened in their data — do not recommend financial products, investments, tax positions, borrowing, or anything requiring a licensed advisor. Frame observations as prompts to consider, not instructions. No preamble, no headers, plain text only.", messages:[{ role:"user", content:context }] }) });
+      const data = await res.json();
+      const advice = (res.ok && data.content?.map(b=>b.text||"").join("").trim()) || "Couldn't generate advice right now — try again shortly.";
+      setMonthlyReport({ month:monthLabel(now.toISOString().slice(0,10)), incTotal, expTotal, net, topCats, advice, generatedAt:Date.now() });
+    } catch { toast("Couldn't generate the report — check your connection and try again."); }
+    setGeneratingReport(false);
+  };
+
+  // ── AROUND ME ────────────────────────────────────────────────────────────────
+
+  const toggleProjectLink = (projectId, kind, itemId) => {
+    setProjects(p => p.map(pr => {
+      if (pr.id !== projectId) return pr;
+      const ids = pr[kind] || [];
+      return { ...pr, [kind]: ids.includes(itemId) ? ids.filter(i=>i!==itemId) : [...ids, itemId] };
+    }));
+  };
+
+  // Share anything — files, notes, documents — via the native share sheet where available,
+  // falling back to copying to clipboard (e.g. desktop browsers without navigator.share).
+  const shareContent = async ({ title, text, url }) => {
+    if (navigator.share) {
+      try { await navigator.share({ title, text, url }); }
+      catch (err) { if (err.name !== "AbortError") toast("Couldn't share — try again."); }
+    } else if (navigator.clipboard) {
+      try { await navigator.clipboard.writeText(url || text || title); toast("Copied to clipboard — paste to share."); }
+      catch { toast("Couldn't copy — try again."); }
+    } else {
+      toast("Sharing isn't supported in this browser.");
+    }
+  };
+
+  const downloadText = (filename, content) => {
+    const blob = new Blob([content], { type:"text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+  // Frees a blob: URL's browser memory after a deleted item's Undo window has fully closed —
+  // NOT immediately on delete, since the "Undo" toast can restore the item, and an object URL
+  // revoked too early would leave the restored file/memo's Open/playback link permanently
+  // broken. Peeks at state via the setter's functional form (returning the same reference, so
+  // React bails out of a re-render) to check the item wasn't restored before freeing it.
+  // Records a call or email that was actually placed from inside KROFT, so a contact's history
+  // reflects real actions only. KROFT can't see your phone's native call log, so anything dialled
+  // outside the app won't appear here — the history is deliberately limited to what KROFT itself
+  // did rather than inventing entries.
+  const logContactAction = (contactId, type) => {
+    const entry = { id:uid(), type, at:new Date().toISOString() };
+    setContacts(p => p.map(c => c.id===contactId ? { ...c, log:[entry, ...(c.log||[])].slice(0,50) } : c));
+  };
+
+  // Builds the standard "hold an item" sheet: optional Edit, then Delete behind a confirm.
+  // Deletion still snapshots the list first so the toast can offer a real undo afterwards.
+  const holdActions = ({ title, subtitle, onEdit, list, setList, id, deletedLabel, confirmText, after }) => ({
+    title, subtitle,
+    actions: [
+      ...(onEdit ? [{ label:"Edit", onClick:onEdit }] : []),
+      { label:"Delete", destructive:true, confirmText, onClick:() => {
+        const prev = list;
+        setList(prev.filter(x => x.id !== id));
+        toast(deletedLabel, () => setList(prev));
+        if (after) after();
+      }},
+    ],
+  });
+
+  const scheduleBlobRevoke = (id, url, setter) => {
+    if (!url || !url.startsWith("blob:")) return;
+    setTimeout(() => {
+      setter(curr => { if (!curr.some(x => x.id === id)) URL.revokeObjectURL(url); return curr; });
+    }, UNDO_MS + 1000);
+  };
+  const CATEGORIES = [
+    { key:"restaurant", label:"Restaurants" },
+    { key:"hotel",      label:"Hotels" },
+    { key:"cafe",       label:"Cafés" },
+    { key:"hospital",   label:"Hospitals" },
+    { key:"pharmacy",   label:"Pharmacies" },
+    { key:"atm",        label:"ATMs" },
+    { key:"shopping",   label:"Shopping" },
+    { key:"fuel",       label:"Fuel Stations" },
+    { key:"entertainment", label:"Entertainment" },
+    { key:"transport",  label:"Transport" },
+  ];
+
+  const requestLocation = () => {
+    if (!navigator.geolocation) { setLocationStatus("error"); setAroundError("Geolocation isn't supported on this device."); return; }
+    setLocationStatus("requesting"); setAroundError("");
+    navigator.geolocation.getCurrentPosition(
+      pos => {
+        const { latitude, longitude } = pos.coords;
+        setUserCoords({ lat:latitude, lng:longitude });
+        setLocationStatus("granted");
+        reverseGeocode(latitude, longitude);
+      },
+      err => {
+        setLocationStatus("denied");
+        if (err.code === err.PERMISSION_DENIED) setAroundError("Location access was denied. KROFT needs this to find places near you — you can enable it later in your device Settings.");
+        else setAroundError("Couldn't determine your location right now. Try again in a moment.");
+      },
+      { enableHighAccuracy:true, timeout:10000, maximumAge:60000 }
+    );
+  };
+
+  const reverseGeocode = async (lat, lng) => {
+    try {
+      const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}`);
+      const data = await res.json();
+      const city = data.address?.city || data.address?.town || data.address?.village || data.address?.county || "";
+      const label = [city, data.address?.state, data.address?.country].filter(Boolean).join(", ");
+      setLocationLabel(label || "Current location");
+      if (city && city !== lastCity) {
+        setLastCity(city);
+        toast(`Welcome to ${city}. Here are useful places around you.`);
+      }
+    } catch {
+      setLocationLabel("Current location");
+    }
+  };
+
+  const searchNearby = async (categoryOrQuery, isNaturalLanguage=false) => {
+    if (!userCoords) { requestLocation(); return; }
+    setAroundLoading(true); setAroundError(""); setAroundSearched(true); setAroundResults([]);
+
+    let searchTerm = categoryOrQuery;
+    if (isNaturalLanguage) {
+      // Let Claude interpret the natural-language request into a place-type query
+      try {
+        const res = await fetch("https://api.anthropic.com/v1/messages", {
+          method:"POST", headers:{"Content-Type":"application/json"},
+          body:JSON.stringify({
+            model:"claude-sonnet-4-6", max_tokens:60,
+            system:"Convert the user's request into a single short search term (2-4 words max) suitable for a places search API, such as 'coffee shop', 'pharmacy open now', 'budget hotel', or 'ATM'. Reply with ONLY the search term, nothing else.",
+            messages:[{ role:"user", content:categoryOrQuery }],
+          }),
+        });
+        const data = await res.json();
+        searchTerm = data.content?.map(b=>b.text||"").join("").trim() || categoryOrQuery;
+      } catch { searchTerm = categoryOrQuery; }
+    }
+
+    try {
+      const viewbox = `${userCoords.lng-0.05},${userCoords.lat+0.05},${userCoords.lng+0.05},${userCoords.lat-0.05}`;
+      const res = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&q=${encodeURIComponent(searchTerm)}&viewbox=${viewbox}&bounded=1&limit=12`);
+      const data = await res.json();
+      const results = (data||[]).map(p => ({
+        id:p.place_id,
+        name:p.display_name.split(",")[0],
+        address:p.display_name.split(",").slice(1,3).join(",").trim(),
+        lat:parseFloat(p.lat), lng:parseFloat(p.lon),
+        type:p.type,
+      }));
+      setAroundResults(results);
+      if (results.length === 0) setAroundError(`No results found for "${searchTerm}" nearby. Try a different search.`);
+    } catch {
+      setAroundError("Couldn't reach the places service. Check your connection and try again.");
+    }
+    setAroundLoading(false);
+  };
+
+  const distanceFrom = (lat, lng) => {
+    if (!userCoords) return "";
+    const R = 6371;
+    const dLat = (lat-userCoords.lat) * Math.PI/180;
+    const dLng = (lng-userCoords.lng) * Math.PI/180;
+    const a = Math.sin(dLat/2)**2 + Math.cos(userCoords.lat*Math.PI/180)*Math.cos(lat*Math.PI/180)*Math.sin(dLng/2)**2;
+    const d = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    return d < 1 ? `${Math.round(d*1000)} m` : `${d.toFixed(1)} km`;
+  };
+
+  // Location is requested only when the person taps Enable, never on opening the tab.
+  // Auto-requesting fired the browser prompt before the "Turn on location" explanation below
+  // could be read — so the priming existed but nobody ever saw it, and browsers only ask once.
+  // If permission was already granted in a previous session, resolve it silently instead.
+  useEffect(() => {
+    if (tab !== "home" || homeSection !== "around" || locationStatus !== "idle") return;
+    if (!navigator.permissions?.query) return;
+    navigator.permissions.query({ name:"geolocation" })
+      .then(r => { if (r.state === "granted") requestLocation(); })
+      .catch(() => {});
+  }, [tab, homeSection, locationStatus]);
+
+  const G = `${FONT}${ANIM}
+    *{box-sizing:border-box;margin:0;padding:0}
+    html,body{overflow-x:hidden;max-width:100vw;overscroll-behavior-x:none}
+    #root,#app{overflow-x:hidden}
+    input,button,select,textarea{font-family:'Space Grotesk',sans-serif}
+    ::-webkit-scrollbar{width:3px}::-webkit-scrollbar-thumb{background:${C.border};border-radius:2px}
+    .hbtn:hover{opacity:.75} .tabBtn:hover{background:${C.surface}!important;color:${C.white}!important}
+    .row:hover{background:${C.hover}!important}
+    input::placeholder,textarea::placeholder{color:${C.muted}}
+    select option{background:${C.surface}} button:active{transform:scale(.96)}
+    /* Any input/select/textarea under 16px triggers iOS Safari's auto-zoom-on-focus —
+       most fields in this app were set well below that. Force 16px at the type level,
+       independent of each component's own (still-smaller) visual font-size. */
+    @media (max-width:900px){ input,select,textarea{font-size:16px!important} }
+    /* Visible focus ring for keyboard/switch-control navigation — several interactive
+       elements only get focus styling via onFocus/onBlur JS handlers, which misses
+       keyboard-only users tabbing through, and buttons/links had no focus style at all. */
+    button:focus-visible,a:focus-visible,[role="button"]:focus-visible{outline:2px solid ${C.accent};outline-offset:2px}
+    input:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px solid ${C.accent};outline-offset:1px}
+    /* Hover styling only where a real pointer exists — on touch, :hover latches after a tap
+       and leaves rows stuck in their highlighted state until something else is tapped. */
+    @media (hover:none){ .hbtn:hover{opacity:1} .row:hover{background:transparent!important} }
+    /* Entrance animations are decorative; anyone who has asked their OS for less motion gets
+       the same layout without the movement. Transitions that confirm an action still run,
+       just fast enough not to read as motion. */
+    @media (prefers-reduced-motion:reduce){
+      *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important;scroll-behavior:auto!important}
+    }
+  `;
+
+  const AvatarEl = () => (
+    <div onClick={() => setTab("profile")} style={{ width:32, height:32, borderRadius:"50%", overflow:"hidden", background:user.photo?`url(${user.photo}) center/cover no-repeat`:C.surface, border:`1.5px solid ${C.border}`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:12, fontWeight:800, color:C.white, cursor:"pointer", flexShrink:0, transition:"border-color .18s, box-shadow .18s" }} onMouseEnter={e => { e.currentTarget.style.borderColor=C.accent; e.currentTarget.style.boxShadow=`0 0 0 3px ${C.accentBg}`; }} onMouseLeave={e => { e.currentTarget.style.borderColor=C.border; e.currentTarget.style.boxShadow="none"; }}>
+      {!user.photo && initials}
+    </div>
+  );
+
+  // Keep the splash up past its normal 6s if data hasn't finished loading yet — extending a
+  // fast, expected case by a beat is far better than flashing empty/default state (a fresh
+  // signup screen, zeroed finances) for a returning user whose real data just hasn't arrived.
+  if (showSplash || !dataLoaded) return <SplashScreen fading={splashFading && dataLoaded} />;
+
+  if (step !== "dashboard") return (
+    <div key={themeTick} style={{ fontFamily:"'Space Grotesk',sans-serif", overflowX:"hidden", maxWidth:"100vw", touchAction:"pan-y" }}>
+      <style>{G}</style>
+
+      {step === "login" && (
+        <OShell step="login">
+          <div style={{ textAlign:"center", marginBottom:28 }}>
+            <div style={{ margin:"0 auto 18px", width:64, height:64, borderRadius:18, background:C.white, display:"flex", alignItems:"center", justifyContent:"center", boxShadow:`0 0 0 8px ${C.fillStrong}` }}>
+              <span style={{ fontSize:28, fontWeight:900, color:C.black }}>K</span>
+            </div>
+            <h1 style={{ fontSize:30, fontWeight:800, color:C.white, letterSpacing:-1.5, marginBottom:4 }}>Welcome back</h1>
+            <Mono style={{ color:C.muted }}>Sign in to KROFT by Virt Technologies</Mono>
+          </div>
+          {loginAttempts>0&&!locked && (
+            <div style={{ background:C.fill, border:`1px solid ${C.muted}`, borderRadius:8, padding:"8px 13px", marginBottom:13, display:"flex", alignItems:"center", gap:8 }}>
+              <div style={{ display:"flex", gap:4 }}>{[...Array(5)].map((_,i) => <div key={i} style={{ width:8, height:8, borderRadius:2, background:i<loginAttempts?C.white:C.border }} />)}</div>
+              <Mono style={{ color:C.soft, fontSize:10 }}>{5-loginAttempts} attempt{5-loginAttempts!==1?"s":""} left</Mono>
+            </div>
+          )}
+          {locked && (
+            <div style={{ background:C.fillStrong, border:`1px solid ${C.soft}`, borderRadius:10, padding:"14px", marginBottom:14, textAlign:"center" }}>
+              <div style={{ fontSize:13, fontWeight:700, color:C.white, marginBottom:3 }}>Account temporarily locked</div>
+              <Mono style={{ color:C.soft }}>Try again in <span style={{ color:C.white, fontWeight:700 }}>{lockTimer}s</span></Mono>
+            </div>
+          )}
+          <div style={{ display:"flex", flexDirection:"column", gap:13, marginBottom:10, opacity:locked?.4:1, pointerEvents:locked?"none":"all" }}>
+            <div>
+              <Mono style={{ display:"block", color:C.soft, marginBottom:6, letterSpacing:1 }}>Email</Mono>
+              <Inp placeholder="your@email.com" value={loginEmail} type="email" onChange={e => { setLoginEmail(e.target.value); setLoginError(""); }} onKeyDown={e => e.key==="Enter"&&document.getElementById("lpw")?.focus()} />
+            </div>
+            <div>
+              <Mono style={{ display:"block", color:C.soft, marginBottom:6, letterSpacing:1 }}>Password</Mono>
+              <div style={{ position:"relative" }}>
+                <input id="lpw" type={showLoginPw?"text":"password"} placeholder="••••••••" value={loginPw} onChange={e => { setLoginPw(e.target.value); setLoginError(""); }} onKeyDown={e => e.key==="Enter"&&doLogin()} style={{ width:"100%", background:C.surface, border:`1px solid ${loginError&&!locked?C.soft:C.cardB}`, borderRadius:12, padding:"11px 44px 11px 14px", color:C.text, fontSize:13, fontFamily:"'Space Grotesk',sans-serif", outline:"none", boxSizing:"border-box" }} onFocus={e => { e.target.style.borderColor=C.accent; e.target.style.boxShadow=`0 0 0 3px ${C.accentBg}`; }} onBlur={e => { e.target.style.borderColor=C.cardB; e.target.style.boxShadow="none"; }} />
+                <button onClick={() => setShowLoginPw(v => !v)} style={{ position:"absolute", right:12, top:"50%", transform:"translateY(-50%)", background:"none", border:"none", cursor:"pointer", color:C.soft, fontSize:10, fontFamily:"'Space Mono',monospace", letterSpacing:.5 }}>{showLoginPw?"HIDE":"SHOW"}</button>
+              </div>
+            </div>
+          </div>
+          {loginError && (
+            <div style={{ background:C.fill, border:`1px solid ${C.border}`, borderRadius:8, padding:"9px 13px", marginBottom:12 }}>
+              <Mono style={{ color:C.soft, lineHeight:1.5 }}>{loginError}</Mono>
+            </div>
+          )}
+          <Btn full onClick={doLogin} disabled={locked} style={{ padding:"13px", fontSize:14, marginBottom:10 }}>{locked?`Locked (${lockTimer}s)`:"Log In"}</Btn>
+          {user.webauthnCredentialId && (
+            <button onClick={doFingerprint} disabled={fpLoading||fpSuccess||locked} style={{ width:"100%", background:fpSuccess?"rgba(255,255,255,.1)":C.surface, border:`1px solid ${fpSuccess?C.white:C.muted}`, borderRadius:12, padding:"11px", cursor:locked||fpLoading||fpSuccess?"not-allowed":"pointer", color:fpSuccess?C.white:C.soft, fontSize:13, fontWeight:600, marginBottom:14, display:"flex", alignItems:"center", justifyContent:"center", gap:10, fontFamily:"'Space Grotesk',sans-serif", transition:"all .3s", opacity:locked?.4:1 }}>
+              {fpLoading ? (<><Spinner size={16} color={C.white} thickness={2} />Verifying…</>) : fpSuccess ? "Fingerprint verified" : "Sign in with Fingerprint / Face ID"}
+            </button>
+          )}
+          <div style={{ textAlign:"center", marginBottom:16 }}>
+            <Mono style={{ color:C.muted }}>Don't have an account?{" "}<span onClick={() => { setLoginError(""); setStep("signup"); }} style={{ color:C.white, cursor:"pointer", textDecoration:"underline", fontWeight:600 }}>Sign up</span></Mono>
+          </div>
+          <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:12 }}>
+            <div style={{ flex:1, height:1, background:C.border }} /><Mono style={{ color:C.muted }}>or</Mono><div style={{ flex:1, height:1, background:C.border }} />
+          </div>
+          <div style={{ display:"flex", gap:9 }}>
+            {[{l:"Google",e:"user@gmail.com"},{l:"Apple",e:"user@icloud.com"}].map(s => (
+              <button key={s.l} onClick={() => { setUser(u => ({...u, email:s.e})); setStep("signup"); }} style={{ flex:1, background:C.surface, border:`1px solid ${C.muted}`, borderRadius:12, padding:"10px", cursor:"pointer", color:C.white, fontSize:12, fontWeight:600, fontFamily:"'Space Grotesk',sans-serif" }} onMouseEnter={e => e.currentTarget.style.borderColor=C.white} onMouseLeave={e => e.currentTarget.style.borderColor=C.muted}>
+                {s.l}
+              </button>
+            ))}
+          </div>
+        </OShell>
+      )}
+
+      {step === "signup" && (
+        <OShell step="signup">
+          <div style={{ textAlign:"center", marginBottom:22 }}>
+            <div style={{ margin:"0 auto 16px", width:60, height:60, borderRadius:16, background:C.white, display:"flex", alignItems:"center", justifyContent:"center" }}>
+              <span style={{ fontSize:24, fontWeight:900, color:C.black }}>K</span>
+            </div>
+            <h1 style={{ fontSize:28, fontWeight:800, color:C.white, letterSpacing:-1, marginBottom:4 }}>Create account</h1>
+            <Mono style={{ color:C.muted }}>Set up your KROFT profile</Mono>
+          </div>
+          <div style={{ display:"flex", flexDirection:"column", gap:12, marginBottom:6 }}>
+            <div><Mono style={{ display:"block", color:C.soft, marginBottom:5 }}>Full name *</Mono><Inp placeholder="John Carter" value={user.name||""} onChange={e => { setUser(u => ({...u,name:e.target.value})); setSignupError(""); }} /></div>
+            <div><Mono style={{ display:"block", color:C.soft, marginBottom:5 }}>Email address *</Mono><Inp placeholder="john@example.com" value={user.email||""} type="email" onChange={e => { setUser(u => ({...u,email:e.target.value})); setSignupError(""); }} /></div>
+            <div>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:5 }}>
+                <Mono style={{ color:C.soft }}>Password *</Mono>
+                <button onClick={() => { const p = generatePassword(); setSignupPw(p); setConfirmPw(p); setShowSignupPw(true); setSignupError(""); toast("Strong password generated."); }} style={{ background:"none", border:"none", cursor:"pointer", fontFamily:"'Space Mono',monospace", fontSize:10, color:C.white, textDecoration:"underline", padding:0 }}>Suggest password</button>
+              </div>
+              <div style={{ position:"relative" }}>
+                <input type={showSignupPw?"text":"password"} placeholder="Create a strong password" value={signupPw} onChange={e => { setSignupPw(e.target.value); setSignupError(""); }} style={{ width:"100%", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 54px 11px 14px", color:C.text, fontSize:13, fontFamily:"'Space Grotesk',sans-serif", outline:"none", boxSizing:"border-box" }} onFocus={e => { e.target.style.borderColor=C.accent; e.target.style.boxShadow=`0 0 0 3px ${C.accentBg}`; }} onBlur={e => { e.target.style.borderColor=C.cardB; e.target.style.boxShadow="none"; }} />
+                <button onClick={() => setShowSignupPw(v => !v)} style={{ position:"absolute", right:12, top:"50%", transform:"translateY(-50%)", background:"none", border:"none", cursor:"pointer", color:C.soft, fontSize:10, fontFamily:"'Space Mono',monospace", letterSpacing:.5 }}>{showSignupPw?"HIDE":"SHOW"}</button>
+              </div>
+              {pw.length>0 && (
+                <div style={{ marginTop:7 }}>
+                  <div style={{ display:"flex", gap:3, marginBottom:4 }}>{[1,2,3,4,5].map(i => <div key={i} style={{ flex:1, height:3, borderRadius:99, background:i<=pwScore?pwColor:C.border, transition:"background .25s" }} />)}</div>
+                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                    <Mono style={{ fontSize:10, color:pwColor, fontWeight:700 }}>{pwStrength}</Mono>
+                    <div style={{ display:"flex", gap:7 }}>{Object.entries({"8+":pwChecks.length,"A-Z":pwChecks.upper,"a-z":pwChecks.lower,"0-9":pwChecks.number,"!@#":pwChecks.special}).map(([k,v]) => <Mono key={k} style={{ fontSize:9, color:v?C.white:C.border, textDecoration:v?"none":"line-through" }}>{k}</Mono>)}</div>
+                  </div>
+                </div>
+              )}
+            </div>
+            <div>
+              <Mono style={{ display:"block", color:C.soft, marginBottom:5 }}>Confirm password *</Mono>
+              <div style={{ position:"relative" }}>
+                <input type={showConfirmPw?"text":"password"} placeholder="Repeat your password" value={confirmPw} onChange={e => { setConfirmPw(e.target.value); setSignupError(""); }} style={{ width:"100%", background:C.surface, border:`1px solid ${confirmPw.length>0?(confirmPw===signupPw?C.white:C.border):C.cardB}`, borderRadius:12, padding:"11px 54px 11px 14px", color:C.text, fontSize:13, fontFamily:"'Space Grotesk',sans-serif", outline:"none", boxSizing:"border-box" }} onFocus={e => { e.target.style.borderColor=C.accent; e.target.style.boxShadow=`0 0 0 3px ${C.accentBg}`; }} onBlur={e => { e.target.style.borderColor = confirmPw.length>0 ? (confirmPw===signupPw?C.white:C.border) : C.cardB; e.target.style.boxShadow="none"; }} />
+                <button onClick={() => setShowConfirmPw(v => !v)} style={{ position:"absolute", right:12, top:"50%", transform:"translateY(-50%)", background:"none", border:"none", cursor:"pointer", color:C.soft, fontSize:10, fontFamily:"'Space Mono',monospace", letterSpacing:.5 }}>{showConfirmPw?"HIDE":"SHOW"}</button>
+              </div>
+              {confirmPw.length>0&&confirmPw!==signupPw && <Mono style={{ color:C.soft, display:"block", marginTop:4, fontSize:10 }}>Passwords do not match</Mono>}
+              {confirmPw.length>0&&confirmPw===signupPw && <Mono style={{ color:C.white, display:"block", marginTop:4, fontSize:10 }}>Passwords match</Mono>}
+            </div>
+            <div><Mono style={{ display:"block", color:C.soft, marginBottom:5 }}>Phone number</Mono><Inp placeholder="+1 (555) 000-0000" value={user.phone||""} type="tel" onChange={e => setUser(u => ({...u,phone:e.target.value}))} /></div>
+          </div>
+          {signupError && <div style={{ background:C.fill, border:`1px solid ${C.border}`, borderRadius:8, padding:"9px 13px", marginBottom:10, marginTop:8 }}><Mono style={{ color:C.soft, lineHeight:1.5 }}>{signupError}</Mono></div>}
+          <div style={{ display:"flex", gap:10, marginTop:12 }}>
+            <Btn v="outline" onClick={() => setStep("login")} style={{ flex:1 }}>Back</Btn>
+            <Btn onClick={doSignup} disabled={!user.name||!user.email||!signupPw||pwScore<3||!confirmPw||confirmPw!==signupPw} style={{ flex:2 }}>Sign Up</Btn>
+          </div>
+        </OShell>
+      )}
+
+      {step === "photo" && (
+        <OShell step="photo">
+          <canvas ref={canvasRef} style={{ display:"none" }} />
+          <input ref={galleryRef} type="file" accept="image/*" onChange={handleGalleryPick} style={{ display:"none" }} />
+          <h2 style={{ fontSize:26, fontWeight:800, color:C.white, letterSpacing:-1, marginBottom:4 }}>Profile photo</h2>
+          <Mono style={{ display:"block", color:C.muted, marginBottom:22 }}>Choose from gallery or use your camera.</Mono>
+          {cameraMode && (
+            <div style={{ marginBottom:18 }}>
+              <div style={{ position:"relative", borderRadius:14, overflow:"hidden", border:`1px solid ${C.border}`, background:C.black, aspectRatio:"4/3", minHeight:200 }}>
+                <video ref={videoRef} autoPlay playsInline muted style={{ width:"100%", height:"100%", objectFit:"cover", display:"block", transform:"scaleX(-1)" }} />
+                <div style={{ position:"absolute", inset:0, pointerEvents:"none" }}>
+                  {[{top:10,left:10,borderTop:`2px solid ${C.white}`,borderLeft:`2px solid ${C.white}`,borderRadius:"4px 0 0 0"},{top:10,right:10,borderTop:`2px solid ${C.white}`,borderRight:`2px solid ${C.white}`,borderRadius:"0 4px 0 0"},{bottom:10,left:10,borderBottom:`2px solid ${C.white}`,borderLeft:`2px solid ${C.white}`,borderRadius:"0 0 0 4px"},{bottom:10,right:10,borderBottom:`2px solid ${C.white}`,borderRight:`2px solid ${C.white}`,borderRadius:"0 0 4px 0"}].map((pos,i) => <div key={i} style={{ position:"absolute", width:22, height:22, ...pos }} />)}
+                </div>
+                {!cameraReady && <div style={{ position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center", background:"rgba(0,0,0,.75)" }}><div style={{ textAlign:"center" }}><div style={{ margin:"0 auto 10px", display:"flex", justifyContent:"center" }}><Spinner size={28} color="#ffffff" thickness={2} /></div><Mono style={{ color:"#dcd8d0" }}>Starting camera…</Mono></div></div>}
+              </div>
+              <div style={{ display:"flex", gap:10, marginTop:12, alignItems:"center", justifyContent:"center" }}>
+                <Btn v="outline" sm onClick={closeCamera}>Cancel</Btn>
+                <button onClick={snapPhoto} disabled={!cameraReady} style={{ width:62, height:62, borderRadius:"50%", background:cameraReady?C.white:C.border, border:"3px solid rgba(255,255,255,.15)", cursor:cameraReady?"pointer":"not-allowed", boxShadow:cameraReady?"0 0 0 6px rgba(255,255,255,.1)":"none" }} />
+                <Btn v="outline" sm onClick={() => { closeCamera(); galleryRef.current?.click(); }}>Gallery</Btn>
+              </div>
+              <Mono style={{ display:"block", textAlign:"center", color:C.muted, marginTop:10 }}>Tap the circle to capture</Mono>
+            </div>
+          )}
+          {!cameraMode && (
+            <>
+              <div style={{ display:"flex", justifyContent:"center", marginBottom:18 }}>
+                <div style={{ width:110, height:110, borderRadius:"50%", overflow:"hidden", background:user.photo?`url(${user.photo}) center/cover no-repeat`:C.surface, border:`2px solid ${user.photo?C.white:C.muted}`, display:"flex", alignItems:"center", justifyContent:"center", boxShadow:user.photo?`0 0 0 5px ${C.fillStrong}`:"none" }}>
+                  {!user.photo && <Mono style={{ fontSize:9, color:C.muted }}>No photo</Mono>}
+                </div>
+              </div>
+              {user.photo && <div style={{ textAlign:"center", marginBottom:14 }}><Tag hi>{photoSource==="camera"?"From camera":"From gallery"}</Tag></div>}
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:11, marginBottom:12 }}>
+                {[{label:"Gallery",sub:"Pick from your photos",fn:()=>galleryRef.current?.click()},{label:"Camera",sub:"Take a photo now",fn:openCamera}].map(b => (
+                  <button key={b.label} onClick={b.fn} style={{ background:C.card, border:`1px solid ${C.cardB}`, borderRadius:14, padding:"22px 12px", cursor:"pointer", textAlign:"center", fontFamily:"'Space Grotesk',sans-serif" }} onMouseEnter={e => { e.currentTarget.style.borderColor=C.soft; e.currentTarget.style.background=C.hover; }} onMouseLeave={e => { e.currentTarget.style.borderColor=C.cardB; e.currentTarget.style.background=C.card; }}>
+                    <div style={{ fontSize:13, fontWeight:700, color:C.white, marginBottom:3 }}>{b.label}</div>
+                    <Mono style={{ color:C.muted, fontSize:10 }}>{b.sub}</Mono>
+                  </button>
+                ))}
+              </div>
+              {cameraError && <div style={{ background:C.fill, border:`1px solid ${C.muted}`, borderRadius:12, padding:"10px 13px", marginBottom:11 }}><Mono style={{ color:C.soft, lineHeight:1.6 }}>{cameraError}</Mono></div>}
+              {user.photo && <button onClick={() => { setUser(u => ({...u,photo:null})); setPhotoSource(""); }} style={{ width:"100%", background:"none", border:`1px dashed ${C.border}`, borderRadius:12, padding:"9px", cursor:"pointer", color:C.muted, fontSize:11, fontFamily:"'Space Mono',monospace", marginBottom:11 }}>Remove photo</button>}
+              {!user.photo && <div style={{ background:C.surface, borderRadius:12, padding:"10px 14px", marginBottom:11, textAlign:"center" }}><Mono style={{ color:C.soft, lineHeight:1.6 }}>No photo? KROFT will show your initials{user.name?" — "+user.name.split(" ").map(n=>n[0]).join("").toUpperCase():""} as your avatar.</Mono></div>}
+            </>
+          )}
+          {!cameraMode && <div style={{ display:"flex", gap:10 }}><Btn v="outline" onClick={() => setStep("signup")} style={{ flex:1 }}>Back</Btn><Btn onClick={() => setStep("business")} style={{ flex:2 }}>{user.photo?"Continue":"Skip for now"}</Btn></div>}
+        </OShell>
+      )}
+
+      {step === "business" && (
+        <OShell step="business">
+          <h2 style={{ fontSize:26, fontWeight:800, color:C.white, letterSpacing:-1, marginBottom:4 }}>Your Business</h2>
+          <Mono style={{ display:"block", color:C.muted, marginBottom:22 }}>So KROFT can tailor your finance dashboard.</Mono>
+          <div style={{ display:"flex", flexDirection:"column", gap:13, marginBottom:22 }}>
+            <div><Mono style={{ display:"block", color:C.soft, marginBottom:6, letterSpacing:1 }}>Business name</Mono><Inp placeholder="e.g. Carter Consulting LLC" value={user.businessName} onChange={e => setUser(u => ({...u,businessName:e.target.value}))} /></div>
+            <div>
+              <Mono style={{ display:"block", color:C.soft, marginBottom:6, letterSpacing:1 }}>Business type</Mono>
+              <select value={user.businessType} onChange={e => setUser(u => ({...u,businessType:e.target.value}))} style={{ width:"100%", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 14px", color:user.businessType?C.text:C.muted, fontSize:13, fontFamily:"'Space Grotesk',sans-serif", outline:"none", cursor:"pointer" }} onFocus={e => { e.target.style.borderColor=C.accent; e.target.style.boxShadow=`0 0 0 3px ${C.accentBg}`; }} onBlur={e => { e.target.style.borderColor=C.cardB; e.target.style.boxShadow="none"; }}>
+                <option value="">Select type…</option>
+                {["Freelancer","Consultant","Agency","Retail","Restaurant","Tech Startup","Healthcare","Real Estate","E-commerce","Other"].map(t => <option key={t}>{t}</option>)}
+              </select>
+            </div>
+            <div>
+              <Mono style={{ display:"block", color:C.soft, marginBottom:8, letterSpacing:1 }}>Currency</Mono>
+              <select value={Object.values(CURRENCY_GROUPS).some(g=>g.includes(user.currency)) ? user.currency : ""} onChange={e => { if (e.target.value) { setUser(u => ({...u,currency:e.target.value})); setCustomCurrency(""); setCustomCurrencyError(""); } }}
+                style={{ width:"100%", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 14px", color:C.text, fontSize:13, fontFamily:"'Space Grotesk',sans-serif", outline:"none", cursor:"pointer", marginBottom:8 }}>
+                <option value="" disabled>{Object.values(CURRENCY_GROUPS).some(g=>g.includes(user.currency)) ? "Select…" : `Custom: ${user.currency}`}</option>
+                {Object.entries(CURRENCY_GROUPS).map(([region, codes]) => (
+                  <optgroup key={region} label={region}>
+                    {codes.map(c => <option key={c} value={c}>{c} — {fmtCur(0,c).replace(/0\.00/,"").trim() || c}</option>)}
+                  </optgroup>
+                ))}
+              </select>
+              <div style={{ display:"flex", gap:7 }}>
+                <Inp placeholder="Don't see yours? Type a code, e.g. ISK" value={customCurrency} onChange={e => { setCustomCurrency(e.target.value.toUpperCase()); setCustomCurrencyError(""); }} style={{ flex:1 }} />
+                <Btn sm v="outline" onClick={() => {
+                  if (!isValidCurrencyCode(customCurrency)) { setCustomCurrencyError("Not a recognized currency code."); return; }
+                  setUser(u => ({...u, currency: customCurrency.toUpperCase()})); setCustomCurrencyError("");
+                }}>Use</Btn>
+              </div>
+              {customCurrencyError && <Mono style={{ display:"block", color:C.negative, marginTop:6 }}>{customCurrencyError}</Mono>}
+              <Mono style={{ display:"block", color:C.soft, marginTop:8 }}>Currently: {user.currency} · {fmtCur(1000, user.currency)}</Mono>
+              {/* Changing currency doesn't convert anything — there are no exchange rates here.
+                  Entries keep the currency they were recorded in, so old figures stay truthful;
+                  this says so rather than letting totals quietly become nonsense. */}
+              {(income.length > 0 || expenses.length > 0) && (
+                <Mono style={{ display:"block", color:C.warning, marginTop:6, lineHeight:1.6 }}>
+                  Changing this affects new entries only. Existing amounts keep the currency they were entered in — nothing is converted.
+                </Mono>
+              )}
+            </div>
+          </div>
+          <div style={{ display:"flex", gap:10 }}><Btn v="outline" onClick={() => setStep("photo")} style={{ flex:1 }}>Back</Btn><Btn onClick={() => setStep("prefs")} style={{ flex:2 }}>Next</Btn></div>
+        </OShell>
+      )}
+
+      {step === "prefs" && (
+        <OShell step="prefs">
+          <h2 style={{ fontSize:26, fontWeight:800, color:C.white, letterSpacing:-1, marginBottom:4 }}>Preferences</h2>
+          <Mono style={{ display:"block", color:C.muted, marginBottom:22 }}>Connect the accounts KROFT should work with.</Mono>
+          <div style={{ marginBottom:22 }}>
+            <Mono style={{ display:"block", color:C.soft, marginBottom:11 }}>Connect accounts</Mono>
+            <div style={{ display:"flex", flexDirection:"column", gap:9 }}>
+              {[{k:"gmail",n:"Gmail",d:"Read & send real emails"},{k:"calendar",n:"Google Calendar",d:"Sync appointments"},{k:"uber",n:"Uber",d:"Book rides to meetings"}].map(a => (
+                <div key={a.k} style={{ background:user.connected[a.k]?C.fillStrong:C.card, border:`1px solid ${user.connected[a.k]?C.soft:C.cardB}`, borderRadius:10, padding:"11px 14px", display:"flex", alignItems:"center", gap:12 }}>
+                  <div style={{ flex:1 }}><div style={{ fontWeight:700, fontSize:13, color:C.white, marginBottom:1 }}>{a.n}</div><Mono style={{ color:C.muted, fontSize:10 }}>{a.d}</Mono></div>
+                  <Btn sm v={user.connected[a.k]?"solid":"outline"} onClick={() => setUser(u => ({...u,connected:{...u.connected,[a.k]:!u.connected[a.k]}}))}>{user.connected[a.k]?"Linked":"Link"}</Btn>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div style={{ display:"flex", gap:10 }}><Btn v="outline" onClick={() => setStep("business")} style={{ flex:1 }}>Back</Btn><Btn onClick={() => setStep("done")} style={{ flex:2 }}>Almost done</Btn></div>
+        </OShell>
+      )}
+
+      {step === "done" && (
+        <OShell step="done">
+          <div style={{ textAlign:"center" }}>
+            <div style={{ width:80, height:80, borderRadius:"50%", overflow:"hidden", background:user.photo?`url(${user.photo}) center/cover no-repeat`:C.surface, border:`3px solid ${C.white}`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:26, fontWeight:800, color:C.white, margin:"0 auto 20px", animation:"pop .5s ease" }}>
+              {!user.photo && initials}
+            </div>
+            <div style={{ marginBottom:10 }}><Tag hi>Account Ready</Tag></div>
+            <h2 style={{ fontSize:28, fontWeight:800, color:C.white, letterSpacing:-1, marginBottom:7, marginTop:12 }}>Ready, {user.name}.</h2>
+            <Mono style={{ display:"block", color:C.muted, marginBottom:26, lineHeight:1.8 }}>Your KROFT account is set up.<br />Your personal AI assistant is ready.</Mono>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:9, marginBottom:26, textAlign:"left" }}>
+              {[{k:"Name",v:user.name},{k:"Email",v:user.email||"—"},{k:"Business",v:user.businessName||"Not set"},{k:"Currency",v:user.currency},{k:"Apps",v:Object.values(user.connected).filter(Boolean).length+" linked"}].map(r => (
+                <div key={r.k} style={{ background:C.card, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"10px 13px" }}>
+                  <Mono style={{ display:"block", color:C.muted, marginBottom:3, letterSpacing:.8 }}>{r.k.toUpperCase()}</Mono>
+                  <div style={{ fontSize:12, fontWeight:700, color:C.white, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{r.v}</div>
+                </div>
+              ))}
+            </div>
+            <Btn full onClick={() => setStep("dashboard")} style={{ padding:"14px", fontSize:15 }}>Enter KROFT</Btn>
+          </div>
+        </OShell>
+      )}
+    </div>
+  );
+
+  // Four core pages for the bottom navigation. Ask Kroft is no longer a bottom tab —
+  // it's a persistent button in the top-right of every main screen instead.
+  // Finance and Around Me (which now includes Food) live as switchable sections inside Home.
+  const NAV_TABS = [
+    {id:"home",      label:"Home"},
+    {id:"wellness",  label:"Wellness"},
+    {id:"workspace", label:"Workspace"},
+    {id:"profile",   label:"Profile"},
+  ];
+
+  return (
+    <div key={themeTick} style={{ fontFamily:"'Space Grotesk',sans-serif", background:C.bg, minHeight:"100vh", color:C.text, overflowX:"hidden", maxWidth:"100vw", touchAction:"pan-y" }}>
+      <style>{G}</style>
+      {showBriefing && <Briefing user={user} income={totalIncome} expenses={totalExpenses} emails={emails} appts={appts} onClose={() => setShowBriefing(false)} />}
+      {uberDest && <UberModal dest={uberDest} onClose={() => setUberDest(null)} onBook={(type,loc) => { toast(`${type} requested to ${loc}`); setUberDest(null); }} />}
+      {composeDraft && <ComposeModal draft={composeDraft} onChange={setComposeDraft} onSend={d => {
+        toast(`Email sent to ${d.to}`);
+        setComposeDraft(null);
+        const replySubject = d.subject.startsWith("Re:") ? d.subject : `Re: ${d.subject}`;
+        setTimeout(() => {
+          setEmails(p => [{ id:uid(), from:d.to||"contact@example.com", subject:replySubject, tag:"Reply", time:timeStr(), read:false, body:rand([
+            "Thanks for this — got it, will take a look and get back to you shortly.",
+            "Appreciate the update. That timeline works on my end.",
+            "Perfect, this is exactly what I needed. Thanks!",
+            "Noted, thank you. Let's touch base again next week.",
+          ]) }, ...p]);
+          toast(`New email from ${d.to}`);
+        }, 6000);
+      }} onClose={() => setComposeDraft(null)} />}
+      {contactPicker && (
+        <PickContactModal
+          contacts={contacts}
+          filter={c => !!c.email}
+          title="Send to which contact?"
+          emptyHint="No saved contacts have an email yet. Add one in Workspace → Contacts."
+          onPick={c => {
+            setComposeDraft({ to:c.email, subject:"", body:"" });
+            setContactPicker(null);
+          }}
+          onClose={() => setContactPicker(null)}
+        />
+      )}
+      {incomingCall && <IncomingCallScreen call={incomingCall} onAnswer={answerCall} onDecline={declineCall} />}
+      {voiceOpen && (
+        <VoiceMode
+          state={voiceState}
+          transcript={voiceTranscript}
+          reply={voiceReply}
+          error={voiceError}
+          levelRef={voiceLevelRef}
+          primed={micPrimed}
+          supported={SRSupported}
+          onStart={voiceListen}
+          onStop={voiceStop}
+          onClose={closeVoice}
+          subscribed={subscribed}
+          turnsLeft={voiceTurnsLeft()}
+        />
+      )}
+      {actionSheet && <ActionSheet {...actionSheet} onClose={() => setActionSheet(null)} />}
+      {contactActivity && (
+        <ContactActivityModal
+          contact={contacts.find(c => c.id === contactActivity.id) || contactActivity}
+          tasks={tasks.filter(t => t.contactId === contactActivity.id)}
+          reminders={smartReminders.filter(r => r.contactId === contactActivity.id)}
+          appts={appts.filter(a => a.contactId === contactActivity.id)}
+          notes={notes.filter(n => n.contactId === contactActivity.id)}
+          files={files.filter(f => f.contactId === contactActivity.id)}
+          onToggleTask={id => setTasks(p => p.map(x => x.id===id ? {...x, done:!x.done} : x))}
+          onToggleReminder={id => setSmartReminders(p => p.map(x => x.id===id ? {...x, done:!x.done} : x))}
+          onClose={() => setContactActivity(null)}
+        />
+      )}
+
+      {/* Above every overlay, including voice mode (1200). Toasts carry the undo for an action
+          KROFT just took — and a misheard amount is far likelier by voice than by typing, so
+          burying the undo behind the voice overlay hid it exactly where it mattered most. */}
+      {/* aria-live so toasts are announced rather than shown only. These carry undo prompts and
+          budget warnings — a screen reader user previously got no signal that a destructive
+          action had happened, let alone that it could be reversed. "polite" waits for a pause
+          instead of cutting across whatever is being read. */}
+      <div role="status" aria-live="polite" aria-atomic="false"
+        style={{ position:"fixed", top:14, right:14, zIndex:1400, display:"flex", flexDirection:"column", gap:7, maxWidth:300 }}>
+        {toasts.map(t => (
+          <div key={t.id} style={{ background:C.card, border:`1px solid ${C.accent}44`, borderRadius:14, padding:"9px 14px", animation:"slideIn .3s ease", boxShadow:`0 8px 28px rgba(0,0,0,.7), 0 0 0 1px ${C.accentBg}` }}>
+            <div style={{ display:"flex", alignItems:"center", gap:7 }}>
+              <Dot color={C.accent} />
+              <div style={{ fontSize:11, color:C.white, lineHeight:1.4, fontFamily:"'Space Mono',monospace", flex:1 }}>{t.msg}</div>
+              {t.onUndo && (
+                <button onClick={() => { t.onUndo(); setToasts(p => p.filter(x => x.id !== t.id)); }} style={{ background:"none", border:"none", color:C.accent, fontSize:11, fontWeight:700, fontFamily:"'Space Grotesk',sans-serif", cursor:"pointer", padding:"4px 2px", flexShrink:0 }}>Undo</button>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {tab!=="workspace" && (
+      <header style={{ borderBottom:`1px solid ${C.cardB}`, padding:"11px 16px", display:"flex", alignItems:"center", justifyContent:"space-between", background:C.bg, position:"sticky", top:0, zIndex:200, backdropFilter:"blur(14px)", gap:10 }}>
+        <div style={{ display:"flex", alignItems:"center", gap:9, minWidth:0, flexShrink:1 }}>
+          <div style={{ width:30, height:30, borderRadius:8, background:C.white, display:"flex", alignItems:"center", justifyContent:"center", fontSize:13, fontWeight:900, color:C.black, flexShrink:0, boxShadow:`0 0 14px ${C.accent}40` }}>K</div>
+          <div style={{ minWidth:0, overflow:"hidden" }}>
+            <div style={{ fontSize:13, fontWeight:700, color:C.white, letterSpacing:-.4, whiteSpace:"nowrap" }}>KROFT</div>
+            <Mono style={{ fontSize:8, color:C.muted, letterSpacing:.8, whiteSpace:"nowrap", display:"block", overflow:"hidden", textOverflow:"ellipsis" }}>by Virt Technologies</Mono>
+          </div>
+        </div>
+        <div style={{ display:"flex", alignItems:"center", gap:8, flexShrink:0 }}>
+          <button onClick={() => setTab("nova")} className="hbtn" style={{ background:tab==="nova"?C.accent:C.surface, border:`1px solid ${tab==="nova"?C.accent:C.border}`, borderRadius:20, padding:"7px 12px", cursor:"pointer", display:"flex", alignItems:"center", gap:6, color:tab==="nova"?"#fff":C.white, fontSize:12, fontWeight:700, whiteSpace:"nowrap", flexShrink:0, boxShadow:tab==="nova"?`0 0 16px ${C.accent}66`:`0 0 0 1px ${C.fill}` }}>
+            <NavIcon id="nova" size={13} color={tab==="nova"?"#fff":C.white} />
+            Ask Kroft
+          </button>
+          <AvatarEl />
+        </div>
+      </header>
+      )}
+
+      {tab==="workspace" && (
+        <header style={{ borderBottom:`1px solid ${C.cardB}`, padding:"11px 16px", display:"flex", alignItems:"center", gap:12, background:C.bg, position:"sticky", top:0, zIndex:200, backdropFilter:"blur(14px)" }}>
+          <button onClick={() => workspaceSection ? setWorkspaceSection(null) : setTab("home")} style={{ background:"none", border:"none", color:C.white, cursor:"pointer", fontSize:20, padding:"2px 4px", lineHeight:1, flexShrink:0 }} aria-label="Back">←</button>
+          <div style={{ minWidth:0, overflow:"hidden" }}>
+            <div style={{ fontSize:15, fontWeight:700, color:C.white, letterSpacing:-.4, whiteSpace:"nowrap" }}>{{calendar:"Calendar",notes:"Notes",email:"Email",tasks:"Tasks",files:"Files",documents:"Documents",projects:"Projects",memos:"Voice Memos",reminders:"Reminders",contacts:"Contacts"}[workspaceSection] || "Workspace"}</div>
+            
+          </div>
+        </header>
+      )}
+
+      {transcript && <div style={{ background:C.accentBg, borderBottom:`1px solid ${C.accent}33`, padding:"7px 22px", display:"flex", alignItems:"center", gap:8 }}><WaveBar active color={C.accent} /><Mono style={{ color:C.white, fontStyle:"italic" }}>"{transcript}"</Mono></div>}
+
+      <main style={{ padding: tab==="workspace" ? "16px 22px 150px" : "20px 22px 150px", maxWidth:880, margin:"0 auto" }}>
+
+        {tab==="home" && (
+          <div style={{ marginBottom:18, display:"flex", gap:7, flexWrap:"wrap" }}>
+            {[{k:"overview",l:"Overview"},{k:"finance",l:"Finance"},{k:"around",l:"Around Me"}].map(s => (
+              <button key={s.k} onClick={() => setHomeSection(s.k)} style={{ background:homeSection===s.k?"rgba(255,255,255,.1)":"transparent", border:`1px solid ${homeSection===s.k?C.border:C.cardB}`, borderRadius:20, padding:"6px 14px", cursor:"pointer", color:homeSection===s.k?C.white:C.muted, fontSize:11, fontWeight:700, whiteSpace:"nowrap" }}>
+                {s.l}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {tab==="home" && homeSection==="overview" && (
+          <div style={{ animation:"fadeUp .4s ease" }}>
+            <div style={{ marginBottom:20 }}>
+              <h1 style={{ fontSize:24, fontWeight:700, color:C.white, letterSpacing:-1 }}>{greeting()}, {user.name}</h1>
+              <Mono style={{ color:C.muted, marginTop:4 }}>{dateStr()}</Mono>
+            </div>
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:11, marginBottom:16 }}>
+              {[{l:"Income",v:fmtCur(totalIncome,user.currency),sub:income.length>0?`${income.length} entries`:"Add income",tone:income.length>0?"positive":undefined},{l:"Expenses",v:fmtCur(totalExpenses,user.currency),sub:expenses.length>0?`${expenses.length} entries`:"Add expense",tone:expenses.length>0?"negative":undefined},{l:"Net Profit",v:fmtCur(netProfit,user.currency),sub:totalIncome>0?`${((netProfit/totalIncome)*100).toFixed(1)}% margin`:"No data yet",tone:totalIncome>0?(netProfit>=0?"positive":"negative"):undefined}].map(k => (
+                <Card key={k.l} level="raised" onClick={() => setHomeSection("finance")} style={{ borderColor:k.tone?{positive:C.positive,negative:C.negative}[k.tone]+"55":C.cardB, minWidth:0 }}>
+                  <Mono style={{ display:"block", color:C.muted, marginBottom:8, fontSize:11, whiteSpace:"normal", lineHeight:1.3 }}>{k.l}</Mono>
+                  <div style={{ fontSize:22, fontWeight:700, color:k.tone?{positive:C.positive,negative:C.negative}[k.tone]:C.white, letterSpacing:-.8, marginBottom:6, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{k.v}</div>
+                  <Tag tone={k.tone} style={{ display:"block", whiteSpace:"normal", maxWidth:"100%", boxSizing:"border-box", lineHeight:1.4 }}>{k.sub}</Tag>
+                </Card>
+              ))}
+            </div>
+            {/* Budget trouble surfaces on the screen people actually land on. A warning buried
+                one tab deeper in Finance is one most users would never see in time to act. */}
+            {(() => {
+              const trouble = budgetStatus().filter(b => b.pct >= 0.8);
+              if (!trouble.length) return null;
+              const over = trouble.filter(b => b.pct >= 1);
+              return (
+                <Card level="raised" onClick={() => setHomeSection("finance")}
+                  style={{ marginBottom:14, borderColor:(over.length?C.negative:C.warning)+"55" }}>
+                  <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+                    <Dot color={over.length ? C.negative : C.warning} />
+                    <div style={{ flex:1, minWidth:0 }}>
+                      <div style={{ fontSize:13, fontWeight:700, color:C.text, marginBottom:2 }}>
+                        {over.length
+                          ? `Over budget on ${over.map(b=>b.cat).join(", ")}`
+                          : `Close to your ${trouble.map(b=>b.cat).join(", ")} budget`}
+                      </div>
+                      <Mono style={{ color:C.muted }}>
+                        {over.length
+                          ? `${fmtCur(over.reduce((s,b)=>s+(b.spent-b.limit),0), user.currency)} over this month`
+                          : `${Math.round(trouble[0].pct*100)}% used with ${fmtCur(trouble[0].left, user.currency)} left`}
+                      </Mono>
+                    </div>
+                    <Mono style={{ color:C.muted, flexShrink:0 }}>›</Mono>
+                  </div>
+                </Card>
+              );
+            })()}
+            {!dataLoaded ? (
+              <><SkeletonCard lines={2} /><SkeletonCard lines={3} /></>
+            ) : income.length===0&&expenses.length===0 ? (
+              <Card style={{ marginBottom:16, textAlign:"center", padding:24 }}>
+                <div style={{ fontSize:14, fontWeight:600, color:C.white, marginBottom:6 }}>No financial data yet</div>
+                <Mono style={{ display:"block", color:C.muted, marginBottom:16 }}>Go to Finance to add your first entry.</Mono>
+                <Btn sm onClick={() => setHomeSection("finance")}>Go to Finance</Btn>
+              </Card>
+            ) : (
+              <Card style={{ marginBottom:16 }}>
+                <Mono style={{ display:"block", color:C.muted, marginBottom:12, letterSpacing:.8 }}>Income vs expenses</Mono>
+                <ResponsiveContainer width="100%" height={150}>
+                  <BarChart data={[{l:"Income",v:totalIncome},{l:"Expenses",v:totalExpenses},{l:"Profit",v:Math.max(0,netProfit)}]}>
+                    <CartesianGrid strokeDasharray="3 3" stroke={C.cardB} vertical={false} />
+                    <XAxis dataKey="l" tick={{ fill:C.muted, fontSize:10 }} axisLine={false} tickLine={false} />
+                    <YAxis tick={{ fill:C.muted, fontSize:10 }} axisLine={false} tickLine={false} tickFormatter={v=>"$"+v} />
+                    <Tooltip contentStyle={{ background:C.card, border:`1px solid ${C.cardB}`, borderRadius:12, fontSize:11, color:C.white }} />
+                    <Bar dataKey="v" radius={[4,4,0,0]} opacity={.9}>
+                      {[C.positive,C.negative,C.accent].map((clr,i) => <Cell key={i} fill={clr} />)}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </Card>
+            )}
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:13 }}>
+              <Card>
+                <Mono style={{ display:"block", color:C.muted, marginBottom:12, letterSpacing:.8 }}>Mood detection</Mono>
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:7 }}>
+                  {["calm","happy","stressed","angry"].map(m => {
+                    const mColor = {calm:C.positive,happy:C.accent,stressed:C.warning,angry:C.negative}[m];
+                    const active = mood===m;
+                    return (
+                    <button key={m} onClick={() => applyMood(m)} style={{ background:active?mColor+"22":C.surface, border:`1.5px solid ${active?mColor:C.cardB}`, borderRadius:10, padding:"9px 6px", cursor:"pointer", color:active?mColor:C.soft, fontSize:11, fontWeight:700, textAlign:"center", boxShadow:active?`0 0 12px ${mColor}40`:"none", transition:"all .15s" }}>
+                      {m.charAt(0).toUpperCase()+m.slice(1)}
+                    </button>
+                    );
+                  })}
+                </div>
+              </Card>
+              <Card>
+                <Mono style={{ display:"block", color:C.muted, marginBottom:12, letterSpacing:.8 }}>Next appointment</Mono>
+                {appts.length>0 ? (
+                  <>
+                    <div style={{ fontWeight:700, fontSize:14, color:C.white, marginBottom:4 }}>{appts[0].title}</div>
+                    <Mono style={{ display:"block", color:C.soft, marginBottom:2 }}>{appts[0].time} · {fmtDate(appts[0].date)||appts[0].date}</Mono>
+                    <Mono style={{ display:"block", color:C.muted, marginBottom:13 }}>{appts[0].location}</Mono>
+                    <div style={{ display:"flex", gap:7, flexWrap:"wrap" }}>
+                      <Btn sm onClick={() => remind(appts[0])}>Remind</Btn>
+                      <Btn sm v="outline" onClick={() => setUberDest(appts[0])}>Uber</Btn>
+                    </div>
+                  </>
+                ) : (
+                  <div style={{ textAlign:"center", padding:"12px 0" }}>
+                    <Mono style={{ display:"block", color:C.muted, marginBottom:12 }}>No appointments yet.</Mono>
+                    <Btn sm onClick={() => { setTab("workspace"); setWorkspaceSection("calendar"); }}>Add one</Btn>
+                  </div>
+                )}
+              </Card>
+            </div>
+          </div>
+        )}
+
+        {tab==="home" && homeSection==="finance" && (
+          <div style={{ animation:"fadeUp .4s ease" }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:18 }}>
+              <h2 style={{ fontSize:22, fontWeight:700, color:C.white, letterSpacing:-1 }}>Finance</h2>
+              <div style={{ display:"flex", gap:8 }}>
+                <Btn sm onClick={() => { setShowAddInc(v=>!v); setShowAddExp(false); }}>Add Income</Btn>
+                <Btn sm v="outline" onClick={() => { setShowAddExp(v=>!v); setShowAddInc(false); }}>Add Expense</Btn>
+              </div>
+            </div>
+            {!dataLoaded && <><SkeletonCard lines={2} /><SkeletonCard lines={4} /></>}
+            {dataLoaded && (income.length>0||expenses.length>0) && <Mono style={{ display:"block", color:C.muted, marginBottom:14 }}>Tap an entry to edit it. Press and hold for more options.</Mono>}
+
+            {/* Totals add raw amounts, so mixing currencies makes them meaningless. Rather than
+                showing a confidently wrong number, say plainly that the figures span currencies. */}
+            {(() => {
+              const used = new Set([...income, ...expenses].map(e => e.cur || user.currency));
+              if (used.size <= 1) return null;
+              return (
+                <Card level="inset" style={{ marginBottom:14, borderStyle:"dashed", borderColor:C.warning+"66" }}>
+                  <div style={{ display:"flex", alignItems:"flex-start", gap:10 }}>
+                    <Dot color={C.warning} />
+                    <div style={{ flex:1, minWidth:0 }}>
+                      <div style={{ fontSize:12.5, fontWeight:600, color:C.text, marginBottom:2 }}>Mixed currencies</div>
+                      <Mono style={{ color:C.muted, lineHeight:1.6 }}>
+                        Entries span {[...used].join(", ")}. Totals below add the raw numbers and don't convert between them.
+                      </Mono>
+                    </div>
+                  </div>
+                </Card>
+              );
+            })()}
+
+            {/* Budgets. Shown only once there are expenses to budget against — an empty budget
+                card on a fresh account is noise, not guidance. */}
+            {expenses.length > 0 && (() => {
+              const status = budgetStatus();
+              return (
+                <Card level="raised" style={{ marginBottom:14 }}>
+                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:status.length?12:8 }}>
+                    <div style={{ fontSize:14, fontWeight:700, color:C.text }}>Monthly budgets</div>
+                    <Btn sm v="outline" onClick={() => setShowBudgetEditor(v => !v)}>{showBudgetEditor ? "Done" : status.length ? "Edit" : "Set budgets"}</Btn>
+                  </div>
+
+                  {!showBudgetEditor && status.length === 0 && (
+                    <Mono style={{ display:"block", color:C.muted, lineHeight:1.6 }}>
+                      No budgets set. Add one and KROFT will warn you before a category runs over, not after.
+                    </Mono>
+                  )}
+
+                  {!showBudgetEditor && status.map(b => {
+                    const over = b.pct >= 1, near = b.pct >= 0.8;
+                    const barColor = over ? C.negative : near ? C.warning : C.positive;
+                    return (
+                      <div key={b.cat} style={{ marginBottom:12 }}>
+                        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"baseline", gap:8, marginBottom:5 }}>
+                          <div style={{ display:"flex", alignItems:"center", gap:6, minWidth:0 }}>
+                            <div style={{ fontSize:12.5, fontWeight:600, color:C.text }}>{b.cat}</div>
+                            {/* Plus: shows the underspend that rolled in from last month, so the
+                                higher effective limit doesn't look like an unexplained change. */}
+                            {b.carryover > 0 && <Tag tone="positive">+{fmtCur(b.carryover, user.currency)} rolled over</Tag>}
+                          </div>
+                          <Mono style={{ color:over?C.negative:C.muted, flexShrink:0 }}>
+                            {fmtCur(b.spent,user.currency)} / {fmtCur(b.effectiveLimit,user.currency)}
+                          </Mono>
+                        </div>
+                        <div style={{ height:6, borderRadius:99, background:C.fill, overflow:"hidden" }}>
+                          {/* Capped at 100% width so a large overspend doesn't render off the card;
+                              the figure above still shows the true amount. */}
+                          <div style={{ width:`${Math.min(100, b.pct*100)}%`, height:"100%", background:barColor, borderRadius:99, transition:"width .3s" }} />
+                        </div>
+                        <div style={{ display:"flex", justifyContent:"space-between", gap:8, marginTop:4 }}>
+                          <Mono style={{ color:C.muted }}>
+                            {over ? `${fmtCur(b.spent-b.effectiveLimit,user.currency)} over` : `${fmtCur(b.left,user.currency)} left this month`}
+                          </Mono>
+                          {/* Pace, not just position. Being at 60% is fine on the 20th and a
+                              problem on the 5th — the bar alone can't tell you which. */}
+                          {!over && b.willExceed && (
+                            <Mono style={{ color:C.warning, flexShrink:0 }}>
+                              on track for {fmtCur(b.projected, user.currency)}
+                            </Mono>
+                          )}
+                          {!over && !b.willExceed && b.aheadOfPace && (
+                            <Mono style={{ color:C.warning, flexShrink:0 }}>ahead of pace</Mono>
+                          )}
+                        </div>
+                        {/* Nudges a free user toward the feature exactly where it would have
+                            helped — right on a category they underspent, not in a settings menu
+                            they may never open. */}
+                        {!subscribed && !over && b.left > 0 && (
+                          <Mono style={{ display:"block", color:C.muted, marginTop:4 }}>
+                            KROFT Plus carries this {fmtCur(b.left, user.currency)} into next month instead of resetting it.
+                          </Mono>
+                        )}
+                        {b.committed > 0 && !over && (
+                          <Mono style={{ display:"block", color:C.muted, marginTop:2 }}>
+                            includes {fmtCur(b.committed, user.currency)} still due this month
+                          </Mono>
+                        )}
+                      </div>
+                    );
+                  })}
+
+                  {/* Spending in categories with no limit set. Without this the card can read
+                      "within budget" while most of the month's money went somewhere untracked —
+                      a false all-clear, which is worse than showing nothing at all. */}
+                  {!showBudgetEditor && (() => {
+                    const month = todayISO().slice(0, 7);
+                    const budgeted = new Set(Object.keys(budgets).filter(c => budgets[c] > 0));
+                    const untracked = {};
+                    expenses.filter(e => (e.date || "").slice(0, 7) === month && !budgeted.has(e.cat))
+                            .forEach(e => { untracked[e.cat] = (untracked[e.cat] || 0) + e.amount; });
+                    const rows = Object.entries(untracked).sort((a, b) => b[1] - a[1]);
+                    if (!rows.length) return null;
+                    const total = rows.reduce((s, [, v]) => s + v, 0);
+                    return (
+                      <div style={{ marginTop:status.length?14:0, paddingTop:status.length?12:0, borderTop:status.length?`1px solid ${C.div}`:"none" }}>
+                        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"baseline", gap:8, marginBottom:7 }}>
+                          <div style={{ fontSize:12.5, fontWeight:600, color:C.muted }}>Not budgeted</div>
+                          <Mono style={{ color:C.muted, flexShrink:0 }}>{fmtCur(total, user.currency)} this month</Mono>
+                        </div>
+                        {rows.slice(0, 4).map(([cat, amt]) => (
+                          <div key={cat} style={{ display:"flex", justifyContent:"space-between", gap:8, padding:"3px 0" }}>
+                            <Mono style={{ color:C.soft, minWidth:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{cat}</Mono>
+                            <Mono style={{ color:C.soft, flexShrink:0 }}>{fmtCur(amt, user.currency)}</Mono>
+                          </div>
+                        ))}
+                        {rows.length > 4 && <Mono style={{ display:"block", color:C.muted, marginTop:3 }}>+{rows.length - 4} more</Mono>}
+                      </div>
+                    );
+                  })()}
+
+                  {!showBudgetEditor && status.length > 0 && (() => {
+                    // A per-category view hides the obvious question: across everything with a
+                    // limit, am I within it?
+                    const totalLimit = status.reduce((s,b) => s + b.limit, 0);
+                    const totalSpent = status.reduce((s,b) => s + b.spent, 0);
+                    const totalOver = totalSpent > totalLimit;
+                    return (
+                      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"baseline", gap:8, paddingTop:11, borderTop:`1px solid ${C.div}` }}>
+                        <div style={{ fontSize:12.5, fontWeight:700, color:C.text }}>Budgeted total</div>
+                        <Mono style={{ color:totalOver?C.negative:C.muted, flexShrink:0 }}>
+                          {fmtCur(totalSpent,user.currency)} / {fmtCur(totalLimit,user.currency)}
+                        </Mono>
+                      </div>
+                    );
+                  })()}
+
+                  {showBudgetEditor && (
+                    <div style={{ display:"flex", flexDirection:"column", gap:9 }}>
+                      {expenseCats.map(cat => (
+                        <div key={cat} style={{ display:"flex", alignItems:"center", gap:10 }}>
+                          <div style={{ flex:1, fontSize:12.5, color:C.text, minWidth:0 }}>{cat}</div>
+                          <Inp type="number" inputMode="decimal" min="0" placeholder="No limit"
+                            value={budgets[cat] ?? ""}
+                            onChange={e => {
+                              const raw = e.target.value;
+                              // Empty clears the budget entirely rather than storing 0, which
+                              // would read as "limit of zero" and flag the category permanently.
+                              setBudgets(p => {
+                                if (raw === "") { const { [cat]:_, ...rest } = p; return rest; }
+                                const n = parseAmount(raw);
+                                return n === null ? p : { ...p, [cat]:n };
+                              });
+                            }}
+                            style={{ width:120, flexShrink:0 }} />
+                        </div>
+                      ))}
+                      {/* Says what an empty field means. A blank limit silently excludes the
+                          category from every warning, which isn't obvious from an empty box. */}
+                      <Mono style={{ display:"block", color:C.muted, lineHeight:1.6, marginTop:4 }}>
+                        Leave blank for no limit — those categories are tracked under "Not budgeted" but never trigger a warning.
+                      </Mono>
+                    </div>
+                  )}
+                </Card>
+              );
+            })()}
+            {showAddInc && (
+              <Card style={{ marginBottom:13, border:`1px solid ${C.border}` }}>
+                <Mono style={{ display:"block", color:C.white, marginBottom:11, letterSpacing:.8 }}>New income entry</Mono>
+                <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+                  <Inp placeholder="Description" value={newInc.label} onChange={e => setNewInc(v=>({...v,label:e.target.value}))} style={{ flex:2, minWidth:120 }} />
+                  <Inp placeholder="Amount" value={newInc.amount} type="number" inputMode="decimal" min="0" step="0.01" onChange={e => setNewInc(v=>({...v,amount:e.target.value}))} style={{ flex:1, minWidth:80 }} />
+                  <input type="date" value={newInc.date||todayISO()} max={todayISO()} onChange={e => setNewInc(v=>({...v,date:e.target.value}))} style={{ flex:1, minWidth:130, background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"10px 12px", color:C.text, fontSize:12, fontFamily:"'Space Grotesk',sans-serif", outline:"none", colorScheme:theme }} />
+                  <CategorySelect value={newInc.cat} onChange={c => setNewInc(v=>({...v,cat:c}))} cats={incomeCats} onAddCategory={c => setIncomeCats(p=>p.includes(c)?p:[...p,c])} />
+                  {/* Turns the entry into a template that re-posts itself on this cadence. */}
+                  <select value={newInc.repeat} onChange={e => setNewInc(v=>({...v,repeat:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 12px", color:C.text, fontSize:12, fontFamily:"'Space Mono',monospace", outline:"none" }}>
+                    <option value="none">Does not repeat</option>
+                    <option value="weekly">Repeats weekly</option>
+                    <option value="monthly">Repeats monthly</option>
+                  </select>
+                  <Btn onClick={() => {
+                    if (!newInc.label) return;
+                    const amt = parseAmount(newInc.amount);
+                    if (amt === null) { toast("Enter an amount greater than zero."); return; }
+                    {
+                      const base = { id:uid(), ...newInc, amount:amt, date:newInc.date||todayISO(), cur:user.currency };
+                      // A repeating entry counts as its own first posting, so nextDate starts one
+                      // cadence ahead — otherwise the engine would immediately duplicate it.
+                      if (base.repeat && base.repeat !== "none") base.nextDate = advanceRepeatDate(base.date, base.repeat);
+                      setIncome(p => [...p, base]);
+                    }
+                    setNewInc({label:"",amount:"",cat:"Invoice",date:todayISO(),repeat:"none"}); setShowAddInc(false);
+                    toast(`Income added: ${fmtCur(amt,user.currency)}`);
+                  }}>Add</Btn>
+                </div>
+              </Card>
+            )}
+            {showAddExp && (
+              <Card style={{ marginBottom:13, border:`1px solid ${C.border}` }}>
+                <Mono style={{ display:"block", color:C.white, marginBottom:11, letterSpacing:.8 }}>New expense entry</Mono>
+                <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+                  <Inp placeholder="Description" value={newExp.label} onChange={e => setNewExp(v=>({...v,label:e.target.value}))} style={{ flex:2, minWidth:120 }} />
+                  <Inp placeholder="Amount" value={newExp.amount} type="number" inputMode="decimal" min="0" step="0.01" onChange={e => setNewExp(v=>({...v,amount:e.target.value}))} style={{ flex:1, minWidth:80 }} />
+                  <input type="date" value={newExp.date||todayISO()} max={todayISO()} onChange={e => setNewExp(v=>({...v,date:e.target.value}))} style={{ flex:1, minWidth:130, background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"10px 12px", color:C.text, fontSize:12, fontFamily:"'Space Grotesk',sans-serif", outline:"none", colorScheme:theme }} />
+                  <CategorySelect value={newExp.cat} onChange={c => setNewExp(v=>({...v,cat:c}))} cats={expenseCats} onAddCategory={c => setExpenseCats(p=>p.includes(c)?p:[...p,c])} />
+                  {/* Turns the entry into a template that re-posts itself on this cadence. */}
+                  <select value={newExp.repeat} onChange={e => setNewExp(v=>({...v,repeat:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 12px", color:C.text, fontSize:12, fontFamily:"'Space Mono',monospace", outline:"none" }}>
+                    <option value="none">Does not repeat</option>
+                    <option value="weekly">Repeats weekly</option>
+                    <option value="monthly">Repeats monthly</option>
+                  </select>
+                  <Btn onClick={() => {
+                    if (!newExp.label) return;
+                    const amt = parseAmount(newExp.amount);
+                    if (amt === null) { toast("Enter an amount greater than zero."); return; }
+                    {
+                      const base = { id:uid(), ...newExp, amount:amt, date:newExp.date||todayISO(), cur:user.currency };
+                      // A repeating entry counts as its own first posting, so nextDate starts one
+                      // cadence ahead — otherwise the engine would immediately duplicate it.
+                      if (base.repeat && base.repeat !== "none") base.nextDate = advanceRepeatDate(base.date, base.repeat);
+                      setExpenses(p => [...p, base]);
+                    }
+                    setNewExp({label:"",amount:"",cat:"Operations",date:todayISO(),repeat:"none"}); setShowAddExp(false);
+                    toast(`Expense added: ${fmtCur(amt,user.currency)}`);
+                  }}>Add</Btn>
+                </div>
+              </Card>
+            )}
+            {income.length===0&&expenses.length===0&&!showAddInc&&!showAddExp && (
+              <Card style={{ textAlign:"center", padding:26, marginBottom:14 }}>
+                <div style={{ fontSize:15, fontWeight:600, color:C.white, marginBottom:6 }}>No entries yet</div>
+                <Mono style={{ display:"block", color:C.muted, marginBottom:18 }}>Your finance starts at $0.00.</Mono>
+                <Btn sm onClick={() => setShowAddInc(true)}>Add First Entry</Btn>
+              </Card>
+            )}
+            {(income.length>0||expenses.length>0) && (
+              <>
+                <div style={{ display:"flex", flexDirection:"column", gap:12, marginBottom:12 }}>
+                  {[{title:"INCOME",kind:"income",data:income,sign:"+",set:setIncome,cats:incomeCats,setCats:setIncomeCats},{title:"EXPENSES",kind:"expenses",data:expenses,sign:"-",set:setExpenses,cats:expenseCats,setCats:setExpenseCats}].map(({title,kind,data,sign,set,cats,setCats}) => (
+                    <Card key={title} style={{ minWidth:0 }}>
+                      <Mono style={{ display:"block", color:C.muted, marginBottom:11, letterSpacing:.8 }}>{title}</Mono>
+                      {data.length===0 ? <Mono style={{ color:C.soft, display:"block", padding:"8px 0" }}>None yet.</Mono> : [...data].sort((a,b)=>(b.date||"").localeCompare(a.date||"")).map(r => (
+                        editingEntry && editingEntry.kind===kind && editingEntry.id===r.id ? (
+                          <div key={r.id} style={{ background:C.surface, border:`1px solid ${C.soft}`, borderRadius:12, padding:"10px 11px", marginBottom:7 }}>
+                            <div style={{ display:"flex", flexDirection:"column", gap:7 }}>
+                              <Inp placeholder="Description" value={editingEntry.label} onChange={e => setEditingEntry(v=>({...v,label:e.target.value}))} style={{ padding:"8px 10px", fontSize:12 }} />
+                              <div style={{ display:"flex", gap:7 }}>
+                                <Inp placeholder="Amount" type="number" inputMode="decimal" min="0" step="0.01" value={editingEntry.amount} onChange={e => setEditingEntry(v=>({...v,amount:e.target.value}))} style={{ padding:"8px 10px", fontSize:12, flex:1 }} />
+                                <input type="date" value={editingEntry.date} max={todayISO()} onChange={e => setEditingEntry(v=>({...v,date:e.target.value}))} style={{ flex:1, background:C.card, border:`1px solid ${C.cardB}`, borderRadius:8, padding:"8px 9px", color:C.text, fontSize:11, fontFamily:"'Space Grotesk',sans-serif", outline:"none", colorScheme:theme }} />
+                              </div>
+                              <CategorySelect value={editingEntry.cat} onChange={c => setEditingEntry(v=>({...v,cat:c}))} cats={cats} onAddCategory={c => setCats(p=>p.includes(c)?p:[...p,c])} style={{ padding:"8px 9px", fontSize:11 }} />
+                              <div style={{ display:"flex", gap:7 }}>
+                                <Btn sm v="outline" onClick={() => setEditingEntry(null)} style={{ flex:1 }}>Cancel</Btn>
+                                <Btn sm onClick={() => {
+                                  if (!editingEntry.label) return;
+                                  const amt = parseAmount(editingEntry.amount);
+                                  if (amt === null) { toast("Enter an amount greater than zero."); return; }
+                                  set(p=>p.map(x=>x.id===r.id?{...x,label:editingEntry.label,amount:amt,date:editingEntry.date||todayISO(),cat:editingEntry.cat}:x));
+                                  setEditingEntry(null); toast("Entry updated.");
+                                }} style={{ flex:1 }}>Save</Btn>
+                              </div>
+                            </div>
+                          </div>
+                        ) : (
+                        <div key={r.id} className="row" {...longPress(() => setActionSheet(holdActions({
+                            title: r.label,
+                            subtitle: `${sign}${fmtCur(r.amount,user.currency)} · ${r.cat} · ${fmtDate(r.date)}`,
+                            onEdit: () => setEditingEntry({ kind, id:r.id, label:r.label, amount:String(r.amount), date:r.date||todayISO(), cat:r.cat }),
+                            list: data, setList: set, id: r.id,
+                            deletedLabel: "Entry deleted.",
+                            confirmText: "Removing this entry changes your totals and monthly report.",
+                          })))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"10px 11px", marginBottom:7, WebkitTouchCallout:"none", WebkitUserSelect:"none", userSelect:"none" }}>
+                          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:8 }}>
+                            <div style={{ minWidth:0, cursor:"pointer" }} onClick={() => setEditingEntry({ kind, id:r.id, label:r.label, amount:String(r.amount), date:r.date||todayISO(), cat:r.cat })}>
+                              <Mono style={{ color:C.soft, fontSize:9, letterSpacing:.5, display:"block", marginBottom:3 }}>{fmtDate(r.date)}</Mono>
+                              <div style={{ fontSize:12, fontWeight:600, color:C.text, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{r.label}</div>
+                              <div style={{ marginTop:4, display:"flex", gap:5, flexWrap:"wrap" }}>
+                                <Tag>{r.cat}</Tag>
+                                {/* The template that generates postings, and the postings it made,
+                                    are visually distinct — otherwise a repeating entry looks like
+                                    a duplicate the user didn't create. */}
+                                {r.repeat && r.repeat !== "none" && <Tag tone="accent">Repeats {r.repeat}</Tag>}
+                                {r.fromRecurring && <Tag>Auto</Tag>}
+                              </div>
+                            </div>
+                            <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:6, flexShrink:0 }}>
+                              <Mono style={{ color:sign==="+"?C.positive:C.negative, fontSize:13, fontWeight:700 }}>{sign}{fmtCur(r.amount, r.cur || user.currency)}</Mono>
+                            </div>
+                          </div>
+                        </div>
+                        )
+                      ))}
+                      <div style={{ display:"flex", justifyContent:"space-between", marginTop:6 }}>
+                        <Mono style={{ color:C.muted }}>Total</Mono>
+                        <Mono style={{ color:C.white, fontWeight:700 }}>{fmtCur(data.reduce((s,r)=>s+r.amount,0),user.currency)}</Mono>
+                      </div>
+
+                    </Card>
+                  ))}
+                </div>
+                <Card hi style={{ border:`1px solid ${C.soft}`, marginBottom:12 }}>
+                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:10 }}>
+                    <div style={{ minWidth:0 }}>
+                      <Mono style={{ display:"block", color:C.white, marginBottom:4, letterSpacing:.8 }}>Net profit</Mono>
+                      <div style={{ fontSize:32, fontWeight:700, color:netProfit>=0?C.positive:C.negative, letterSpacing:-1.5, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{fmtCur(netProfit,user.currency)}</div>
+                      {totalIncome>0 && <Mono style={{ color:C.soft, marginTop:4, display:"block" }}>Margin: {((netProfit/totalIncome)*100).toFixed(1)}% · {user.currency}</Mono>}
+                    </div>
+                    <Tag tone={netProfit>=0?"positive":"negative"}>{netProfit>=0?"PROFIT":"DEFICIT"}</Tag>
+                  </div>
+                </Card>
+                <Card style={{ border:`1px solid ${C.cardB}` }}>
+                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:monthlyReport?14:0 }}>
+                    <div>
+                      <Mono style={{ display:"block", color:C.white, letterSpacing:.8, marginBottom:2 }}>Monthly report</Mono>
+                      <Mono style={{ color:C.muted, fontSize:10 }}>
+                        {monthlyReport ? monthlyReport.month : "See how this month went, with advice"}
+                        {!subscribed && (reportsLeftThisMonth() > 0 ? ` · ${reportsLeftThisMonth()} free left this month` : " · resets next month, or upgrade")}
+                      </Mono>
+                    </div>
+                    <Btn sm v="outline" onClick={generateMonthlyReport} disabled={generatingReport}>{generatingReport?<><Spinner size={11} color={C.soft} thickness={2} />Generating…</>:monthlyReport?"Refresh":"Generate"}</Btn>
+                  </div>
+                  {monthlyReport && (
+                    <div style={{ animation:"fadeUp .35s ease" }}>
+                      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:8, marginBottom:14 }}>
+                        <div><Mono style={{ color:C.muted, fontSize:9, display:"block" }}>Income</Mono><Mono style={{ color:C.white, fontWeight:700, fontSize:13 }}>{fmtCur(monthlyReport.incTotal,user.currency)}</Mono></div>
+                        <div><Mono style={{ color:C.muted, fontSize:9, display:"block" }}>Expenses</Mono><Mono style={{ color:C.white, fontWeight:700, fontSize:13 }}>{fmtCur(monthlyReport.expTotal,user.currency)}</Mono></div>
+                        <div><Mono style={{ color:C.muted, fontSize:9, display:"block" }}>Net</Mono><Mono style={{ color:C.white, fontWeight:700, fontSize:13 }}>{fmtCur(monthlyReport.net,user.currency)}</Mono></div>
+                      </div>
+                      {monthlyReport.topCats.length>0 && (
+                        <div style={{ display:"flex", gap:6, flexWrap:"wrap", marginBottom:14 }}>
+                          {monthlyReport.topCats.map(([c,v]) => <Tag key={c}>{c} · {fmtCur(v,user.currency)}</Tag>)}
+                        </div>
+                      )}
+                      <div style={{ borderTop:`1px solid ${C.div}`, paddingTop:12 }}>
+                        <div style={{ fontSize:12, fontWeight:600, color:C.muted, marginBottom:8 }}>What the numbers show</div>
+                        <div style={{ fontSize:12.5, lineHeight:1.7, color:C.text, whiteSpace:"pre-wrap" }}>{monthlyReport.advice}</div>
+                        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-end", gap:10, marginTop:12, paddingTop:10, borderTop:`1px solid ${C.div}` }}>
+                          {/* Generated from the user's own figures by a language model, which can be
+                              wrong and isn't qualified to advise. Saying so beside the output is the
+                              minimum — labelling it "KROFT'S ADVICE" implied an authority it doesn't
+                              have, on exactly the kind of decision where that matters. */}
+                          <Mono style={{ color:C.muted, lineHeight:1.6 }}>
+                            An automated summary of your own entries, not financial advice. Check anything important with a qualified accountant or advisor.
+                          </Mono>
+                          {/* Summary only, no figures — unlike the rest of the app, where reading
+                              a reply aloud is a deliberate tap and includes whatever's in it. This
+                              one strips amounts and percentages specifically, since the advice
+                              text embeds real numbers mid-sentence rather than as a separate stat
+                              a person could just skip past. */}
+                          <button onClick={() => { if (window.speechSynthesis?.speaking) { stopSpeaking(); } else { speak(stripFiguresForSpeech(monthlyReport.advice)); } }} aria-label="Read summary aloud" title="Read aloud (no figures) — tap again to stop"
+                            style={{ background:"none", border:"none", padding:4, cursor:"pointer", flexShrink:0, display:"flex", alignItems:"center" }}>
+                            <NavIcon id="play" size={15} color={C.muted} />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </Card>
+              </>
+            )}
+          </div>
+        )}
+
+        {tab==="workspace" && !workspaceSection && (() => {
+          const TOOLS = [
+            { k:"calendar", l:"Calendar", count:appts.length, sub:"appointments" },
+            { k:"notes", l:"Notes", count:notes.length, sub:"notes" },
+            { k:"email", l:"Email", count:emails.filter(e=>!e.read).length, sub:"unread", tone:"accent" },
+            { k:"tasks", l:"Tasks", count:tasks.filter(t=>!t.done).length, sub:"active", tone: tasks.filter(t=>!t.done).length>0 ? "warning" : undefined },
+            { k:"files", l:"Files", count:files.length, sub:"files" },
+            { k:"documents", l:"Documents", count:documents.length, sub:"documents" },
+            { k:"projects", l:"Projects", count:projects.filter(p=>p.status==="In Progress").length, sub:"in progress", tone: projects.filter(p=>p.status==="In Progress").length>0 ? "accent" : undefined },
+            { k:"memos", l:"Voice Memos", count:voiceMemos.length, sub:"memos" },
+            { k:"reminders", l:"Reminders", count:smartReminders.length, sub:"reminders", tone: smartReminders.some(r=>r.aiSuggested) ? "accent" : undefined },
+            { k:"contacts", l:"Contacts", count:contacts.length, sub:"saved" },
+          ];
+          const QUICK = ["calendar","notes","email","tasks"];
+          const q = workspaceSearch.trim().toLowerCase();
+          const searching = q.length > 0;
+          const matches = searching ? TOOLS.filter(t => t.l.toLowerCase().includes(q)) : [];
+          const visible = searching ? matches : TOOLS.filter(t => QUICK.includes(t.k));
+          const rest = TOOLS.filter(t => !QUICK.includes(t.k));
+          const toneColors = { positive:C.positive, negative:C.negative, warning:C.warning, accent:C.accent };
+          const toneBgs = { positive:C.positiveBg, negative:C.negativeBg, warning:C.warningBg, accent:C.accentBg };
+
+          // Search looks inside the workspace's actual content, not just the tool names —
+          // typing "invoice" should surface the note, task or contact called that, rather than
+          // returning nothing because no tool happens to be named "Invoice". Each hit carries
+          // the section it lives in so tapping it opens the right screen.
+          const hit = (s, ...fields) => fields.some(f => (f||"").toLowerCase().includes(s));
+          const contentHits = !searching ? [] : [
+            ...notes.filter(n => hit(q, n.title, n.body)).map(n => ({ id:"note"+n.id, section:"notes", kind:"Note", label:n.title || "Untitled note", detail:(n.body||"").slice(0,60) })),
+            ...tasks.filter(t => hit(q, t.title)).map(t => ({ id:"task"+t.id, section:"tasks", kind:"Task", label:t.title, detail:t.done?"Done":t.priority })),
+            ...appts.filter(a => hit(q, a.title, a.location, a.notes)).map(a => ({ id:"appt"+a.id, section:"calendar", kind:"Appointment", label:a.title, detail:[a.time, fmtDate(a.date)].filter(Boolean).join(", ") })),
+            ...contacts.filter(c => hit(q, c.name, c.email, c.phone)).map(c => ({ id:"contact"+c.id, section:"contacts", kind:"Contact", label:c.name, detail:c.email || c.phone })),
+            ...smartReminders.filter(r => hit(q, r.text)).map(r => ({ id:"rem"+r.id, section:"reminders", kind:"Reminder", label:r.text, detail:r.when })),
+            ...documents.filter(d => hit(q, d.title, d.body)).map(d => ({ id:"doc"+d.id, section:"documents", kind:"Document", label:d.title || "Untitled", detail:(d.body||"").slice(0,60) })),
+            ...projects.filter(p => hit(q, p.name, p.description)).map(p => ({ id:"proj"+p.id, section:"projects", kind:"Project", label:p.name, detail:p.status })),
+            ...files.filter(f => hit(q, f.name)).map(f => ({ id:"file"+f.id, section:"files", kind:"File", label:f.name, detail:f.date })),
+            ...emails.filter(e => hit(q, e.subject, e.from, e.body)).map(e => ({ id:"mail"+e.id, section:"email", kind:"Email", label:e.subject, detail:e.from })),
+            ...voiceMemos.filter(m => hit(q, m.title, m.transcript)).map(m => ({ id:"memo"+m.id, section:"memos", kind:"Voice memo", label:m.title || "Untitled memo", detail:(m.transcript||"").slice(0,60) })),
+          ].slice(0, 20);
+
+          const ToolCard = ({ t }) => (
+            <Card key={t.k} onClick={() => { setWorkspaceSection(t.k); setWorkspaceSearch(""); }} style={{ cursor:"pointer", minWidth:0 }}>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:8 }}>
+                <div style={{ width:34, height:34, borderRadius:12, background:t.tone?toneBgs[t.tone]:C.surface, border:`1px solid ${t.tone?toneColors[t.tone]+"55":C.cardB}`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:14, fontWeight:800, color:t.tone?toneColors[t.tone]:C.white, marginBottom:10, flexShrink:0 }}>{t.l[0]}</div>
+                {t.count>0 && <Tag tone={t.tone} style={{ whiteSpace:"normal", textAlign:"right", maxWidth:"70%", boxSizing:"border-box", lineHeight:1.4 }}>{t.count} {t.sub}</Tag>}
+              </div>
+              <div style={{ fontSize:14, fontWeight:700, color:C.white, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{t.l}</div>
+              {t.count===0 && <Mono style={{ color:C.soft, display:"block", marginTop:2 }}>Nothing yet</Mono>}
+            </Card>
+          );
+
+          return (
+            <div style={{ animation:"fadeUp .35s ease" }}>
+              <Inp placeholder="Search your workspace…" value={workspaceSearch} onChange={e=>setWorkspaceSearch(e.target.value)} style={{ marginBottom:18, width:"100%", boxSizing:"border-box" }} />
+              {!searching && <div style={{ fontSize:12, fontWeight:600, color:C.muted, marginBottom:11 }}>Quick access</div>}
+              {searching && matches.length===0 && contentHits.length===0 && (
+                <Card level="inset" style={{ textAlign:"center", padding:26, borderStyle:"dashed" }}>
+                  <div style={{ fontSize:15, fontWeight:600, color:C.white, marginBottom:6 }}>Nothing matches "{workspaceSearch}"</div>
+                  <Mono style={{ display:"block", color:C.soft }}>Try a different word, or open a tool below to add something.</Mono>
+                </Card>
+              )}
+              {matches.length > 0 && (
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:11, marginBottom:contentHits.length?18:0 }}>
+                  {visible.map(t => <ToolCard key={t.k} t={t} />)}
+                </div>
+              )}
+              {!searching && (
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:11, marginBottom:8 }}>
+                  {visible.map(t => <ToolCard key={t.k} t={t} />)}
+                </div>
+              )}
+              {contentHits.length > 0 && (
+                <>
+                  <div style={{ fontSize:12, fontWeight:600, color:C.muted, marginBottom:11 }}>
+                    {contentHits.length} {contentHits.length===1?"result":"results"} in your workspace
+                  </div>
+                  <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+                    {contentHits.map(r => (
+                      <Card key={r.id} level="inset" onClick={() => { setWorkspaceSection(r.section); setWorkspaceSearch(""); }} style={{ display:"flex", alignItems:"center", gap:11 }}>
+                        <div style={{ flex:1, minWidth:0 }}>
+                          <div style={{ fontSize:13, fontWeight:600, color:C.text, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{r.label}</div>
+                          {r.detail && <Mono style={{ color:C.muted, display:"block", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{r.detail}</Mono>}
+                        </div>
+                        <Tag style={{ flexShrink:0 }}>{r.kind}</Tag>
+                      </Card>
+                    ))}
+                  </div>
+                </>
+              )}
+              {!searching && (
+                <>
+                  <button onClick={() => setShowAllTools(v=>!v)} style={{ background:"none", border:"none", color:C.soft, cursor:"pointer", fontSize:12, fontFamily:"'Space Mono',monospace", padding:"14px 0", textDecoration:"underline" }}>
+                    {showAllTools ? "Show fewer tools" : `Show all ${TOOLS.length} tools`}
+                  </button>
+                  {showAllTools && (
+                    <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:11, animation:"fadeUp .3s ease" }}>
+                      {rest.map(t => <ToolCard key={t.k} t={t} />)}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          );
+        })()}
+
+        {tab==="workspace" && workspaceSection==="calendar" && (
+          <div style={{ animation:"fadeUp .4s ease" }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:18 }}>
+              <h2 style={{ fontSize:22, fontWeight:700, color:C.white, letterSpacing:-1 }}>Calendar</h2>
+              <Btn sm onClick={() => setShowAddAppt(v=>!v)}>Add Appointment</Btn>
+            </div>
+            {showAddAppt && (
+              <Card style={{ marginBottom:14, border:`1px solid ${C.border}` }}>
+                <div style={{ fontSize:13, fontWeight:700, color:C.text, marginBottom:12 }}>New appointment</div>
+                <div style={{ display:"flex", flexDirection:"column", gap:9 }}>
+                  <div style={{ display:"flex", gap:8 }}><Inp placeholder="Title *" value={newAppt.title} onChange={e=>setNewAppt(v=>({...v,title:e.target.value}))} style={{ flex:2 }} /><Inp placeholder="Time e.g. 4:00 PM" value={newAppt.time} onChange={e=>setNewAppt(v=>({...v,time:e.target.value}))} style={{ flex:1 }} /></div>
+                  <div style={{ display:"flex", gap:8 }}><input type="date" value={newAppt.date||todayISO()} onChange={e=>setNewAppt(v=>({...v,date:e.target.value}))} style={{ flex:1, background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 12px", color:C.text, fontSize:13, fontFamily:"'Space Grotesk',sans-serif", outline:"none", colorScheme:theme }} /><Inp placeholder="Location" value={newAppt.location} onChange={e=>setNewAppt(v=>({...v,location:e.target.value}))} style={{ flex:1 }} /></div>
+                  <Inp placeholder="Notes (optional)" value={newAppt.notes} onChange={e=>setNewAppt(v=>({...v,notes:e.target.value}))} />
+                  <div style={{ display:"flex", gap:10, alignItems:"center", flexWrap:"wrap" }}>
+                    <label style={{ display:"flex", alignItems:"center", gap:6, cursor:"pointer" }}><input type="checkbox" checked={newAppt.urgent} onChange={e=>setNewAppt(v=>({...v,urgent:e.target.checked}))} style={{ accentColor:C.white, width:14, height:14 }} /><Mono style={{ color:C.soft }}>Urgent</Mono></label>
+                    <select value={newAppt.repeat} onChange={e=>setNewAppt(v=>({...v,repeat:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:8, padding:"7px 11px", color:C.text, fontSize:11, fontFamily:"'Space Mono',monospace", outline:"none" }}>{["none","daily","weekly","monthly"].map(r=><option key={r}>{r}</option>)}</select>
+                    {contacts.length > 0 && <ContactSelect value={newAppt.contactId} onChange={id=>setNewAppt(v=>({...v,contactId:id}))} contacts={contacts} />}
+                    <Btn sm onClick={() => { if (!newAppt.title||!newAppt.date) return; setAppts(p=>[...p,{...newAppt,id:uid()}]); setNewAppt({title:"",time:"",date:todayISO(),location:"",notes:"",urgent:false,repeat:"none",contactId:null}); setShowAddAppt(false); toast(`Appointment added: ${newAppt.title}`); }}>Add</Btn>
+                  </div>
+                </div>
+              </Card>
+            )}
+            {appts.length===0&&!showAddAppt && (
+              <Card level="inset" style={{ textAlign:"center", padding:26, borderStyle:"dashed" }}>
+                <div style={{ fontSize:15, fontWeight:600, color:C.white, marginBottom:6 }}>No appointments yet</div>
+                <Mono style={{ display:"block", color:C.muted, marginBottom:18 }}>Add your meetings, calls, and events.</Mono>
+                <Btn sm onClick={() => setShowAddAppt(true)}>Add First Appointment</Btn>
+              </Card>
+            )}
+            {[...appts].sort((a,b)=>(a.date||"").localeCompare(b.date||"")||(a.time||"").localeCompare(b.time||"")).map(a => (
+              editingAppt && editingAppt.id===a.id ? (
+                <Card key={a.id} style={{ marginBottom:11, border:`1px solid ${C.soft}` }}>
+                  <div style={{ fontSize:13, fontWeight:700, color:C.text, marginBottom:11 }}>Edit appointment</div>
+                  <div style={{ display:"flex", flexDirection:"column", gap:9 }}>
+                    <div style={{ display:"flex", gap:8 }}><Inp placeholder="Title *" value={editingAppt.title} onChange={e=>setEditingAppt(v=>({...v,title:e.target.value}))} style={{ flex:2 }} /><Inp placeholder="Time e.g. 4:00 PM" value={editingAppt.time} onChange={e=>setEditingAppt(v=>({...v,time:e.target.value}))} style={{ flex:1 }} /></div>
+                    <div style={{ display:"flex", gap:8 }}><input type="date" value={editingAppt.date||todayISO()} onChange={e=>setEditingAppt(v=>({...v,date:e.target.value}))} style={{ flex:1, background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 12px", color:C.text, fontSize:13, fontFamily:"'Space Grotesk',sans-serif", outline:"none", colorScheme:theme }} /><Inp placeholder="Location" value={editingAppt.location} onChange={e=>setEditingAppt(v=>({...v,location:e.target.value}))} style={{ flex:1 }} /></div>
+                    <Inp placeholder="Notes (optional)" value={editingAppt.notes} onChange={e=>setEditingAppt(v=>({...v,notes:e.target.value}))} />
+                    <div style={{ display:"flex", gap:10, alignItems:"center", flexWrap:"wrap" }}>
+                      <label style={{ display:"flex", alignItems:"center", gap:6, cursor:"pointer" }}><input type="checkbox" checked={editingAppt.urgent} onChange={e=>setEditingAppt(v=>({...v,urgent:e.target.checked}))} style={{ accentColor:C.white, width:14, height:14 }} /><Mono style={{ color:C.soft }}>Urgent</Mono></label>
+                      <select value={editingAppt.repeat} onChange={e=>setEditingAppt(v=>({...v,repeat:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:8, padding:"7px 11px", color:C.text, fontSize:11, fontFamily:"'Space Mono',monospace", outline:"none" }}>{["none","daily","weekly","monthly"].map(r=><option key={r}>{r}</option>)}</select>
+                      {contacts.length > 0 && <ContactSelect value={editingAppt.contactId} onChange={id=>setEditingAppt(v=>({...v,contactId:id}))} contacts={contacts} />}
+                    </div>
+                    <div style={{ display:"flex", gap:8 }}>
+                      <Btn sm v="outline" onClick={() => setEditingAppt(null)} style={{ flex:1 }}>Cancel</Btn>
+                      <Btn sm onClick={() => { if (!editingAppt.title||!editingAppt.date) return; setAppts(p=>p.map(x=>x.id===a.id?editingAppt:x)); setEditingAppt(null); toast("Appointment updated."); }} style={{ flex:1 }}>Save</Btn>
+                    </div>
+                  </div>
+                </Card>
+              ) : (
+              <Card key={a.id} {...longPress(() => setActionSheet(holdActions({ title:a.title, subtitle:[a.time, fmtDate(a.date)].filter(Boolean).join(", "), onEdit:() => setEditingAppt({...a}), list:appts, setList:setAppts, id:a.id, deletedLabel:"Appointment deleted." })))} style={{ marginBottom:11, border:`1px solid ${a.urgent?C.soft:C.cardB}`, cursor:"pointer", WebkitTouchCallout:"none", WebkitUserSelect:"none", userSelect:"none", }} onClick={() => setOpenAppt(openAppt===a.id?null:a.id)}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", flexWrap:"wrap", gap:10 }}>
+                  <div style={{ flex:1 }}>
+                    <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:6, flexWrap:"wrap" }}>
+                      <span style={{ fontWeight:700, fontSize:14, color:C.white }}>{a.title}</span>
+                      {a.urgent && <Tag tone="negative">URGENT</Tag>}
+                      {a.repeat!=="none" && <Tag>{a.repeat}</Tag>}
+                      {a.contactId && contacts.find(c=>c.id===a.contactId) && <Tag tone="accent">{contacts.find(c=>c.id===a.contactId).name}</Tag>}
+                    </div>
+                    <Mono style={{ display:"block", color:C.soft, marginBottom:2 }}>{a.time} · {fmtDate(a.date)||a.date}</Mono>
+                    {a.location && <Mono style={{ display:"block", color:C.muted }}>{a.location}</Mono>}
+                    {openAppt===a.id&&a.notes && <div style={{ marginTop:10, padding:"10px 12px", background:C.surface, borderRadius:8 }}><Mono style={{ display:"block", color:C.muted, marginBottom:4 }}>Notes</Mono><div style={{ fontSize:12, color:C.soft, lineHeight:1.65 }}>{a.notes}</div></div>}
+                  </div>
+                  <div style={{ display:"flex", gap:7, flexWrap:"wrap" }}>
+                    {a.contactId && contacts.find(c=>c.id===a.contactId)?.phone && <Btn sm v="outline" onClick={e=>{e.stopPropagation();window.location.href=`tel:${contacts.find(c=>c.id===a.contactId).phone}`;}}>Call</Btn>}
+                    {a.contactId && contacts.find(c=>c.id===a.contactId)?.email && <Btn sm v="outline" onClick={e=>{e.stopPropagation();setComposeDraft({to:contacts.find(c=>c.id===a.contactId).email,subject:a.title,body:""});}}>Email</Btn>}
+                    <Btn sm onClick={e=>{e.stopPropagation();remind(a);}}>Remind</Btn>
+                    <Btn sm v="outline" onClick={e=>{e.stopPropagation();setUberDest(a);}}>Uber</Btn>
+                    <Btn sm v="outline" onClick={e=>{e.stopPropagation();setTab("nova");setAiInput(`Prepare me for: "${a.title}"`)}}>Prep</Btn>
+                    <Btn sm v="outline" onClick={e=>{e.stopPropagation();setEditingAppt({...a});}}>Edit</Btn>
+                  </div>
+                </div>
+              </Card>
+              )
+            ))}
+          </div>
+        )}
+
+        {tab==="workspace" && workspaceSection==="email" && (
+          <div style={{ animation:"fadeUp .4s ease" }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:18 }}>
+              <h2 style={{ fontSize:22, fontWeight:700, color:C.white, letterSpacing:-1 }}>Email</h2>
+              <div style={{ display:"flex", alignItems:"center", gap:9 }}>
+                <Tag tone={user.connected.gmail?"positive":undefined}>{user.connected.gmail?"Gmail connected":"Gmail not linked"}</Tag>
+                {contacts.some(c => c.email) && <Btn sm v="outline" onClick={() => setContactPicker({ mode:"email" })}>From Contacts</Btn>}
+                <Btn sm onClick={() => setComposeDraft({to:"",subject:"",body:""})}>Compose</Btn>
+              </div>
+            </div>
+            {emails.length===0 && (
+              <Card level="inset" style={{ textAlign:"center", padding:26, borderStyle:"dashed" }}>
+                <div style={{ fontSize:15, fontWeight:600, color:C.white, marginBottom:6 }}>{user.connected.gmail ? "Inbox is empty" : "No email connected"}</div>
+                <Mono style={{ display:"block", color:C.soft, marginBottom:18 }}>{user.connected.gmail ? "Nothing here right now — compose a new email to get started." : "Connect Gmail or Outlook to let KROFT organize your inbox."}</Mono>
+                <div style={{ display:"flex", gap:9, justifyContent:"center" }}>
+                  <Btn sm onClick={() => setComposeDraft({to:"",subject:"",body:""})}>Compose Email</Btn>
+                  {!user.connected.gmail && <Btn sm v="outline" onClick={() => setStep("prefs")}>Connect Email</Btn>}
+                </div>
+              </Card>
+            )}
+            {[...emails].sort((a,b)=>(a.read===b.read)?(b.id-a.id):a.read?1:-1).map(e => (
+              <Card key={e.id} className="row" {...longPress(() => setActionSheet(holdActions({ title:e.subject, subtitle:e.from, list:emails, setList:setEmails, id:e.id, deletedLabel:"Email deleted." })))} style={{ marginBottom:10, border:`1px solid ${!e.read?C.soft:C.cardB}`, cursor:"pointer", WebkitTouchCallout:"none", WebkitUserSelect:"none", userSelect:"none", }} onClick={() => { setOpenEmail(openEmail===e.id?null:e.id); if (openEmail!==e.id) setEmails(p=>p.map(x=>x.id===e.id?{...x,read:true}:x)); }}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:11 }}>
+                  <div style={{ flex:1, minWidth:0 }}>
+                    <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:4, flexWrap:"wrap" }}>
+                      {!e.read && <Dot color={C.accent} />}
+                      <span style={{ fontWeight:700, fontSize:13, color:C.white }}>{e.subject}</span>
+                      {e.tag && <Tag>{e.tag}</Tag>}
+                      <Mono style={{ color:C.soft, marginLeft:"auto" }}>{e.time}</Mono>
+                    </div>
+                    <Mono style={{ display:"block", color:C.soft, marginBottom:4 }}>From: {e.from}</Mono>
+                    {openEmail===e.id ? <div style={{ fontSize:12, color:C.soft, lineHeight:1.7, marginTop:8, padding:"10px 12px", background:C.surface, borderRadius:8 }}>{e.body}</div> : <div style={{ fontSize:11, color:C.soft, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", maxWidth:360 }}>{e.body}</div>}
+                  </div>
+                  <div style={{ display:"flex", flexDirection:"column", gap:6, flexShrink:0 }}>
+                    <Btn sm onClick={ev=>{ev.stopPropagation();speak(e.body);toast("Reading aloud…")}}>Read</Btn>
+                    <Btn sm v="outline" onClick={ev=>{ev.stopPropagation();setComposeDraft({to:e.from,subject:"Re: "+e.subject,body:""})}}>Reply</Btn>
+                    <Btn sm v="outline" onClick={ev=>{ev.stopPropagation();aiDraftReply(e)}}>AI Draft</Btn>
+                  </div>
+                </div>
+              </Card>
+            ))}
+          </div>
+        )}
+
+        {/* ── WORKSPACE: NOTES ── */}
+        {tab==="workspace" && workspaceSection==="notes" && (
+          <div style={{ animation:"fadeUp .4s ease" }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:18 }}>
+              <h2 style={{ fontSize:22, fontWeight:700, color:C.white, letterSpacing:-1 }}>Notes</h2>
+              <Btn sm onClick={() => setShowAddNote(v=>!v)}>+ New Note</Btn>
+            </div>
+            {showAddNote && (
+              <Card style={{ marginBottom:13, border:`1px solid ${C.border}` }}>
+                <div style={{ fontSize:13, fontWeight:700, color:C.text, marginBottom:11 }}>New note</div>
+                <Inp placeholder="Title" value={newNote.title} onChange={e=>setNewNote(v=>({...v,title:e.target.value}))} style={{ marginBottom:9 }} />
+                <textarea placeholder="Write your note, checklist, or idea…" value={newNote.body} onChange={e=>setNewNote(v=>({...v,body:e.target.value}))} rows={4} style={{ width:"100%", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 14px", color:C.text, fontSize:13, fontFamily:"'Space Grotesk',sans-serif", outline:"none", resize:"vertical", boxSizing:"border-box", marginBottom:10 }} />
+                <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
+                  <Btn sm v="outline" onClick={toggleListen}>{listening ? "Stop" : "Voice"}</Btn>
+                  {contacts.length > 0 && <ContactSelect value={newNote.contactId} onChange={id=>setNewNote(v=>({...v,contactId:id}))} contacts={contacts} />}
+                  <Btn sm onClick={() => { if (!newNote.title.trim() && !newNote.body.trim()) return; setNotes(p=>[{id:uid(),...newNote,date:dateStr()},...p]); setNewNote({title:"",body:"",contactId:null}); setShowAddNote(false); toast("Note saved."); }}>Save Note</Btn>
+                </div>
+              </Card>
+            )}
+            {dataLoaded && notes.length===0 && !showAddNote && (
+              <Card level="inset" style={{ textAlign:"center", padding:26, borderStyle:"dashed" }}>
+                <div style={{ fontSize:15, fontWeight:600, color:C.white, marginBottom:6 }}>No notes yet</div>
+                <Mono style={{ display:"block", color:C.soft, marginBottom:18 }}>Capture ideas instantly with text or voice.</Mono>
+                <Btn sm onClick={() => setShowAddNote(true)}>+ New Note</Btn>
+              </Card>
+            )}
+            {notes.map(n => (
+              editingNote && editingNote.id===n.id ? (
+                <Card key={n.id} style={{ marginBottom:10, border:`1px solid ${C.soft}` }}>
+                  <div style={{ fontSize:13, fontWeight:700, color:C.text, marginBottom:11 }}>Edit note</div>
+                  <Inp placeholder="Title" value={editingNote.title} onChange={e=>setEditingNote(v=>({...v,title:e.target.value}))} style={{ marginBottom:9 }} />
+                  <textarea placeholder="Write your note, checklist, or idea…" value={editingNote.body} onChange={e=>setEditingNote(v=>({...v,body:e.target.value}))} rows={4} style={{ width:"100%", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 14px", color:C.text, fontSize:13, fontFamily:"'Space Grotesk',sans-serif", outline:"none", resize:"vertical", boxSizing:"border-box", marginBottom:10 }} />
+                  <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
+                    <Btn sm v="outline" onClick={() => setEditingNote(null)} style={{ flex:1 }}>Cancel</Btn>
+                    {contacts.length > 0 && <ContactSelect value={editingNote.contactId} onChange={id=>setEditingNote(v=>({...v,contactId:id}))} contacts={contacts} />}
+                    <Btn sm onClick={() => { if (!editingNote.title.trim() && !editingNote.body.trim()) return; setNotes(p=>p.map(x=>x.id===n.id?editingNote:x)); setEditingNote(null); toast("Note updated."); }} style={{ flex:1 }}>Save</Btn>
+                  </div>
+                </Card>
+              ) : (
+              <Card key={n.id} {...longPress(() => setActionSheet(holdActions({ title:n.title || "Untitled note", subtitle:n.date, onEdit:() => setEditingNote({...n}), list:notes, setList:setNotes, id:n.id, deletedLabel:"Note deleted." })))} style={{ marginBottom:10, cursor:"pointer", WebkitTouchCallout:"none", WebkitUserSelect:"none", userSelect:"none", }} onClick={() => setOpenNote(openNote===n.id?null:n.id)}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:11 }}>
+                  <div style={{ flex:1, minWidth:0 }}>
+                    <div style={{ fontWeight:700, fontSize:13, color:C.white, marginBottom:4 }}>{n.title || "Untitled note"}</div>
+                    <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:6, flexWrap:"wrap" }}>
+                      <Mono style={{ color:C.soft }}>{n.date}</Mono>
+                      {n.contactId && contacts.find(c=>c.id===n.contactId) && <Tag tone="accent">{contacts.find(c=>c.id===n.contactId).name}</Tag>}
+                    </div>
+                    <div style={{ fontSize:12, color:C.soft, lineHeight:1.6, whiteSpace:openNote===n.id?"pre-wrap":"nowrap", overflow:openNote===n.id?"visible":"hidden", textOverflow:"ellipsis" }}>{n.body}</div>
+                  </div>
+                  <div style={{ display:"flex", gap:6, flexShrink:0 }}>
+                    <Btn sm v="outline" onClick={e=>{e.stopPropagation();shareContent({title:n.title||"Note",text:`${n.title||"Note"}\n\n${n.body}`});}}>Share</Btn>
+                    <Btn sm v="outline" onClick={e=>{e.stopPropagation();setEditingNote({...n});}}>Edit</Btn>
+                  </div>
+                </div>
+              </Card>
+              )
+            ))}
+          </div>
+        )}
+
+        {/* ── WORKSPACE: TASKS ── */}
+        {tab==="workspace" && workspaceSection==="tasks" && (
+          <div style={{ animation:"fadeUp .4s ease" }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:18 }}>
+              <h2 style={{ fontSize:22, fontWeight:700, color:C.white, letterSpacing:-1 }}>Tasks</h2>
+              <Btn sm onClick={() => setShowAddTask(v=>!v)}>+ Add Task</Btn>
+            </div>
+            {showAddTask && (
+              <Card style={{ marginBottom:13, border:`1px solid ${C.border}` }}>
+                <div style={{ fontSize:13, fontWeight:700, color:C.text, marginBottom:11 }}>New task</div>
+                <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+                  <Inp placeholder="What needs to get done?" value={newTask.title} onChange={e=>setNewTask(v=>({...v,title:e.target.value}))} style={{ flex:2, minWidth:140 }} />
+                  <select value={newTask.priority} onChange={e=>setNewTask(v=>({...v,priority:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 12px", color:C.text, fontSize:12, fontFamily:"'Space Mono',monospace", outline:"none" }}>
+                    {["Low","Normal","High","Urgent"].map(p => <option key={p}>{p}</option>)}
+                  </select>
+                  <select value={newTask.repeat} onChange={e=>setNewTask(v=>({...v,repeat:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 12px", color:C.text, fontSize:12, fontFamily:"'Space Mono',monospace", outline:"none" }}>
+                    {["none","daily","weekly","monthly"].map(r => <option key={r}>{r}</option>)}
+                  </select>
+                  {contacts.length > 0 && <ContactSelect value={newTask.contactId} onChange={id=>setNewTask(v=>({...v,contactId:id}))} contacts={contacts} />}
+                  <Btn onClick={() => { if (!newTask.title.trim()) return; setTasks(p=>[{id:uid(),...newTask,done:false},...p]); setNewTask({title:"",priority:"Normal",repeat:"none",contactId:null}); setShowAddTask(false); toast("Task added."); }}>Add</Btn>
+                </div>
+              </Card>
+            )}
+            {dataLoaded && tasks.length===0 && !showAddTask && (
+              <Card level="inset" style={{ textAlign:"center", padding:26, borderStyle:"dashed" }}>
+                <div style={{ fontSize:15, fontWeight:600, color:C.white, marginBottom:6 }}>Nothing to do</div>
+                <Mono style={{ display:"block", color:C.soft, marginBottom:18 }}>Create your first task and let KROFT remind you.</Mono>
+                <Btn sm onClick={() => setShowAddTask(true)}>+ Add Task</Btn>
+              </Card>
+            )}
+            {[...tasks].sort((a,b)=>(a.done===b.done)?0:a.done?1:-1).map(t => (
+              editingTask && editingTask.id===t.id ? (
+                <Card key={t.id} style={{ marginBottom:9, border:`1px solid ${C.soft}` }}>
+                  <div style={{ fontSize:13, fontWeight:700, color:C.text, marginBottom:11 }}>Edit task</div>
+                  <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+                    <Inp placeholder="What needs to get done?" value={editingTask.title} onChange={e=>setEditingTask(v=>({...v,title:e.target.value}))} style={{ flex:2, minWidth:140 }} />
+                    <select value={editingTask.priority} onChange={e=>setEditingTask(v=>({...v,priority:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 12px", color:C.text, fontSize:12, fontFamily:"'Space Mono',monospace", outline:"none" }}>
+                      {["Low","Normal","High","Urgent"].map(p => <option key={p}>{p}</option>)}
+                    </select>
+                    <select value={editingTask.repeat} onChange={e=>setEditingTask(v=>({...v,repeat:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 12px", color:C.text, fontSize:12, fontFamily:"'Space Mono',monospace", outline:"none" }}>
+                      {["none","daily","weekly","monthly"].map(r => <option key={r}>{r}</option>)}
+                    </select>
+                    {contacts.length > 0 && <ContactSelect value={editingTask.contactId} onChange={id=>setEditingTask(v=>({...v,contactId:id}))} contacts={contacts} />}
+                  </div>
+                  <div style={{ display:"flex", gap:8, marginTop:9 }}>
+                    <Btn sm v="outline" onClick={() => setEditingTask(null)} style={{ flex:1 }}>Cancel</Btn>
+                    <Btn sm onClick={() => { if (!editingTask.title.trim()) return; setTasks(p=>p.map(x=>x.id===t.id?editingTask:x)); setEditingTask(null); toast("Task updated."); }} style={{ flex:1 }}>Save</Btn>
+                  </div>
+                </Card>
+              ) : (
+              <Card key={t.id} {...longPress(() => setActionSheet(holdActions({ title:t.title, subtitle:t.done ? "Completed" : t.priority, onEdit:() => setEditingTask({...t}), list:tasks, setList:setTasks, id:t.id, deletedLabel:"Task deleted." })))} style={{ marginBottom:9, opacity:t.done?.55:1, WebkitTouchCallout:"none", WebkitUserSelect:"none", userSelect:"none", }}>
+                <div style={{ display:"flex", alignItems:"center", gap:12 }}>
+                  <button onClick={() => setTasks(p => {
+                    const target = p.find(x => x.id === t.id);
+                    const completing = target && !target.done;
+                    const toggled = p.map(x => x.id===t.id ? {...x,done:!x.done} : x);
+                    // Tasks have no due-date field to advance the way appointments do, so a
+                    // repeating task's "next occurrence" is a fresh unchecked copy spawned the
+                    // moment the current one is completed — the completed one stays as a record.
+                    if (completing && target.repeat !== "none") {
+                      return [{ id:uid(), title:target.title, priority:target.priority, repeat:target.repeat, contactId:target.contactId, done:false }, ...toggled];
+                    }
+                    return toggled;
+                  })} style={{ width:20, height:20, borderRadius:6, border:`1.5px solid ${t.done?C.white:C.soft}`, background:t.done?C.white:"transparent", cursor:"pointer", flexShrink:0, display:"flex", alignItems:"center", justifyContent:"center", color:C.black, fontSize:12, fontWeight:900 }}>
+                    {t.done ? "✓" : ""}
+                  </button>
+                  <div style={{ flex:1, minWidth:0, cursor:"pointer" }} onClick={() => setEditingTask({...t})}>
+                    <div style={{ fontSize:13, fontWeight:600, color:C.white, textDecoration:t.done?"line-through":"none" }}>{t.title}</div>
+                    <div style={{ display:"flex", gap:7, marginTop:3, flexWrap:"wrap" }}>
+                      <Tag tone={t.priority==="Urgent"?"negative":t.priority==="High"?"warning":undefined}>{t.priority}</Tag>
+                      {t.repeat!=="none" && <Tag>{t.repeat}</Tag>}
+                      {t.contactId && contacts.find(c=>c.id===t.contactId) && <Tag tone="accent">{contacts.find(c=>c.id===t.contactId).name}</Tag>}
+                    </div>
+                  </div>
+                  <Btn sm v="outline" onClick={() => setEditingTask({...t})}>Edit</Btn>
+                </div>
+              </Card>
+              )
+            ))}
+          </div>
+        )}
+
+        {/* ── WORKSPACE: FILES ── */}
+        {tab==="workspace" && workspaceSection==="files" && (
+          <div style={{ animation:"fadeUp .4s ease" }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:18 }}>
+              <h2 style={{ fontSize:22, fontWeight:700, color:C.white, letterSpacing:-1 }}>Files</h2>
+              <label style={{ background:C.white, color:C.black, borderRadius:12, padding:"10px 22px", cursor:"pointer", fontSize:13, fontWeight:700, fontFamily:"'Space Grotesk',sans-serif" }}>
+                + Upload
+                <input type="file" multiple style={{ display:"none" }} onChange={e => {
+                  const picked = Array.from(e.target.files||[]);
+                  if (picked.length===0) return;
+                  setFiles(p => [...picked.map(f => ({ id:uid(), name:f.name, size:f.size, type:f.type||"file", date:dateStr(), url:URL.createObjectURL(f), contactId:null })), ...p]);
+                  toast(`${picked.length} file${picked.length!==1?"s":""} added.`);
+                  e.target.value = "";
+                }} />
+              </label>
+            </div>
+            {files.length===0 && (
+              <Card level="inset" style={{ textAlign:"center", padding:26, borderStyle:"dashed" }}>
+                <div style={{ fontSize:15, fontWeight:600, color:C.white, marginBottom:6 }}>No files yet</div>
+                <Mono style={{ display:"block", color:C.soft, marginBottom:18 }}>Documents, PDFs, images and AI-generated files will appear here.</Mono>
+              </Card>
+            )}
+            {files.map(f => (
+              <Card key={f.id} {...longPress(() => setActionSheet(holdActions({ title:f.name, subtitle:`${(f.size/1024).toFixed(0)} KB · ${f.date}`, list:files, setList:setFiles, id:f.id, deletedLabel:"File removed.", after:() => scheduleBlobRevoke(f.id, f.url, setFiles) })))} style={{ marginBottom:9, WebkitTouchCallout:"none", WebkitUserSelect:"none", userSelect:"none", }}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:11, marginBottom:contacts.length>0?10:0 }}>
+                  <div style={{ flex:1, minWidth:0 }}>
+                    <div style={{ fontSize:13, fontWeight:600, color:C.white, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{f.name}</div>
+                    <div style={{ display:"flex", alignItems:"center", gap:8, marginTop:3, flexWrap:"wrap" }}>
+                      <Mono style={{ color:C.soft }}>{(f.size/1024).toFixed(0)} KB · {f.date}</Mono>
+                      {f.contactId && contacts.find(c=>c.id===f.contactId) && <Tag tone="accent">{contacts.find(c=>c.id===f.contactId).name}</Tag>}
+                    </div>
+                  </div>
+                  <div style={{ display:"flex", gap:7, flexShrink:0 }}>
+                    <a href={f.url} download={f.name} style={{ textDecoration:"none" }}><Btn sm v="outline">Open</Btn></a>
+                    <Btn sm v="outline" onClick={() => shareContent({ title:f.name, text:`Sharing a file: ${f.name}`, url:f.url })}>Share</Btn>
+                  </div>
+                </div>
+                {contacts.length > 0 && (
+                  <ContactSelect value={f.contactId} onChange={id => setFiles(p=>p.map(x=>x.id===f.id?{...x,contactId:id}:x))} contacts={contacts} style={{ width:"100%" }} />
+                )}
+              </Card>
+            ))}
+          </div>
+        )}
+
+        {/* ── WORKSPACE: DOCUMENTS ── */}
+        {tab==="workspace" && workspaceSection==="documents" && (
+          <div style={{ animation:"fadeUp .4s ease" }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:18 }}>
+              <h2 style={{ fontSize:22, fontWeight:700, color:C.white, letterSpacing:-1 }}>Documents</h2>
+              <Btn sm onClick={() => setShowAddDocument(v=>!v)}>+ New Document</Btn>
+            </div>
+            {showAddDocument && (
+              <Card style={{ marginBottom:13, border:`1px solid ${C.border}` }}>
+                <div style={{ fontSize:13, fontWeight:700, color:C.text, marginBottom:11 }}>New document</div>
+                <Inp placeholder="Document title" value={newDocument.title} onChange={e=>setNewDocument(v=>({...v,title:e.target.value}))} style={{ marginBottom:9 }} />
+                <textarea placeholder="Write your document…" value={newDocument.body} onChange={e=>setNewDocument(v=>({...v,body:e.target.value}))} rows={8} style={{ width:"100%", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 14px", color:C.text, fontSize:13, fontFamily:"'Space Grotesk',sans-serif", outline:"none", resize:"vertical", boxSizing:"border-box", marginBottom:10, lineHeight:1.6 }} />
+                <div style={{ display:"flex", gap:8 }}>
+                  <Btn sm v="outline" onClick={() => { setShowAddDocument(false); setNewDocument({title:"",body:""}); }} style={{ flex:1 }}>Cancel</Btn>
+                  <Btn sm onClick={() => { if (!newDocument.title.trim()) return; setDocuments(p=>[{id:uid(),...newDocument,createdAt:dateStr(),editedAt:null},...p]); setNewDocument({title:"",body:""}); setShowAddDocument(false); toast("Document created."); }} style={{ flex:1 }}>Create</Btn>
+                </div>
+              </Card>
+            )}
+            {documents.length===0 && !showAddDocument && (
+              <Card level="inset" style={{ textAlign:"center", padding:26, borderStyle:"dashed" }}>
+                <div style={{ fontSize:15, fontWeight:600, color:C.white, marginBottom:6 }}>No documents yet</div>
+                <Mono style={{ display:"block", color:C.soft, marginBottom:18 }}>For longer write-ups — briefs, plans, drafts — that outgrow a quick note.</Mono>
+                <Btn sm onClick={() => setShowAddDocument(true)}>+ New Document</Btn>
+              </Card>
+            )}
+            {documents.map(d => (
+              editingDocument && editingDocument.id===d.id ? (
+                <Card key={d.id} style={{ marginBottom:11, border:`1px solid ${C.soft}` }}>
+                  <div style={{ fontSize:13, fontWeight:700, color:C.text, marginBottom:11 }}>Edit document</div>
+                  <Inp placeholder="Document title" value={editingDocument.title} onChange={e=>setEditingDocument(v=>({...v,title:e.target.value}))} style={{ marginBottom:9 }} />
+                  <textarea value={editingDocument.body} onChange={e=>setEditingDocument(v=>({...v,body:e.target.value}))} rows={8} style={{ width:"100%", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 14px", color:C.text, fontSize:13, fontFamily:"'Space Grotesk',sans-serif", outline:"none", resize:"vertical", boxSizing:"border-box", marginBottom:10, lineHeight:1.6 }} />
+                  <div style={{ display:"flex", gap:8 }}>
+                    <Btn sm v="outline" onClick={() => setEditingDocument(null)} style={{ flex:1 }}>Cancel</Btn>
+                    <Btn sm onClick={() => { if (!editingDocument.title.trim()) return; setDocuments(p=>p.map(x=>x.id===d.id?{...editingDocument,editedAt:dateStr()}:x)); setEditingDocument(null); toast("Document updated."); }} style={{ flex:1 }}>Save</Btn>
+                  </div>
+                </Card>
+              ) : (
+              <Card key={d.id} {...longPress(() => setActionSheet(holdActions({ title:d.title || "Untitled", subtitle:d.editedAt || d.createdAt, onEdit:() => setEditingDocument({...d}), list:documents, setList:setDocuments, id:d.id, deletedLabel:"Document deleted." })))} style={{ marginBottom:11, WebkitTouchCallout:"none", WebkitUserSelect:"none", userSelect:"none", }}>
+                <div style={{ cursor:"pointer" }} onClick={() => setOpenDocument(openDocument===d.id?null:d.id)}>
+                  <div style={{ fontWeight:700, fontSize:14, color:C.white, marginBottom:4 }}>{d.title}</div>
+                  <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:openDocument===d.id?10:0, flexWrap:"wrap" }}>
+                    {d.editedAt && <Tag tone="accent">EDITED</Tag>}
+                    <Mono style={{ color:C.soft }}>{d.editedAt?`Edited ${d.editedAt}`:`Created ${d.createdAt}`} · {d.body.split(/\s+/).filter(Boolean).length} words</Mono>
+                  </div>
+                  {openDocument===d.id ? (
+                    <div style={{ fontSize:13, color:C.text, lineHeight:1.75, whiteSpace:"pre-wrap", padding:"12px 0 4px", borderTop:`1px solid ${C.div}`, marginTop:2 }}>{d.body || <span style={{ color:C.soft }}>Empty document.</span>}</div>
+                  ) : (
+                    <div style={{ fontSize:12, color:C.soft, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{d.body || "Empty document."}</div>
+                  )}
+                </div>
+                <div style={{ display:"flex", gap:7, marginTop:12, flexWrap:"wrap" }}>
+                  <Btn sm v="outline" onClick={() => setEditingDocument({...d})}>Edit</Btn>
+                  <Btn sm v="outline" onClick={() => shareContent({ title:d.title, text:`${d.title}\n\n${d.body}` })}>Share</Btn>
+                  <Btn sm v="outline" onClick={() => { downloadText(`${d.title.replace(/[^a-z0-9]+/gi,"_")||"document"}.txt`, `${d.title}\n\n${d.body}`); toast("Downloaded."); }}>Download</Btn>
+                </div>
+              </Card>
+              )
+            ))}
+          </div>
+        )}
+
+        {/* ── WORKSPACE: PROJECTS ── */}
+        {tab==="workspace" && workspaceSection==="projects" && (
+          <div style={{ animation:"fadeUp .4s ease" }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:18 }}>
+              <h2 style={{ fontSize:22, fontWeight:700, color:C.white, letterSpacing:-1 }}>Projects</h2>
+              <Btn sm onClick={() => setShowAddProject(v=>!v)}>Create Project</Btn>
+            </div>
+            {showAddProject && (
+              <Card style={{ marginBottom:13, border:`1px solid ${C.border}` }}>
+                <div style={{ fontSize:13, fontWeight:700, color:C.text, marginBottom:11 }}>New project</div>
+                <div style={{ display:"flex", flexDirection:"column", gap:9 }}>
+                  <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+                    <Inp placeholder="Project name" value={newProject.name} onChange={e=>setNewProject(v=>({...v,name:e.target.value}))} style={{ flex:2, minWidth:140 }} />
+                    <Inp placeholder="Deadline e.g. Aug 15" value={newProject.deadline} onChange={e=>setNewProject(v=>({...v,deadline:e.target.value}))} style={{ flex:1, minWidth:120 }} />
+                  </div>
+                  <Inp placeholder="What's this project about? (optional)" value={newProject.description} onChange={e=>setNewProject(v=>({...v,description:e.target.value}))} />
+                  <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+                    <select value={newProject.status} onChange={e=>setNewProject(v=>({...v,status:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"10px 12px", color:C.text, fontSize:12, fontFamily:"'Space Mono',monospace", outline:"none" }}>
+                      {["Not Started","In Progress","On Hold","Completed"].map(s => <option key={s}>{s}</option>)}
+                    </select>
+                    <Btn onClick={() => { if (!newProject.name.trim()) return; setProjects(p=>[{id:uid(),...newProject,taskIds:[],noteIds:[],fileIds:[],documentIds:[]},...p]); setNewProject({name:"",deadline:"",description:"",status:"Not Started"}); setShowAddProject(false); toast("Project created."); }}>Create</Btn>
+                  </div>
+                </div>
+              </Card>
+            )}
+            {projects.length===0 && !showAddProject && (
+              <Card level="inset" style={{ textAlign:"center", padding:26, borderStyle:"dashed" }}>
+                <div style={{ fontSize:15, fontWeight:600, color:C.white, marginBottom:6 }}>No active projects</div>
+                <Mono style={{ display:"block", color:C.soft, marginBottom:18 }}>Group tasks, notes and files together.</Mono>
+                <Btn sm onClick={() => setShowAddProject(true)}>Create Project</Btn>
+              </Card>
+            )}
+            {projects.map(pr => {
+              const linkedTasks = tasks.filter(t => (pr.taskIds||[]).includes(t.id));
+              const doneCount = linkedTasks.filter(t=>t.done).length;
+              const progress = linkedTasks.length>0 ? Math.round((doneCount/linkedTasks.length)*100) : 0;
+              const linkedNotes = notes.filter(n => (pr.noteIds||[]).includes(n.id));
+              const linkedFiles = files.filter(f => (pr.fileIds||[]).includes(f.id));
+              const linkedDocuments = documents.filter(d => (pr.documentIds||[]).includes(d.id));
+              const isEditing = editingProject && editingProject.id===pr.id;
+              return (
+              <Card key={pr.id} {...longPress(() => setActionSheet(holdActions({ title:pr.name, subtitle:pr.status, onEdit:() => setEditingProject({...pr}), list:projects, setList:setProjects, id:pr.id, deletedLabel:"Project deleted." })))} style={{ marginBottom:10, WebkitTouchCallout:"none", WebkitUserSelect:"none", userSelect:"none", }}>
+                {isEditing ? (
+                  <div style={{ display:"flex", flexDirection:"column", gap:9 }}>
+                    <Mono style={{ display:"block", color:C.white, letterSpacing:.8 }}>Edit project</Mono>
+                    <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+                      <Inp placeholder="Project name" value={editingProject.name} onChange={e=>setEditingProject(v=>({...v,name:e.target.value}))} style={{ flex:2, minWidth:140 }} />
+                      <Inp placeholder="Deadline" value={editingProject.deadline} onChange={e=>setEditingProject(v=>({...v,deadline:e.target.value}))} style={{ flex:1, minWidth:120 }} />
+                    </div>
+                    <Inp placeholder="Description" value={editingProject.description||""} onChange={e=>setEditingProject(v=>({...v,description:e.target.value}))} />
+                    <select value={editingProject.status} onChange={e=>setEditingProject(v=>({...v,status:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"10px 12px", color:C.text, fontSize:12, fontFamily:"'Space Mono',monospace", outline:"none" }}>
+                      {["Not Started","In Progress","On Hold","Completed"].map(s => <option key={s}>{s}</option>)}
+                    </select>
+                    <div style={{ display:"flex", gap:8 }}>
+                      <Btn sm v="outline" onClick={() => setEditingProject(null)} style={{ flex:1 }}>Cancel</Btn>
+                      <Btn sm onClick={() => { if (!editingProject.name.trim()) return; setProjects(p=>p.map(x=>x.id===pr.id?editingProject:x)); setEditingProject(null); toast("Project updated."); }} style={{ flex:1 }}>Save</Btn>
+                    </div>
+                  </div>
+                ) : (
+                <>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", cursor:"pointer" }} onClick={() => setOpenProject(openProject===pr.id?null:pr.id)}>
+                  <div style={{ flex:1, minWidth:0 }}>
+                    <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap", marginBottom:4 }}>
+                      <span style={{ fontWeight:700, fontSize:14, color:C.white }}>{pr.name}</span>
+                      <Tag tone={pr.status==="In Progress"?"accent":pr.status==="Completed"?"positive":pr.status==="On Hold"?"warning":undefined}>{pr.status||"Not Started"}</Tag>
+                    </div>
+                    {pr.description && <div style={{ fontSize:12, color:C.soft, marginBottom:6, lineHeight:1.5 }}>{pr.description}</div>}
+                    {pr.deadline && <Mono style={{ color:C.soft }}>Due {pr.deadline}</Mono>}
+                  </div>
+                  <div style={{ display:"flex", gap:6, flexShrink:0 }}>
+                    <Btn sm v="outline" onClick={e=>{e.stopPropagation();setEditingProject({...pr});}}>Edit</Btn>
+                  </div>
+                </div>
+                {linkedTasks.length>0 && (
+                  <div style={{ marginTop:10 }}>
+                    <div style={{ height:6, borderRadius:3, background:C.surface, overflow:"hidden" }}>
+                      <div style={{ height:"100%", width:`${progress}%`, background:C.white, borderRadius:3, transition:"width .3s ease" }} />
+                    </div>
+                    <Mono style={{ display:"block", color:C.soft, marginTop:5 }}>{doneCount}/{linkedTasks.length} tasks complete · {progress}%</Mono>
+                  </div>
+                )}
+                {openProject===pr.id && (
+                  <div style={{ marginTop:12, paddingTop:12, borderTop:`1px solid ${C.div}`, display:"flex", flexDirection:"column", gap:14 }}>
+                    {[{kind:"taskIds",label:"Tasks",items:linkedTasks,pool:tasks,render:t=>t.title},
+                      {kind:"noteIds",label:"Notes",items:linkedNotes,pool:notes,render:n=>n.title||"Untitled note"},
+                      {kind:"fileIds",label:"Files",items:linkedFiles,pool:files,render:f=>f.name},
+                      {kind:"documentIds",label:"Documents",items:linkedDocuments,pool:documents,render:d=>d.title}].map(sec => (
+                      <div key={sec.kind}>
+                        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:7 }}>
+                          <Mono style={{ color:C.white, letterSpacing:.8 }}>{sec.label.toUpperCase()} ({sec.items.length})</Mono>
+                          <button onClick={() => setLinkPicker(linkPicker&&linkPicker.projectId===pr.id&&linkPicker.kind===sec.kind ? null : {projectId:pr.id,kind:sec.kind})} style={{ background:"none", border:"none", color:C.soft, cursor:"pointer", fontSize:11, fontFamily:"'Space Mono',monospace", textDecoration:"underline" }}>+ Link</button>
+                        </div>
+                        {sec.items.length===0 ? (
+                          <Mono style={{ color:C.soft, display:"block" }}>Nothing linked yet.</Mono>
+                        ) : sec.items.map(it => (
+                          <div key={it.id} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"6px 0" }}>
+                            <div style={{ fontSize:12, color:C.text, textDecoration:sec.kind==="taskIds"&&it.done?"line-through":"none", opacity:sec.kind==="taskIds"&&it.done?.55:1 }}>{sec.render(it)}</div>
+                            <button onClick={()=>toggleProjectLink(pr.id,sec.kind,it.id)} style={{ background:"none", border:"none", color:C.soft, cursor:"pointer", fontSize:11 }}>Unlink</button>
+                          </div>
+                        ))}
+                        {linkPicker && linkPicker.projectId===pr.id && linkPicker.kind===sec.kind && (
+                          <div style={{ marginTop:8, background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:8, padding:9, maxHeight:160, overflowY:"auto" }}>
+                            {sec.pool.length===0 ? <Mono style={{ color:C.soft }}>None available — create one in {sec.label} first.</Mono> : sec.pool.map(it => (
+                              <label key={it.id} style={{ display:"flex", alignItems:"center", gap:8, padding:"5px 2px", cursor:"pointer" }}>
+                                <input type="checkbox" checked={(pr[sec.kind]||[]).includes(it.id)} onChange={()=>toggleProjectLink(pr.id,sec.kind,it.id)} style={{ accentColor:C.white, width:13, height:13 }} />
+                                <span style={{ fontSize:12, color:C.text }}>{sec.render(it)}</span>
+                              </label>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                </>
+                )}
+              </Card>
+              );
+            })}
+          </div>
+        )}
+
+        {/* ── WORKSPACE: VOICE MEMOS ── */}
+        {tab==="workspace" && workspaceSection==="memos" && (
+          <div style={{ animation:"fadeUp .4s ease" }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:18 }}>
+              <h2 style={{ fontSize:22, fontWeight:700, color:C.white, letterSpacing:-1 }}>Voice Memos</h2>
+              <Btn sm onClick={toggleVoiceMemo}>{recordingMemo ? "Stop Recording" : "+ Record"}</Btn>
+            </div>
+            {recordingMemo && (
+              <Card style={{ marginBottom:14, border:`1px solid ${C.negative}55`, textAlign:"center", padding:24 }}>
+                <WaveBar active color={C.negative} />
+                <Mono style={{ display:"block", color:C.negative, marginTop:10 }}>Recording…</Mono>
+              </Card>
+            )}
+            {voiceMemos.length===0 && !recordingMemo && (
+              <Card level="inset" style={{ textAlign:"center", padding:26, borderStyle:"dashed" }}>
+                <div style={{ fontSize:15, fontWeight:600, color:C.white, marginBottom:6 }}>No voice memos yet</div>
+                <Mono style={{ display:"block", color:C.soft, marginBottom:18 }}>Record a memo and KROFT will transcribe it automatically.</Mono>
+                <Btn sm onClick={toggleVoiceMemo}>+ Record</Btn>
+              </Card>
+            )}
+            {voiceMemos.map((m,i) => (
+              editingMemo && editingMemo.id===m.id ? (
+                <Card key={m.id} style={{ marginBottom:10, border:`1px solid ${C.soft}` }}>
+                  <Mono style={{ display:"block", color:C.white, marginBottom:11, letterSpacing:.8 }}>Edit memo</Mono>
+                  <Inp placeholder={`Voice Memo ${voiceMemos.length-i}`} value={editingMemo.title} onChange={e=>setEditingMemo(v=>({...v,title:e.target.value}))} style={{ marginBottom:9 }} />
+                  <Mono style={{ display:"block", color:C.soft, marginBottom:6, fontSize:9, letterSpacing:.8 }}>TRANSCRIPTION (edit if KROFT misheard something)</Mono>
+                  <textarea value={editingMemo.transcript} onChange={e=>setEditingMemo(v=>({...v,transcript:e.target.value}))} rows={4} style={{ width:"100%", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 14px", color:C.text, fontSize:12, fontFamily:"'Space Grotesk',sans-serif", outline:"none", resize:"vertical", boxSizing:"border-box", marginBottom:10, lineHeight:1.6 }} />
+                  <div style={{ display:"flex", gap:8 }}>
+                    <Btn sm v="outline" onClick={() => setEditingMemo(null)} style={{ flex:1 }}>Cancel</Btn>
+                    <Btn sm onClick={() => { setVoiceMemos(p=>p.map(x=>x.id===m.id?editingMemo:x)); setEditingMemo(null); toast("Memo updated."); }} style={{ flex:1 }}>Save</Btn>
+                  </div>
+                </Card>
+              ) : (
+              <Card key={m.id} {...longPress(() => setActionSheet(holdActions({ title:m.title || "Voice memo", subtitle:`${m.date} · ${m.time}${m.duration ? ` · ${fmtMemoLength(m.duration)}` : ""}`, onEdit:() => setEditingMemo({...m}), list:voiceMemos, setList:setVoiceMemos, id:m.id, deletedLabel:"Memo deleted.", after:() => scheduleBlobRevoke(m.id, m.url, setVoiceMemos) })))} style={{ marginBottom:10, WebkitTouchCallout:"none", WebkitUserSelect:"none", userSelect:"none", }}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:11, marginBottom:10 }}>
+                  <div style={{ flex:1, minWidth:0 }}>
+                    <div style={{ fontSize:13, fontWeight:700, color:C.white, marginBottom:2, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{m.title || `Voice Memo ${voiceMemos.length-i}`}</div>
+                    <Mono style={{ color:C.soft }}>{m.date} · {m.time}{m.duration ? ` · ${fmtMemoLength(m.duration)}` : ""}</Mono>
+                  </div>
+                  <div style={{ display:"flex", gap:6, flexShrink:0 }}>
+                    <Btn sm v="outline" onClick={() => setEditingMemo({...m})}>Edit</Btn>
+                    <Btn sm v="outline" onClick={() => shareContent({ title:m.title||"Voice Memo", text:`${m.title||"Voice Memo"}\n\n${m.transcript}` })}>Share</Btn>
+                  </div>
+                </div>
+                <audio controls src={m.url} style={{ width:"100%", marginBottom:10 }} />
+                <Mono style={{ display:"block", color:C.muted, marginBottom:4 }}>Transcription</Mono>
+                <div style={{ fontSize:12, color:C.soft, lineHeight:1.65 }}>{m.transcript}</div>
+              </Card>
+              )
+            ))}
+          </div>
+        )}
+
+        {/* ── WORKSPACE: REMINDERS ── */}
+        {tab==="workspace" && workspaceSection==="reminders" && (
+          <div style={{ animation:"fadeUp .4s ease" }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:18 }}>
+              <h2 style={{ fontSize:22, fontWeight:700, color:C.white, letterSpacing:-1 }}>Reminders</h2>
+              <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+                <Btn sm v="outline" onClick={suggestSmartReminder} disabled={suggestingReminder}>{suggestingReminder ? <><Spinner size={11} color={C.soft} thickness={2} />Thinking…</> : "AI Suggest"}</Btn>
+                <Btn sm v="outline" onClick={() => { if (!subscribed) { toast("Scheduled calls are a KROFT Plus feature."); return; } setShowScheduleCall(v=>!v); }}>
+                  {subscribed ? "Schedule a call" : "Schedule a call · Plus"}
+                </Btn>
+                <Btn sm onClick={() => setShowAddReminder(v=>!v)}>+ Add</Btn>
+              </div>
+            </div>
+            {showAddReminder && (
+              <Card style={{ marginBottom:13, border:`1px solid ${C.border}` }}>
+                <div style={{ fontSize:13, fontWeight:700, color:C.text, marginBottom:11 }}>New reminder</div>
+                <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+                  <Inp placeholder="Remind me to…" value={newReminder.text} onChange={e=>setNewReminder(v=>({...v,text:e.target.value}))} style={{ flex:2, minWidth:140 }} />
+                  <Inp placeholder="When e.g. Tomorrow 9am" value={newReminder.when} onChange={e=>setNewReminder(v=>({...v,when:e.target.value}))} style={{ flex:1, minWidth:140 }} />
+                  {contacts.length > 0 && <ContactSelect value={newReminder.contactId} onChange={id=>setNewReminder(v=>({...v,contactId:id}))} contacts={contacts} />}
+                  <Btn onClick={() => { if (!newReminder.text.trim()) return; setSmartReminders(p=>[{id:uid(),text:newReminder.text,when:newReminder.when||"No time set",aiSuggested:false,done:false,contactId:newReminder.contactId||null},...p]); setNewReminder({text:"",when:"",contactId:null}); setShowAddReminder(false); toast("Reminder added."); }}>Add</Btn>
+                </div>
+              </Card>
+            )}
+            {showScheduleCall && subscribed && (
+              <Card style={{ marginBottom:13, border:`1px solid ${C.accent}55` }}>
+                <div style={{ fontSize:13, fontWeight:700, color:C.text, marginBottom:11 }}>Schedule a call</div>
+                <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:8 }}>
+                  <Inp placeholder="What's it about?" value={newCall.title} onChange={e=>setNewCall(v=>({...v,title:e.target.value}))} style={{ flex:2, minWidth:160 }} />
+                  {/* Raw inputs, not Inp — Inp doesn't set colorScheme, and every other native
+                      date/time picker in the app sets it explicitly. Without it the picker
+                      renders with dark-on-dark text in dark mode, unreadable. */}
+                  <input type="date" min={todayISO()} value={newCall.date} onChange={e=>setNewCall(v=>({...v,date:e.target.value}))} style={{ flex:1, minWidth:130, background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 12px", color:C.text, fontSize:13, fontFamily:"'Space Grotesk',sans-serif", outline:"none", colorScheme:theme }} />
+                  <input type="time" value={newCall.time} onChange={e=>setNewCall(v=>({...v,time:e.target.value}))} style={{ flex:1, minWidth:110, background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 12px", color:C.text, fontSize:13, fontFamily:"'Space Grotesk',sans-serif", outline:"none", colorScheme:theme }} />
+                </div>
+                <Inp placeholder="Anything KROFT should say (optional)" value={newCall.note} onChange={e=>setNewCall(v=>({...v,note:e.target.value}))} style={{ width:"100%", boxSizing:"border-box", marginBottom:10 }} />
+                {/* Same honesty as every other notification here — this isn't a real phone call,
+                    and it can't reach a fully closed browser. Said plainly before scheduling
+                    rather than discovered when a call never comes. */}
+                <Mono style={{ display:"block", color:C.muted, lineHeight:1.6, marginBottom:10 }}>
+                  KROFT rings inside the app, not your phone's dialler — this only works while KROFT is open in a tab, including in the background.
+                </Mono>
+                <Btn sm onClick={() => {
+                  if (!newCall.title.trim() || !newCall.date || !newCall.time) { toast("Add what it's about, plus a date and time."); return; }
+                  setScheduledCalls(p => [{ id:uid(), title:newCall.title.trim(), note:newCall.note.trim(), date:newCall.date, time:newCall.time, status:"pending" }, ...p]);
+                  setNewCall({ title:"", note:"", date:todayISO(), time:"" });
+                  setShowScheduleCall(false);
+                  toast("Call scheduled.");
+                }}>Schedule</Btn>
+              </Card>
+            )}
+            {scheduledCalls.filter(c => c.status==="pending").length > 0 && (
+              <div style={{ marginBottom:16 }}>
+                <div style={{ fontSize:12, fontWeight:600, color:C.muted, marginBottom:8 }}>Scheduled calls</div>
+                {scheduledCalls.filter(c => c.status==="pending").sort((a,b) => `${a.date}${a.time}`.localeCompare(`${b.date}${b.time}`)).map(c => (
+                  <div key={c.id} {...longPress(() => setActionSheet(holdActions({
+                      title: c.title,
+                      subtitle: `${fmtDate(c.date)} at ${c.time}`,
+                      list: scheduledCalls, setList: setScheduledCalls, id: c.id,
+                      deletedLabel: "Call cancelled.",
+                    })))} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"9px 0", borderBottom:`1px solid ${C.div}`, WebkitTouchCallout:"none", WebkitUserSelect:"none", userSelect:"none" }}>
+                    <div style={{ minWidth:0 }}>
+                      <div style={{ fontSize:12.5, fontWeight:600, color:C.text, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{c.title}</div>
+                      <Mono style={{ color:C.muted }}>{fmtDate(c.date)} at {c.time}</Mono>
+                    </div>
+                    <NavIcon id="mic" size={15} color={C.accent} />
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {smartReminders.length===0 && !showAddReminder && (
+              <Card level="inset" style={{ textAlign:"center", padding:26, borderStyle:"dashed" }}>
+                <div style={{ fontSize:15, fontWeight:600, color:C.white, marginBottom:6 }}>No reminders yet</div>
+                <Mono style={{ display:"block", color:C.soft, marginBottom:18 }}>Add one yourself, or let KROFT suggest something useful.</Mono>
+                <div style={{ display:"flex", gap:9, justifyContent:"center" }}>
+                  <Btn sm onClick={() => setShowAddReminder(true)}>+ Add</Btn>
+                  <Btn sm v="outline" onClick={suggestSmartReminder} disabled={suggestingReminder}>{suggestingReminder ? <><Spinner size={11} color={C.soft} thickness={2} />Thinking…</> : "AI Suggest"}</Btn>
+                </div>
+              </Card>
+            )}
+            {[...smartReminders].sort((a,b)=>(a.done===b.done)?0:a.done?1:-1).map(r => (
+              editingReminder && editingReminder.id===r.id ? (
+                <Card key={r.id} style={{ marginBottom:9, border:`1px solid ${C.soft}` }}>
+                  <div style={{ fontSize:13, fontWeight:700, color:C.text, marginBottom:11 }}>Edit reminder</div>
+                  <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+                    <Inp placeholder="Remind me to…" value={editingReminder.text} onChange={e=>setEditingReminder(v=>({...v,text:e.target.value}))} style={{ flex:2, minWidth:140 }} />
+                    <Inp placeholder="When" value={editingReminder.when} onChange={e=>setEditingReminder(v=>({...v,when:e.target.value}))} style={{ flex:1, minWidth:140 }} />
+                    {contacts.length > 0 && <ContactSelect value={editingReminder.contactId} onChange={id=>setEditingReminder(v=>({...v,contactId:id}))} contacts={contacts} />}
+                  </div>
+                  <div style={{ display:"flex", gap:8, marginTop:9 }}>
+                    <Btn sm v="outline" onClick={() => setEditingReminder(null)} style={{ flex:1 }}>Cancel</Btn>
+                    <Btn sm onClick={() => { if (!editingReminder.text.trim()) return; setSmartReminders(p=>p.map(x=>x.id===r.id?editingReminder:x)); setEditingReminder(null); toast("Reminder updated."); }} style={{ flex:1 }}>Save</Btn>
+                  </div>
+                </Card>
+              ) : (
+              <Card key={r.id} {...longPress(() => setActionSheet(holdActions({ title:r.text, subtitle:r.when, onEdit:() => setEditingReminder({...r}), list:smartReminders, setList:setSmartReminders, id:r.id, deletedLabel:"Reminder removed." })))} style={{ marginBottom:9, opacity:r.done?.55:1, WebkitTouchCallout:"none", WebkitUserSelect:"none", userSelect:"none", }}>
+                <div style={{ display:"flex", alignItems:"center", gap:12 }}>
+                  <button onClick={() => setSmartReminders(p=>p.map(x=>x.id===r.id?{...x,done:!x.done}:x))} style={{ width:20, height:20, borderRadius:6, border:`1.5px solid ${r.done?C.white:C.soft}`, background:r.done?C.white:"transparent", cursor:"pointer", flexShrink:0, display:"flex", alignItems:"center", justifyContent:"center", color:C.black, fontSize:12, fontWeight:900 }}>
+                    {r.done ? "✓" : ""}
+                  </button>
+                  <div style={{ flex:1, minWidth:0 }}>
+                    <div style={{ display:"flex", alignItems:"center", gap:7, marginBottom:3, flexWrap:"wrap" }}>
+                      <div style={{ fontSize:13, fontWeight:600, color:C.white, textDecoration:r.done?"line-through":"none" }}>{r.text}</div>
+                      {r.aiSuggested && <Tag tone="accent">AI</Tag>}
+                      {r.contactId && contacts.find(c=>c.id===r.contactId) && <Tag>{contacts.find(c=>c.id===r.contactId).name}</Tag>}
+                    </div>
+                    <Mono style={{ color:C.soft }}>{r.when}</Mono>
+                  </div>
+                  <Btn sm v="outline" onClick={() => setEditingReminder({...r})}>Edit</Btn>
+                </div>
+              </Card>
+              )
+            ))}
+          </div>
+        )}
+
+        {tab==="workspace" && workspaceSection==="contacts" && (() => {
+          const q = contactSearch.trim().toLowerCase();
+          const searching = q.length > 0;
+          const filtered = q ? contacts.filter(c => c.name.toLowerCase().includes(q) || c.phone.includes(q) || c.email.toLowerCase().includes(q)) : contacts;
+          const business = filtered.filter(c => c.category==="business");
+          const family = filtered.filter(c => c.category==="family");
+
+          // Rendered as a plain function call (renderContact(c)), not <ContactRow c={c}/>, so it
+          // doesn't get a fresh component identity every render — using it as a JSX component
+          // would make React remount this subtree on every keystroke, dropping input focus
+          // while editing a contact's name/phone/email. Same convention as Tasks/Reminders/
+          // Appointments/Notes below, which render their edit forms inline for the same reason.
+          const renderContact = c => (
+            editingContact && editingContact.id===c.id ? (
+              <div key={c.id} style={{ padding:"12px 0", borderTop:`1px solid ${C.div}` }}>
+                <div style={{ fontSize:13, fontWeight:700, color:C.text, marginBottom:11 }}>Edit contact</div>
+                <div style={{ display:"flex", flexDirection:"column", gap:9 }}>
+                  <Inp placeholder="Name *" value={editingContact.name} onChange={e=>setEditingContact(v=>({...v,name:e.target.value}))} />
+                  <div style={{ display:"flex", gap:8 }}>
+                    <Inp placeholder="Phone" type="tel" inputMode="tel" value={editingContact.phone} onChange={e=>setEditingContact(v=>({...v,phone:e.target.value}))} style={{ flex:1 }} />
+                    <Inp placeholder="Email" type="email" inputMode="email" value={editingContact.email} onChange={e=>setEditingContact(v=>({...v,email:e.target.value}))} style={{ flex:1 }} />
+                  </div>
+                  <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
+                    <select value={editingContact.category} onChange={e=>setEditingContact(v=>({...v,category:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:8, padding:"7px 11px", color:C.text, fontSize:11, fontFamily:"'Space Mono',monospace", outline:"none" }}>
+                      <option value="business">Business</option>
+                      <option value="family">Family</option>
+                    </select>
+                    <Inp placeholder="Note (optional)" value={editingContact.note} onChange={e=>setEditingContact(v=>({...v,note:e.target.value}))} style={{ flex:1, minWidth:100 }} />
+                  </div>
+                  <div style={{ display:"flex", gap:8 }}>
+                    <Btn sm v="outline" onClick={() => setEditingContact(null)} style={{ flex:1 }}>Cancel</Btn>
+                    <Btn sm onClick={() => { if (!editingContact.name.trim()) return; setContacts(p=>p.map(x=>x.id===c.id?editingContact:x)); setEditingContact(null); toast("Contact updated."); }} style={{ flex:1 }}>Save</Btn>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              // Each contact renders as a plain row, not its own Card — the whole group sits in
+              // a single Business (or Family) card, with hairline dividers between people rather
+              // than a stack of nested cards inside a card.
+              <div key={c.id} {...longPress(() => setActionSheet({
+                  title: c.name,
+                  subtitle: [c.phone, c.email].filter(Boolean).join(" · ") || "No contact info",
+                  actions: [
+                    { label:"View activity", onClick:() => setContactActivity(c) },
+                    { label:"Edit", onClick:() => setEditingContact({...c}) },
+                    { label:"Delete", destructive:true, confirmText:"This removes their number, email and interaction history. Anything linked to them stays, but loses the link.", onClick:() => {
+                      const prev = contacts;
+                      setContacts(prev.filter(x=>x.id!==c.id));
+                      toast(`${c.name} deleted.`, () => setContacts(prev));
+                    }},
+                  ],
+                }))} style={{ padding:"12px 0", borderTop:`1px solid ${C.div}`, WebkitTouchCallout:"none", WebkitUserSelect:"none", userSelect:"none" }}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:11 }}>
+                  <div role="button" tabIndex={0} onClick={() => setContactActivity(c)} onKeyDown={e => { if (e.key==="Enter"||e.key===" ") { e.preventDefault(); setContactActivity(c); } }} style={{ flex:1, minWidth:0, cursor:"pointer" }}>
+                    <div style={{ fontSize:14, fontWeight:700, color:C.text, marginBottom:2, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{c.name}</div>
+                    <Mono style={{ color:C.soft, display:"block", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{[c.phone,c.email].filter(Boolean).join(" · ") || "No contact info"}</Mono>
+                    {c.note && <Mono style={{ color:C.muted, display:"block", marginTop:2, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{c.note}</Mono>}
+                    {(() => {
+                      const openTasks = tasks.filter(t => t.contactId===c.id && !t.done).length;
+                      const openReminders = smartReminders.filter(r => r.contactId===c.id && !r.done).length;
+                      const upcomingAppts = appts.filter(a => a.contactId===c.id).length;
+                      const linkedNotes = notes.filter(n => n.contactId===c.id).length;
+                      const linkedFiles = files.filter(f => f.contactId===c.id).length;
+                      const calls = (c.log||[]).length;
+                      if (!openTasks && !openReminders && !upcomingAppts && !linkedNotes && !linkedFiles && !calls) return null;
+                      return (
+                        <div style={{ display:"flex", gap:6, marginTop:6, flexWrap:"wrap" }}>
+                          {calls > 0 && <Tag tone="accent">{calls} interaction{calls!==1?"s":""}</Tag>}
+                          {openTasks > 0 && <Tag>{openTasks} open task{openTasks!==1?"s":""}</Tag>}
+                          {openReminders > 0 && <Tag>{openReminders} reminder{openReminders!==1?"s":""}</Tag>}
+                          {upcomingAppts > 0 && <Tag>{upcomingAppts} appointment{upcomingAppts!==1?"s":""}</Tag>}
+                          {linkedNotes > 0 && <Tag>{linkedNotes} note{linkedNotes!==1?"s":""}</Tag>}
+                          {linkedFiles > 0 && <Tag>{linkedFiles} file{linkedFiles!==1?"s":""}</Tag>}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                  <div style={{ display:"flex", gap:6, flexShrink:0 }}>
+                    {c.phone && <Btn sm onClick={() => { logContactAction(c.id, "call"); window.location.href = `tel:${c.phone}`; }}>Call</Btn>}
+                    {c.email && <Btn sm v="outline" onClick={() => { logContactAction(c.id, "email"); setComposeDraft({ to:c.email, subject:"", body:"" }); }}>Email</Btn>}
+                  </div>
+                </div>
+              </div>
+            )
+          );
+
+          return (
+            <div style={{ animation:"fadeUp .4s ease", paddingBottom:40 }}>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:18 }}>
+                <h2 style={{ fontSize:22, fontWeight:700, color:C.white, letterSpacing:-1 }}>Contacts</h2>
+                <Btn sm onClick={() => setShowAddContact(v=>!v)}>+ Add</Btn>
+              </div>
+              <Mono style={{ color:C.muted, display:"block", marginBottom:14 }}>Your own list, kept separate from your phone's contacts.</Mono>
+
+              {contacts.length > 3 && <Inp placeholder="Search contacts…" value={contactSearch} onChange={e=>setContactSearch(e.target.value)} style={{ marginBottom:14, width:"100%", boxSizing:"border-box" }} />}
+
+              {showAddContact && (
+                <Card style={{ marginBottom:14, border:`1px solid ${C.border}` }}>
+                  <div style={{ fontSize:13, fontWeight:700, color:C.text, marginBottom:11 }}>New contact</div>
+                  <div style={{ display:"flex", flexDirection:"column", gap:9 }}>
+                    <Inp placeholder="Name *" value={newContact.name} onChange={e=>setNewContact(v=>({...v,name:e.target.value}))} />
+                    <div style={{ display:"flex", gap:8 }}>
+                      <Inp placeholder="Phone" type="tel" inputMode="tel" value={newContact.phone} onChange={e=>setNewContact(v=>({...v,phone:e.target.value}))} style={{ flex:1 }} />
+                      <Inp placeholder="Email" type="email" inputMode="email" value={newContact.email} onChange={e=>setNewContact(v=>({...v,email:e.target.value}))} style={{ flex:1 }} />
+                    </div>
+                    <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
+                      <select value={newContact.category} onChange={e=>setNewContact(v=>({...v,category:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:8, padding:"7px 11px", color:C.text, fontSize:11, fontFamily:"'Space Mono',monospace", outline:"none" }}>
+                        <option value="business">Business</option>
+                        <option value="family">Family</option>
+                      </select>
+                      <Inp placeholder="Note (optional)" value={newContact.note} onChange={e=>setNewContact(v=>({...v,note:e.target.value}))} style={{ flex:1, minWidth:100 }} />
+                      <Btn sm onClick={() => {
+                        if (!newContact.name.trim()) return;
+                        setContacts(p=>[{ id:uid(), ...newContact }, ...p]);
+                        setNewContact({ name:"", phone:"", email:"", category:"business", note:"" });
+                        setShowAddContact(false);
+                        toast(`${newContact.name} added to Contacts.`);
+                      }}>Add</Btn>
+                    </div>
+                  </div>
+                </Card>
+              )}
+
+              {dataLoaded && contacts.length===0 && !showAddContact && (
+                <Card level="inset" style={{ textAlign:"center", padding:26, borderStyle:"dashed" }}>
+                  <div style={{ fontSize:15, fontWeight:600, color:C.white, marginBottom:6 }}>No contacts yet</div>
+                  <Mono style={{ display:"block", color:C.soft, marginBottom:18 }}>Save the people you deal with — clients, suppliers, family — and call them straight from here.</Mono>
+                  <Btn sm onClick={() => setShowAddContact(true)}>+ Add First Contact</Btn>
+                </Card>
+              )}
+
+              {contacts.length > 0 && (
+                <>
+                  {[{ key:"business", label:"Business", items:business }, { key:"family", label:"Family", items:family }].map(g => {
+                    // A search auto-opens any group that has a match, so results aren't hidden
+                    // behind a collapsed card the person would have to guess to open.
+                    const open = openContactGroups.includes(g.key) || (searching && g.items.length > 0);
+                    return (
+                    <Card key={g.key} level="raised" style={{ marginTop:14, padding:"14px 16px" }}>
+                      <div role="button" tabIndex={0}
+                        onClick={() => setOpenContactGroups(p => p.includes(g.key) ? p.filter(x=>x!==g.key) : [...p, g.key])}
+                        onKeyDown={e => { if (e.key==="Enter"||e.key===" ") { e.preventDefault(); setOpenContactGroups(p => p.includes(g.key) ? p.filter(x=>x!==g.key) : [...p, g.key]); } }}
+                        aria-expanded={open}
+                        style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:10, cursor:"pointer", paddingBottom:open?4:0 }}>
+                        <div style={{ minWidth:0 }}>
+                          <div style={{ fontSize:14, fontWeight:700, color:C.text }}>{g.label}</div>
+                          <Mono style={{ color:C.muted, display:"block", marginTop:2 }}>
+                            {g.items.length === 0 ? "No contacts saved" : `${g.items.length} contact${g.items.length!==1?"s":""}`}
+                          </Mono>
+                        </div>
+                        <div style={{ display:"flex", alignItems:"center", gap:9, flexShrink:0 }}>
+                          <Tag>{g.items.length}</Tag>
+                          <span aria-hidden="true" style={{ color:C.muted, fontSize:12, display:"inline-block", transform:open?"rotate(90deg)":"none", transition:"transform .18s" }}>›</span>
+                        </div>
+                      </div>
+                      {open && (g.items.length===0
+                        ? <Mono style={{ color:C.muted, display:"block", padding:"12px 0 2px", borderTop:`1px solid ${C.div}`, marginTop:8 }}>
+                            {q ? `No ${g.label.toLowerCase()} contacts match "${contactSearch}".` : `Nothing here yet — add someone with + Add above.`}
+                          </Mono>
+                        : g.items.map(c => renderContact(c)))}
+                    </Card>
+                    );
+                  })}
+                </>
+              )}
+            </div>
+          );
+        })()}
+
+        {tab==="home" && homeSection==="around" && (
+          <div style={{ animation:"fadeUp .4s ease" }}>
+
+            {/* Header: location + greeting */}
+            <div style={{ marginBottom:18 }}>
+              <div style={{ display:"flex", alignItems:"center", gap:7, marginBottom:6 }}>
+                <PinIcon size={14} color={C.border} />
+                <Mono style={{ color:C.soft, letterSpacing:.6 }}>
+                  {locationStatus==="granted" ? (locationLabel || "Locating…") : locationStatus==="requesting" ? "Finding your location…" : "Location not set"}
+                </Mono>
+              </div>
+              <h2 style={{ fontSize:22, fontWeight:700, color:C.white, letterSpacing:-1, marginBottom:4 }}>Around Me</h2>
+              <Mono style={{ color:C.muted }}>Discover what's around you.</Mono>
+            </div>
+
+            {/* Food & Restaurants — folded in here since it's the same "what's nearby" purpose as Around Me */}
+            <Mono style={{ display:"block", color:C.soft, marginBottom:9, letterSpacing:.8 }}>FOOD & RESTAURANTS</Mono>
+            {!hungry ? (
+              <Card style={{ marginBottom:16, border:`1px solid ${C.soft}` }} hi>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:12 }}>
+                  <div><div style={{ fontWeight:700, fontSize:14, color:C.white, marginBottom:3 }}>Feeling hungry?</div><Mono style={{ color:C.soft }}>KROFT suggests what to eat based on your schedule.</Mono></div>
+                  <Btn onClick={() => { setHungry(true); if (voiceReplies) speak(`Hey ${user.name||"there"}, I'd suggest the Harvest Bowl from Sweetgreen. Light, healthy, just 0.1 miles away.`); toast("KROFT pick: Harvest Bowl at Sweetgreen"); }}>Yes, I'm hungry</Btn>
+                </div>
+              </Card>
+            ) : (
+              <Card style={{ marginBottom:14, border:`1px solid ${C.soft}` }} hi>
+                <Mono style={{ display:"block", color:C.white, marginBottom:5, letterSpacing:.8 }}>KROFT'S TOP PICK</Mono>
+                <div style={{ fontSize:16, fontWeight:700, color:C.white, marginBottom:4 }}>Harvest Bowl · Sweetgreen</div>
+                <div style={{ fontSize:13, color:C.soft, lineHeight:1.6, marginBottom:12 }}>Light, energising, 0.1 mi away. High protein, no post-lunch crash.</div>
+                <div style={{ display:"flex", gap:8 }}><Btn sm onClick={() => setUberDest({name:"Sweetgreen",dist:"0.1 mi"})}>Uber there</Btn><Btn sm v="outline" onClick={() => setHungry(false)}>Reset</Btn></div>
+              </Card>
+            )}
+            {[{id:1,name:"Sweetgreen",cuisine:"Healthy Bowls",dist:"0.1 mi",rating:"4.5",suggest:"Harvest Bowl",why:"Light energy before any meeting."},{id:2,name:"The Capital Grille",cuisine:"Steakhouse",dist:"0.3 mi",rating:"4.8",suggest:"Filet Mignon",why:"Great for client dinners."},{id:3,name:"Nobu",cuisine:"Japanese Fusion",dist:"0.5 mi",rating:"4.9",suggest:"Black Cod Miso",why:"Celebrate a great week."}].map(r => (
+              <Card key={r.id} style={{ marginBottom:11 }}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", flexWrap:"wrap", gap:10 }}>
+                  <div>
+                    <div style={{ display:"flex", alignItems:"center", gap:9, marginBottom:5 }}><span style={{ fontWeight:700, fontSize:14, color:C.white }}>{r.name}</span><Tag tone="positive">{r.rating}</Tag></div>
+                    <Mono style={{ display:"block", color:C.soft, marginBottom:3 }}>{r.cuisine} · {r.dist}</Mono>
+                    <div style={{ fontSize:12, color:C.soft }}>Suggested: <span style={{ color:C.white, fontWeight:700 }}>{r.suggest}</span></div>
+                    <Mono style={{ display:"block", color:C.soft, marginTop:2, fontStyle:"italic" }}>{r.why}</Mono>
+                  </div>
+                  <div style={{ display:"flex", gap:7, flexWrap:"wrap" }}>
+                    <Btn sm onClick={() => { if (voiceReplies) speak(`${r.suggest} at ${r.name}. ${r.why}`); toast(`KROFT: ${r.why}`); }}>Suggest</Btn>
+                    <Btn sm v="outline" onClick={() => setUberDest({name:r.name,dist:r.dist})}>Uber</Btn>
+                    <Btn sm v="outline" onClick={() => { setTab("nova"); setAiInput(`Tell me about ${r.name} and what I should order`); }}>Ask</Btn>
+                  </div>
+                </div>
+              </Card>
+            ))}
+
+            <Mono style={{ display:"block", color:C.soft, margin:"22px 0 9px", letterSpacing:.8 }}>Nearby places</Mono>
+
+            {/* Permission prompt — first use or denied */}
+            {locationStatus!=="granted" && (
+              <Card style={{ marginBottom:16, border:`1px solid ${locationStatus==="denied"?C.border:C.cardB}` }}>
+                {locationStatus==="idle" && (
+                  <>
+                    <div style={{ fontWeight:700, fontSize:14, color:C.white, marginBottom:6 }}>Turn on location</div>
+                    <Mono style={{ display:"block", color:C.muted, lineHeight:1.7, marginBottom:14 }}>
+                      KROFT uses your device's GPS to find restaurants, pharmacies, ATMs and other useful places nearby. Your location is only used to power this search.
+                    </Mono>
+                    <Btn onClick={requestLocation}>Enable location</Btn>
+                  </>
+                )}
+                {locationStatus==="requesting" && (
+                  <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+                    <Spinner size={16} color={C.white} thickness={2} />
+                    <Mono style={{ color:C.soft }}>Waiting for permission…</Mono>
+                  </div>
+                )}
+                {locationStatus==="denied" && (
+                  <>
+                    <div style={{ fontWeight:700, fontSize:14, color:C.white, marginBottom:6 }}>Location access denied</div>
+                    <Mono style={{ display:"block", color:C.muted, lineHeight:1.7, marginBottom:14 }}>
+                      {aroundError || "KROFT can't find nearby places without location access."} You can enable it any time from your device's Settings for this browser or app, then try again here.
+                    </Mono>
+                    <Btn v="outline" onClick={requestLocation}>Try again</Btn>
+                  </>
+                )}
+                {locationStatus==="error" && (
+                  <>
+                    <div style={{ fontWeight:700, fontSize:14, color:C.white, marginBottom:6 }}>Couldn't get your location</div>
+                    <Mono style={{ display:"block", color:C.muted, lineHeight:1.7, marginBottom:14 }}>{aroundError}</Mono>
+                    <Btn v="outline" onClick={requestLocation}>Retry</Btn>
+                  </>
+                )}
+              </Card>
+            )}
+
+            {/* Search bar + AI natural language search */}
+            <div style={{ display:"flex", gap:8, marginBottom:16 }}>
+              <Inp
+                placeholder="Search nearby places…"
+                value={aroundQuery}
+                onChange={e => setAroundQuery(e.target.value)}
+                onKeyDown={e => { if (e.key==="Enter" && aroundQuery.trim()) searchNearby(aroundQuery, true); }}
+                style={{ flex:1 }}
+              />
+              <Btn onClick={() => aroundQuery.trim() && searchNearby(aroundQuery, true)} disabled={!aroundQuery.trim() || aroundLoading}>Search</Btn>
+            </div>
+
+            {/* Category grid */}
+            <Mono style={{ display:"block", color:C.soft, marginBottom:9, letterSpacing:.8 }}>Browse by category</Mono>
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill, minmax(140px, 1fr))", gap:9, marginBottom:20 }}>
+              {CATEGORIES.map(c => (
+                <button
+                  key={c.key}
+                  onClick={() => { setAroundCategory(c.key); setAroundQuery(""); searchNearby(c.label); }}
+                  style={{
+                    background: aroundCategory===c.key ? C.white : C.card,
+                    border:`1px solid ${aroundCategory===c.key ? C.white : C.cardB}`,
+                    borderRadius:12, padding:"16px 14px", cursor:"pointer", textAlign:"left",
+                    display:"flex", flexDirection:"column", gap:10, transition:"all .16s",
+                    fontFamily:"'Space Grotesk',sans-serif",
+                  }}
+                  onMouseEnter={e => { if (aroundCategory!==c.key) { e.currentTarget.style.borderColor=C.soft; e.currentTarget.style.background=C.hover; } }}
+                  onMouseLeave={e => { if (aroundCategory!==c.key) { e.currentTarget.style.borderColor=C.cardB; e.currentTarget.style.background=C.card; } }}
+                >
+                  <PinIcon size={16} color={aroundCategory===c.key ? C.black : "#22C55E"} />
+                  <span style={{ fontSize:12, fontWeight:700, color:aroundCategory===c.key ? C.black : C.white }}>{c.label}</span>
+                </button>
+              ))}
+            </div>
+
+            {/* AI natural-language examples */}
+            <Mono style={{ display:"block", color:C.soft, marginBottom:8, letterSpacing:.8 }}>Or ask naturally</Mono>
+            <div style={{ display:"flex", flexWrap:"wrap", gap:7, marginBottom:22 }}>
+              {["Find restaurants near me","Nearest pharmacy open now","Best café for remote work","Closest ATM","Nearby supermarkets","Hotels near me"].map(q => (
+                <button key={q} onClick={() => { setAroundQuery(q); searchNearby(q, true); }}
+                  style={{ background:C.card, border:`1px solid ${C.cardB}`, borderRadius:7, padding:"6px 12px", cursor:"pointer", color:C.soft, fontSize:11, fontFamily:"'Space Mono',monospace" }}
+                  onMouseEnter={e=>{e.target.style.borderColor=C.soft;e.target.style.color=C.white;}}
+                  onMouseLeave={e=>{e.target.style.borderColor=C.cardB;e.target.style.color=C.border;}}>
+                  {q}
+                </button>
+              ))}
+            </div>
+
+            {/* Loading state */}
+            {aroundLoading && (
+              <Card style={{ textAlign:"center", padding:24, marginBottom:16 }}>
+                <div style={{ margin:"0 auto 14px", display:"flex", justifyContent:"center" }}><Spinner size={24} color={C.white} thickness={2} /></div>
+                <Mono style={{ color:C.soft }}>Searching nearby…</Mono>
+              </Card>
+            )}
+
+            {/* Error state */}
+            {!aroundLoading && aroundError && aroundSearched && (
+              <Card style={{ textAlign:"center", padding:24, marginBottom:16, border:`1px solid ${C.border}` }}>
+                <div style={{ fontSize:14, fontWeight:600, color:C.white, marginBottom:6 }}>Nothing found</div>
+                <Mono style={{ display:"block", color:C.muted }}>{aroundError}</Mono>
+              </Card>
+            )}
+
+            {/* Empty state — no search performed yet */}
+            {!aroundLoading && !aroundSearched && locationStatus==="granted" && (
+              <Card style={{ textAlign:"center", padding:24, marginBottom:16 }}>
+                <div style={{ fontSize:14, fontWeight:600, color:C.white, marginBottom:6 }}>Pick a category or ask KROFT</div>
+                <Mono style={{ display:"block", color:C.muted }}>Results will appear here once you search.</Mono>
+              </Card>
+            )}
+
+            {/* Results list */}
+            {!aroundLoading && aroundResults.length>0 && (
+              <>
+                <Mono style={{ display:"block", color:C.muted, marginBottom:11, letterSpacing:.8 }}>{aroundResults.length} PLACE{aroundResults.length!==1?"S":""} NEARBY</Mono>
+                {aroundResults.map(p => (
+                  <Card key={p.id} style={{ marginBottom:10 }}>
+                    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:12 }}>
+                      <div style={{ flex:1, minWidth:0 }}>
+                        <div style={{ fontWeight:700, fontSize:14, color:C.white, marginBottom:4 }}>{p.name}</div>
+                        <Mono style={{ display:"block", color:C.muted, marginBottom:2, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{p.address}</Mono>
+                        <Mono style={{ color:C.soft }}>{distanceFrom(p.lat, p.lng)} away</Mono>
+                      </div>
+                      <div style={{ display:"flex", flexDirection:"column", gap:6, flexShrink:0 }}>
+                        <Btn sm onClick={() => setUberDest({ name:p.name, location:p.address })}>Uber</Btn>
+                        <Btn sm v="outline" onClick={() => { setTab("nova"); setAiInput(`Tell me more about ${p.name} near me`); }}>Ask</Btn>
+                      </div>
+                    </div>
+                  </Card>
+                ))}
+              </>
+            )}
+          </div>
+        )}
+
+        {tab==="wellness" && (() => {
+          const wTone = wellness>80?"positive":wellness>60?"accent":"warning";
+          const wColor = {positive:C.positive,accent:C.accent,warning:C.warning}[wTone];
+          return (
+          <div style={{ animation:"fadeUp .4s ease" }}>
+            <h2 style={{ fontSize:22, fontWeight:700, color:C.white, letterSpacing:-1, marginBottom:18 }}>Wellness</h2>
+            <Card style={{ marginBottom:14, border:`1px solid ${wColor}55` }}>
+              <Mono style={{ display:"block", color:wColor, letterSpacing:.8, marginBottom:9 }}>Wellness score today</Mono>
+              <div style={{ fontSize:58, fontWeight:700, color:wColor, letterSpacing:-3, lineHeight:1, marginBottom:8 }}>{wellness}<span style={{ fontSize:20, color:C.muted }}>/100</span></div>
+              <div style={{ background:C.surface, borderRadius:99, height:6, overflow:"hidden", marginBottom:14 }}><div style={{ height:"100%", width:`${wellness}%`, background:wColor, borderRadius:99, transition:"width .8s ease" }} /></div>
+              <div style={{ fontSize:13, color:C.soft, marginBottom:16 }}>{wellness>80?"You are thriving today.":wellness>60?"Doing well — watch your stress.":"Take a break — your body needs it."}</div>
+              <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+                <Btn sm onClick={() => { const tip = rand(wellnessTips()).text; if (voiceReplies) speak(tip); toast(tip); }}>Get tip</Btn>
+                <Btn sm v="outline" onClick={() => { speak(`Wellness score: ${wellness} out of 100.`); toast("Reading score…"); }}>Read score</Btn>
+                <Btn sm v="outline" disabled={selfCare.breaks >= SELF_CARE_CAP.breaks}
+                  onClick={() => { setWellness(s=>Math.min(100,s+5)); setSelfCare(c=>({...c, breaks:c.breaks+1})); toast("Break logged. Wellness +5"); }}>
+                  {selfCare.breaks >= SELF_CARE_CAP.breaks ? "Breaks logged ✓" : `Took a break (${selfCare.breaks}/${SELF_CARE_CAP.breaks})`}
+                </Btn>
+                <Btn sm v="outline" disabled={selfCare.water >= SELF_CARE_CAP.water}
+                  onClick={() => { setWellness(s=>Math.min(100,s+3)); setSelfCare(c=>({...c, water:c.water+1})); toast("Water logged. Wellness +3"); }}>
+                  {selfCare.water >= SELF_CARE_CAP.water ? "Water logged ✓" : `Had water (${selfCare.water}/${SELF_CARE_CAP.water})`}
+                </Btn>
+              </div>
+            </Card>
+            <Card style={{ marginBottom:14 }}>
+              <Mono style={{ display:"block", color:C.muted, letterSpacing:.8, marginBottom:13 }}>Mood log</Mono>
+              {moodLog.length===0 ? <Mono style={{ color:C.soft, display:"block", padding:"8px 0" }}>No mood entries yet. Set your mood from the Overview tab.</Mono> : (() => {
+                // Grouped by day, newest first. A flat list of times alone was ambiguous once
+                // the log started persisting across days.
+                const byDay = {};
+                moodLog.forEach(m => { const d = m.date || "undated"; (byDay[d] = byDay[d] || []).push(m); });
+                const allDays = Object.keys(byDay).sort().reverse();
+                const days = allDays.slice(0, 7);
+                const today = todayISO();
+                return [
+                  ...days.map(d => (
+                  <div key={d} style={{ marginBottom:10 }}>
+                    <Mono style={{ display:"block", color:C.muted, marginBottom:5 }}>{d === today ? "Today" : d === "undated" ? "Earlier" : fmtDate(d)}</Mono>
+                    {byDay[d].slice().reverse().map(m => {
+                      const mTone = {calm:"positive",happy:"accent",stressed:"warning",angry:"negative"}[m.mood];
+                      const mColor = {positive:C.positive,accent:C.accent,warning:C.warning,negative:C.negative}[mTone]||C.border;
+                      return (
+                        // Press-and-hold to remove, matching every other list in the app. Mood
+                        // entries were the one thing with no way to correct a mistaken tap.
+                        <div key={m.id} {...longPress(() => setActionSheet({
+                            title:`${m.mood} at ${m.time}`,
+                            subtitle: d === today ? "Logged today" : fmtDate(d),
+                            actions:[{ label:"Delete entry", destructive:true, confirmText:"This removes the entry from your mood history. Your wellness score isn't affected.", onClick:() => {
+                              const prev = moodLog;
+                              setMoodLog(prev.filter(x => x.id !== m.id));
+                              toast("Mood entry deleted.", () => setMoodLog(prev));
+                            }}],
+                          }))}
+                          style={{ display:"flex", alignItems:"center", gap:12, padding:"7px 0", borderBottom:`1px solid ${C.div}`, WebkitTouchCallout:"none", WebkitUserSelect:"none", userSelect:"none" }}>
+                          <Dot color={mColor} />
+                          <Mono style={{ color:C.muted, minWidth:60 }}>{m.time}</Mono>
+                          <Tag tone={mTone}>{m.mood}</Tag>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  )),
+                  // The list is capped at a week so it stays scannable; say so rather than
+                  // letting older entries appear to have vanished.
+                  allDays.length > 7 && (
+                    <Mono key="more" style={{ display:"block", color:C.muted, padding:"6px 0 2px" }}>
+                      Showing the last 7 days. {allDays.length - 7} earlier {allDays.length - 7 === 1 ? "day is" : "days are"} still saved.
+                    </Mono>
+                  ),
+                ];
+              })()}
+            </Card>
+            <Card>
+              <Mono style={{ display:"block", color:C.muted, letterSpacing:.8, marginBottom:13 }}>Daily recommendations</Mono>
+              {wellnessTips().map((r,i) => (
+                <div key={i} className="row" style={{ display:"flex", alignItems:"flex-start", gap:12, padding:"11px 4px", borderBottom:`1px solid ${C.div}`, borderRadius:6 }}>
+                  <div style={{ flex:1, minWidth:0 }}>
+                    <div style={{ fontSize:12.5, color:C.text, lineHeight:1.6 }}>{r.text}</div>
+                    {/* Says why this appeared, so it reads as a response to their day rather
+                        than a generic tip pulled from a list. */}
+                    <Mono style={{ display:"block", color:C.muted, marginTop:3 }}>{r.why}</Mono>
+                  </div>
+                  <button onClick={() => speak(r.text)} aria-label="Read aloud" title="Read aloud"
+                    style={{ background:"none", border:"none", padding:4, cursor:"pointer", flexShrink:0, display:"flex", alignItems:"center" }}>
+                    <NavIcon id="play" size={14} color={C.muted} />
+                  </button>
+                </div>
+              ))}
+            </Card>
+          </div>
+          );
+        })()}
+
+        {tab==="nova" && (
+          <div style={{ animation:"fadeUp .4s ease" }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:4 }}>
+              <h2 style={{ fontSize:22, fontWeight:700, color:C.white, letterSpacing:-1 }}>Ask Kroft</h2>
+              <div style={{ display:"flex", gap:7 }}>
+                <button onClick={() => setShowBriefing(true)} className="hbtn" style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:8, padding:"6px 12px", cursor:"pointer", color:C.soft, fontSize:11, fontWeight:700 }}>Brief</button>
+                <button onClick={() => { setVoiceOpen(true); setVoiceState("idle"); setVoiceError(""); }} className="hbtn" style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:8, padding:"6px 12px", cursor:"pointer", display:"flex", alignItems:"center", gap:6, color:C.soft, fontSize:11, fontWeight:700 }}>
+                  <NavIcon id="mic" size={13} color={C.soft} />Voice
+                </button>
+              </div>
+            </div>
+            {subscribed ? (
+              <Mono style={{ display:"block", color:C.soft, marginBottom:16 }}>Ask anything — finance, schedule, general knowledge, advice, or just chat. Unlimited on KROFT Plus.</Mono>
+            ) : (
+              <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:16, flexWrap:"wrap", gap:8 }}>
+                <Mono style={{ color:C.soft }}>
+                  {Math.max(0, FREE_DAILY_MESSAGE_LIMIT - dailyMessageCount)} of {FREE_DAILY_MESSAGE_LIMIT} free messages left today
+                </Mono>
+                {dailyMessageCount >= FREE_DAILY_MESSAGE_LIMIT - 3 && (
+                  <button onClick={() => setTab("profile")} style={{ background:"none", border:"none", color:C.white, textDecoration:"underline", cursor:"pointer", fontSize:11, fontWeight:700, fontFamily:"'Space Grotesk',sans-serif" }}>
+                    Upgrade to Plus
+                  </button>
+                )}
+              </div>
+            )}
+            <Card style={{ marginBottom:13, padding:0, overflow:"hidden", border:`1px solid ${C.border}` }}>
+              <div ref={chatScrollRef} style={{ maxHeight:460, overflowY:"auto", padding:"16px", display:"flex", flexDirection:"column", gap:12 }}>
+                {aiMessages.map((m,i) => (
+                  <div key={m.id || i} style={{ display:"flex", flexDirection:"column", alignItems:m.role==="user"?"flex-end":"flex-start", animation:"fadeUp .3s ease" }}>
+                    <div style={{ background:m.role==="user"?C.white:C.surface, border:`1px solid ${m.role==="user"?C.soft:C.cardB}`, borderRadius:m.role==="user"?"14px 14px 3px 14px":"14px 14px 14px 3px", padding:"10px 14px", maxWidth:"80%" }}>
+                      {m.role==="assistant" && <Mono style={{ display:"block", color:C.muted, fontSize:9, letterSpacing:.8, marginBottom:5 }}>KROFT</Mono>}
+                      <div style={{ fontSize:13, lineHeight:1.75, color:m.failed?C.negative:(m.role==="user"?C.black:C.text), whiteSpace:"pre-wrap" }}>
+                        {m.content}
+                        {/* Blinking caret while tokens are still arriving, so a paused stream
+                            reads as "still writing" rather than as a finished short answer. */}
+                        {m.streaming && <span style={{ display:"inline-block", width:7, height:14, marginLeft:2, verticalAlign:"text-bottom", background:C.muted, animation:"pulse 1s ease-in-out infinite" }} />}
+                      </div>
+                      {m.contactAction && !m.contactActionResolved && !m.streaming && (
+                        <div style={{ display:"flex", gap:8, marginTop:10, flexWrap:"wrap" }}>
+                          <Btn sm onClick={() => {
+                            runContactAction(m.contactAction);
+                            setAiMessages(p => p.map(x => x.id===m.id ? {...x, contactActionResolved:true} : x));
+                          }}>{{ email:`Email ${m.contactAction.contact.name}`, call:`Call ${m.contactAction.contact.name}`, text:`Text ${m.contactAction.contact.name}` }[m.contactAction.type]}</Btn>
+                        </div>
+                      )}
+                    </div>
+                    {m.role==="assistant" && !m.streaming && (
+                      <div style={{ display:"flex", gap:2, marginTop:5, alignItems:"center" }}>
+                        {[
+                          { id:"copy", label:"Copy", onClick:() => copyMsg(m.content) },
+                          { id:"share", label:"Share", onClick:() => shareMsg(m.content) },
+                          { id:"play", label:"Read aloud", onClick:() => { if (window.speechSynthesis?.speaking) { stopSpeaking(); } else { speak(m.content); } } },
+                          { id:"thumbsUp", label:"Good response", onClick:() => setMsgFeedback(i,"up"), active:m.feedback==="up" },
+                          { id:"thumbsDown", label:"Bad response", onClick:() => setMsgFeedback(i,"down"), active:m.feedback==="down" },
+                          // Retry truncates aiMessages to this index and regenerates from there,
+                          // discarding everything after it — only safe on the most recent reply,
+                          // so it's hidden on earlier ones to avoid silently deleting later
+                          // conversation history.
+                          ...(i === aiMessages.length - 1 ? [{ id:"retry", label:"Retry", onClick:() => regenerateReply(i), disabled:aiLoading }] : []),
+                        ].map(a => (
+                          <button key={a.id} onClick={a.onClick} disabled={a.disabled} title={a.label} aria-label={a.label}
+                            style={{ background:"none", border:"none", padding:6, borderRadius:8, cursor:a.disabled?"not-allowed":"pointer", opacity:a.disabled?.4:1, display:"flex", alignItems:"center", justifyContent:"center" }}>
+                            <NavIcon id={a.id} size={14} color={a.active?C.accent:C.muted} />
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+                {aiLoading && !aiMessages.some(m => m.streaming && m.content) && (
+                  <div style={{ display:"flex", alignItems:"center", gap:9 }}>
+                    <Mono style={{ color:C.muted }}>KROFT</Mono>
+                    <div style={{ display:"flex", gap:4 }}>{[0,1,2].map(i => <div key={i} style={{ width:6, height:6, borderRadius:"50%", background:C.white, animation:`pulse 1.2s ease-in-out ${i*.2}s infinite` }} />)}</div>
+                  </div>
+                )}
+                <div ref={chatEnd} />
+              </div>
+              <div style={{ borderTop:`1px solid ${C.cardB}`, padding:"12px 16px", display:"flex", gap:8, alignItems:"center" }}>
+                <Inp value={aiInput} onChange={e => setAiInput(e.target.value)} onKeyDown={e => e.key==="Enter"&&!e.shiftKey&&askKroft()} placeholder="Message KROFT…" style={{ flex:1, fontSize:13 }} />
+                {/* One button in one place: the mic sits there until you start typing, then it
+                    becomes Send. Showing both at once meant a permanently greyed-out Send
+                    taking up space next to a mic you'd use far more often. */}
+                {/* Usage is visible where messages are actually spent, and only once it starts
+                    to matter. The meter previously lived in Profile alone, so the first sign of
+                    a limit was hitting it mid-conversation. */}
+                {!subscribed && messagesLeft() <= 5 && (
+                  <Mono style={{ color: messagesLeft() === 0 ? C.negative : C.muted, flexShrink:0, alignSelf:"center" }}>
+                    {messagesLeft() === 0 ? `resets in ${resetsIn()}` : `${messagesLeft()} left`}
+                  </Mono>
+                )}
+                {aiLoading ? (
+                  <button onClick={stopReply} aria-label="Stop generating" title="Stop"
+                    style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:"50%", width:44, height:44, flexShrink:0, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>
+                    <span style={{ width:12, height:12, borderRadius:3, background:C.text, display:"block" }} />
+                  </button>
+                ) : aiInput.trim() ? (
+                  <button onClick={() => askKroft()} aria-label="Send message" title="Send"
+                    style={{ background:C.text, border:"none", borderRadius:"50%", width:44, height:44, flexShrink:0, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", animation:"pop .18s ease" }}>
+                    <NavIcon id="send" size={19} color={C.card} />
+                  </button>
+                ) : (
+                  <button onClick={() => { setVoiceOpen(true); setVoiceState("idle"); setVoiceError(""); }} aria-label="Open voice mode" title="Voice mode"
+                    style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:"50%", width:44, height:44, flexShrink:0, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>
+                    <NavIcon id="mic" size={19} color={C.text} />
+                  </button>
+                )}
+              </div>
+            </Card>
+            {/* Nothing previously told anyone that KROFT can read their actual data or write to it —
+                the two things that separate it from any generic chatbot. The prompts below are
+                grouped so both are visible the first time someone opens the tab. */}
+            <div style={{ fontSize:12, fontWeight:600, color:C.muted, marginBottom:6 }}>Ask about your data</div>
+            <div style={{ display:"flex", flexWrap:"wrap", gap:7 }}>
+              {["What's on my schedule today?","Where is my money going?","What should I focus on?","How did this month compare?","Summarise my open tasks","How's my wellness today?"].map(q => (
+                <button key={q} onClick={() => askKroft(q)} style={{ background:C.card, border:`1px solid ${C.cardB}`, borderRadius:7, padding:"6px 12px", cursor:"pointer", color:C.soft, fontSize:11, fontFamily:"'Space Mono',monospace" }} onMouseEnter={e=>{e.target.style.borderColor=C.soft;e.target.style.color=C.white;}} onMouseLeave={e=>{e.target.style.borderColor=C.cardB;e.target.style.color=C.border;}}>
+                  {q}
+                </button>
+              ))}
+            </div>
+            <div style={{ fontSize:12, fontWeight:600, color:C.muted, margin:"14px 0 6px" }}>Or tell it to do something</div>
+            <div style={{ display:"flex", flexWrap:"wrap", gap:7 }}>
+              {["Log a 5,000 fuel expense","Remind me to call the bank tomorrow","Add a task to send the invoice","Schedule a meeting Friday at 10"].map(q => (
+                <button key={q} onClick={() => askKroft(q)} style={{ background:C.card, border:`1px solid ${C.accent}44`, borderRadius:7, padding:"6px 12px", cursor:"pointer", color:C.soft, fontSize:11, fontFamily:"'Space Mono',monospace" }}>
+                  {q}
+                </button>
+              ))}
+            </div>
+            <Mono style={{ display:"block", color:C.muted, marginTop:10, lineHeight:1.6 }}>
+              KROFT can see your finances, schedule, tasks and contacts, and can add things for you. It can't delete or edit — that stays with you.
+            </Mono>
+          </div>
+        )}
+
+        {tab==="profile" && (
+          <div style={{ animation:"fadeUp .4s ease" }}>
+            <ProfileSection
+              user={user}
+              onEditPreferences={() => setStep("prefs")}
+              onExportData={exportData}
+              onImportData={importData}
+              notifPermission={notifPermission}
+              notifPrefs={notifPrefs}
+              onEnableNotifications={async () => {
+                const result = await requestNotifyPermission();
+                setNotifPermission(result);
+                if (result === "granted") { sendNotification("Notifications on", "KROFT will let you know when something's due.", "kroft:welcome"); toast("Notifications enabled."); }
+                else if (result === "denied") toast("Notifications were blocked.");
+              }}
+              onSetNotifPref={(k, v) => setNotifPrefs(p => ({ ...p, [k]: v }))}
+              onTestNotification={() => {
+                const ok = sendNotification("Test from KROFT", "If you can see this, notifications are working.", "kroft:test");
+                toast(ok ? "Test sent." : "Couldn't send — check your browser settings.");
+              }}
+              aiExtrasCount={aiExtrasCount}
+              extrasLimit={FREE_DAILY_EXTRAS_LIMIT}
+              monthlyReportCount={monthlyReportCount}
+              reportLimit={FREE_MONTHLY_REPORT_LIMIT}
+              reportsLeftThisMonth={reportsLeftThisMonth()}
+              voiceTurnsCount={voiceTurnsCount}
+              voiceLimit={FREE_DAILY_VOICE_LIMIT}
+              onUpgradeFromNotifs={() => { setSubscribed(true); toast("KROFT Plus enabled — no charge, this build has no payment set up."); }}
+              onSignOut={() => {
+                // Signing out previously only flipped `step` back to the login screen — every
+                // bit of data stayed live in memory, so returning to the dashboard showed the
+                // previous session's chat, finances and contacts untouched. Clear the
+                // session-scoped state and stop any speech still playing.
+                if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+                setStep("login"); setTab("home"); setHomeSection("overview"); setWorkspaceSection(null);
+                setAiMessages([]); setAiInput(""); setTranscript("");
+                setLoginPw(""); setFpSuccess(false); setLoginError(""); setLoginAttempts(0);
+                setActionSheet(null); setContactActivity(null); setComposeDraft(null);
+                setOpenEmail(null); setOpenNote(null); setOpenAppt(null);
+                setEditingEntry(null); setEditingContact(null);
+                setShowBriefing(false);
+                toast("Signed out.");
+              }}
+              theme={theme}
+              onToggleTheme={setTheme}
+              toast={toast}
+              subscribed={subscribed}
+              onSetSubscribed={setSubscribed}
+              dailyMessageCount={dailyMessageCount}
+              freeLimit={FREE_DAILY_MESSAGE_LIMIT}
+              voiceReplies={voiceReplies}
+              onSetVoiceReplies={setVoiceReplies}
+              proactiveInsights={proactiveInsights}
+              onSetProactiveInsights={setProactiveInsights}
+              onSetupBiometric={setupBiometric}
+              onRemoveBiometric={removeBiometric}
+              usageStats={{
+                totalMessages: aiMessages.filter(m => m.role === "user").length,
+                appts: appts.length,
+                financeEntries: income.length + expenses.length,
+                notes: notes.length,
+                tasks: tasks.length,
+              }}
+            />
+          </div>
+        )}
+      </main>
+
+      {/* Bottom navigation — dark minimal pill, rounded icons, subtle glow on the active tab */}
+      <nav style={{ position:"fixed", left:0, right:0, bottom:0, zIndex:250, display:"flex", justifyContent:"center", padding:"0 16px 18px", pointerEvents:"none" }}>
+        <div style={{ display:"flex", alignItems:"center", gap:4, padding:"8px", borderRadius:28, background:theme==="dark"?"rgba(19,19,19,.82)":"rgba(255,255,255,.88)", backdropFilter:"blur(20px)", border:`1px solid ${C.cardB}`, boxShadow:C.shadowRaised, pointerEvents:"all" }}>
+          {NAV_TABS.map(t => {
+            const active = tab === t.id;
+            return (
+              <button key={t.id} onClick={() => { setTab(t.id); if (t.id==="workspace") setWorkspaceSection(null); }} title={t.label} aria-current={active?"page":undefined}
+                style={{
+                  width:64, height:52, borderRadius:18, border:"none", cursor:"pointer",
+                  display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:4,
+                  // The active tab was previously marked only by a faint white wash and glow,
+                  // which is nearly invisible on a light nav. A filled inverse pill reads at a
+                  // glance in both themes.
+                  background: active ? C.text : "transparent",
+                  transition:"background .18s",
+                }}>
+                <NavIcon id={t.id} size={20} color={active ? C.card : C.muted} />
+                <span style={{ fontSize:9, fontWeight:700, color: active ? C.card : C.muted, letterSpacing:.3, fontFamily:"'Space Grotesk',sans-serif" }}>{t.label}</span>
+              </button>
+            );
+          })}
+        </div>
+      </nav>
+
+    </div>
+  );
+}
+
+export default function Kroft() {
+  return (
+    <ErrorBoundary>
+      <KroftApp />
+    </ErrorBoundary>
+  );
+}
