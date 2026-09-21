@@ -26,18 +26,25 @@ export async function signState(payload) {
 
 export async function verifyState(token) {
   if (!token || !token.includes(".")) return null;
-  const [body, sig] = token.split(".");
-  const key = await hmacKey(process.env.OAUTH_STATE_SECRET);
-  const expectedSigBytes = new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(body)));
-  const givenSigBytes = Uint8Array.from(fromBase64Url(sig), (c) => c.charCodeAt(0));
-  if (expectedSigBytes.length !== givenSigBytes.length) return null;
-  // Constant-time compare — a plain === on the decoded signature would leak timing
-  // information about how many leading bytes matched, letting an attacker forge a valid
-  // signature byte-by-byte over many requests.
-  let diff = 0;
-  for (let i = 0; i < expectedSigBytes.length; i++) diff |= expectedSigBytes[i] ^ givenSigBytes[i];
-  if (diff !== 0) return null;
+  // Everything below decodes attacker-controlled input (this `token` comes straight off the
+  // public, unauthenticated OAuth callback URL's `state` query param) — fromBase64Url's atob()
+  // throws a DOMException on a malformed/non-base64 segment rather than returning a value, so
+  // the whole thing is wrapped rather than just the JSON.parse: any decoding failure here must
+  // fail closed (return null, "invalid state") like every other rejection path in this function,
+  // not crash the caller (api/google/callback.js, api/microsoft/callback.js — both public
+  // redirect targets with no auth of their own to fall back on).
   try {
+    const [body, sig] = token.split(".");
+    const key = await hmacKey(process.env.OAUTH_STATE_SECRET);
+    const expectedSigBytes = new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(body)));
+    const givenSigBytes = Uint8Array.from(fromBase64Url(sig), (c) => c.charCodeAt(0));
+    if (expectedSigBytes.length !== givenSigBytes.length) return null;
+    // Constant-time compare — a plain === on the decoded signature would leak timing
+    // information about how many leading bytes matched, letting an attacker forge a valid
+    // signature byte-by-byte over many requests.
+    let diff = 0;
+    for (let i = 0; i < expectedSigBytes.length; i++) diff |= expectedSigBytes[i] ^ givenSigBytes[i];
+    if (diff !== 0) return null;
     const payload = JSON.parse(fromBase64Url(body));
     if (typeof payload.exp !== "number" || Date.now() > payload.exp) return null;
     return payload;

@@ -112,8 +112,18 @@ export async function fetchGmailMessages(accessToken) {
   return details.filter(Boolean);
 }
 
+// `to`/`subject` end up as raw header lines in the hand-built MIME message below. Kroft.jsx's
+// Reply button prefills `to` straight from a received email's own From: header (see
+// fetchGmailMessages) — attacker-influenced content, since anyone can email a KROFT user with
+// whatever From/Subject they like. An embedded CR/LF there would inject arbitrary extra headers
+// (Bcc, X-*, a second Subject, ...) into the message Gmail actually sends on Reply. Stripped
+// rather than rejected outright, since a legitimate address/subject should never contain one.
+function stripHeaderInjection(value) {
+  return String(value).replace(/[\r\n]+/g, " ");
+}
+
 export async function sendGmailMessage(accessToken, { to, subject, body }) {
-  const mimeMessage = [`To: ${to}`, `Subject: ${subject}`, "Content-Type: text/plain; charset=utf-8", "", body].join("\r\n");
+  const mimeMessage = [`To: ${stripHeaderInjection(to)}`, `Subject: ${stripHeaderInjection(subject)}`, "Content-Type: text/plain; charset=utf-8", "", body].join("\r\n");
   const res = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/messages/send", {
     method: "POST",
     headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },

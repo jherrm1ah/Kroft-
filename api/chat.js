@@ -24,6 +24,7 @@ export const config = { runtime: "edge" };
 
 import { callGemini } from "./_lib/gemini.js";
 import { callAnthropic } from "./_lib/anthropic.js";
+import { getAuthedUser } from "./_lib/supabaseAdmin.js";
 
 export default async function handler(req) {
   if (req.method !== "POST") {
@@ -31,6 +32,24 @@ export default async function handler(req) {
       status: 405,
       headers: { "Content-Type": "application/json" },
     });
+  }
+
+  // Without this, /api/chat is a public, unauthenticated, unlimited proxy to the server's own
+  // paid Gemini/Anthropic key — callable directly (curl, a script) by anyone who finds the URL,
+  // with no signup and no rate limit, regardless of what the frontend's own UI gates behind
+  // sign-in (every call site in Kroft.jsx used a bare fetch() with no Authorization header at
+  // all). Only enforced when Supabase is actually configured server-side — local-only mode (no
+  // Supabase at all) has no accounts to check a token against, and already documents itself as
+  // having no real authentication anywhere (see supabaseClient.js's console.warn), so AI chat is
+  // left working there rather than breaking that deployment shape entirely.
+  if (process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    const user = await getAuthedUser(req);
+    if (!user) {
+      return new Response(JSON.stringify({ error: "Not authenticated" }), {
+        status: 401,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
   }
 
   const geminiKey = process.env.GEMINI_API_KEY;
