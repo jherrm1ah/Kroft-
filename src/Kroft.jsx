@@ -2311,7 +2311,12 @@ function KroftApp({ onFullReset } = {}) {
 
   const toast = useCallback((msg, onUndo) => {
     const id = uid();
-    setToasts(p => [{ id, msg, onUndo }, ...p.slice(0,3)]);
+    // Capped at 2 concurrent toasts, not 4 — the fixed top-right stack has no reserved space of
+    // its own, so it floats directly over whatever's underneath (the app header, in particular).
+    // Four stacked toasts (each up to ~50px, some wrapping to two lines) grew tall enough to
+    // fully cover the header/logo for the several seconds they're all up — not toasts
+    // overlapping each other, but the stack overlapping real page content beneath it.
+    setToasts(p => [{ id, msg, onUndo }, ...p.slice(0,1)]);
     // Undo gets meaningfully longer than a plain confirmation. Six seconds is fine at a desk,
     // but it's tight on a phone while walking, and a screen reader may still be queuing the
     // announcement when the only chance to reverse a deletion disappears.
