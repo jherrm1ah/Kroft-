@@ -186,7 +186,14 @@ export async function applyChargeEvent(admin, transaction) {
   // silently drop a real charge. Callers surface this as a failure so it gets retried (Flutterwave
   // retries a non-2xx webhook response; the callback path leaves it for the webhook to complete).
   if (claim.error) return { ok: false, error: claim.error };
-  if (!claim.claimed) return { ok: true, duplicate: true }; // this exact transaction was already applied
+  // NOTE: "duplicate" only means someone else's delivery holds (or held) the claim — it is NOT
+  // proof that delivery's write actually succeeded. There's an inherent race between the atomic
+  // claim insert and that other delivery's subsequent subscriptions write/release: a concurrent
+  // caller can observe "already claimed" before that write finishes (or right as it fails and
+  // gets released). Callers that show something to the user off of `duplicate` (api/billing/
+  // callback.js) should treat it as "in progress elsewhere", not as confirmed success — and
+  // confirm the real subscriptions state via `userId` before telling the user Plus is active.
+  if (!claim.claimed) return { ok: true, duplicate: true, userId };
 
   const applied = await writeSubscriptionState(admin, userId, transaction, successful);
   if (!applied.ok) {
@@ -196,9 +203,9 @@ export async function applyChargeEvent(admin, transaction) {
     // already in payment_events and short-circuit as "duplicate, already applied" even though
     // the charge was never actually reflected in subscriptions — permanently losing it.
     await admin.from("payment_events").delete().eq("transaction_id", String(transactionId));
-    return { ok: false, error: applied.error };
+    return { ok: false, error: applied.error, userId };
   }
-  return { ok: true };
+  return { ok: true, userId };
 }
 
 async function writeSubscriptionState(admin, userId, transaction, successful) {
@@ -239,7 +246,13 @@ export async function applySubscriptionCancelled(admin, subscriptionEventData) {
   // so resolution goes through our own stored provider_customer_ref instead of a direct id.
   const email = subscriptionEventData.customer_email || subscriptionEventData.customer?.email;
   if (!email) return { ok: true };
-  await admin.from("subscriptions").update({ status: "canceled" }).eq("provider_customer_ref", email);
+  const { error } = await admin.from("subscriptions").update({ status: "canceled" }).eq("provider_customer_ref", email);
+  // Unlike charge events, there's no payment_events idempotency claim here to release on
+  // failure — surfacing the error as ok:false is the ONLY way this ever gets retried. Silently
+  // swallowing it (as this used to) would leave the user marked active forever with no way to
+  // notice: Flutterwave has genuinely stopped billing them, but our own record — the only thing
+  // that gates Plus access — would never reflect it, granting free access indefinitely.
+  if (error) return { ok: false, error };
   return { ok: true };
 }
 

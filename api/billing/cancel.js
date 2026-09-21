@@ -27,8 +27,13 @@ export default async function handler(req) {
 
   // Update immediately rather than waiting on the subscription.cancelled webhook — the user is
   // sitting on this exact screen waiting for confirmation, and the webhook (best-effort,
-  // eventually consistent) will simply confirm the same state again shortly after.
-  await admin.from("subscriptions").update({ status: "canceled" }).eq("user_id", user.id);
+  // eventually consistent) will simply confirm the same state again shortly after. Flutterwave's
+  // cancellation above genuinely succeeded either way, so a failure here is logged rather than
+  // failing the request — the user is correctly told billing has stopped — but it's surfaced so
+  // it isn't invisible if the webhook's own follow-up update (see applySubscriptionCancelled)
+  // also fails to land for some reason.
+  const { error: updateError } = await admin.from("subscriptions").update({ status: "canceled" }).eq("user_id", user.id);
+  if (updateError) console.error("api/billing/cancel: failed to sync canceled status after a real Flutterwave cancellation", updateError);
 
   return jsonResponse({ ok: true });
 }

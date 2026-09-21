@@ -31,13 +31,23 @@ export default async function handler(req) {
   // agrees the charge succeeded, not just that the API call to check it succeeded.
   if (transaction.status !== "successful") return redirectTo(origin, "error", "payment_not_successful");
 
-  const applyResult = await applyChargeEvent(supabaseAdmin(), transaction);
+  const admin = supabaseAdmin();
+  const applyResult = await applyChargeEvent(admin, transaction);
   if (!applyResult.ok) {
     // A real DB error while claiming this transaction for idempotent processing — NOT a normal
     // "payment failed". The charge itself is real (verified above); leave it for
     // api/billing/webhook.js's retried delivery to finish activating Plus rather than risk
     // double-applying it here, and tell the user honestly that confirmation is still pending.
     return redirectTo(origin, "error", "processing_delayed");
+  }
+
+  if (applyResult.duplicate && applyResult.userId) {
+    // "duplicate" means another delivery (the webhook, most likely) holds or held the claim for
+    // this transaction — not that its write is confirmed done (see applyChargeEvent's comment on
+    // this race). Confirm the real subscriptions row before telling the user Plus is active,
+    // rather than trusting a claim that could still be in flight or could have just failed.
+    const { data } = await admin.from("subscriptions").select("status").eq("user_id", applyResult.userId).maybeSingle();
+    if (data?.status !== "active") return redirectTo(origin, "error", "processing_delayed");
   }
 
   return redirectTo(origin, "success");
