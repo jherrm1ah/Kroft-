@@ -1469,13 +1469,28 @@ function ProfileSection({ user, onEditPreferences, onSignOut, theme, onToggleThe
           </Mono>
           {!subscribed && <Btn sm disabled={billingLoading} onClick={onUpgrade}>{billingLoading ? <Spinner size={14} color={C.black} thickness={2} /> : "Upgrade"}</Btn>}
         </ProfileRow>
-        <ProfileRow label="Billing" sub={subscribed ? "Active" : "No payment method on file"} expanded={openRow==="billing"} onToggle={()=>toggle("billing")}>
-          <Mono style={{ display:"block", color:C.soft, lineHeight:1.7, marginBottom:subscribed?10:0 }}>
-            {subscribed
+        <ProfileRow label="Billing" sub={subscriptionStatus === "past_due" ? "Renewal failed — action needed" : subscribed ? "Active" : "No payment method on file"} expanded={openRow==="billing"} onToggle={()=>toggle("billing")}>
+          <Mono style={{ display:"block", color:C.soft, lineHeight:1.7, marginBottom:10 }}>
+            {subscriptionStatus === "past_due"
+              ? "Your last renewal charge failed, so Plus access has paused. Resubscribe below to restore it."
+              : subscribed
               ? "Your subscription and card are held by our secure payment partner, not KROFT. There's no self-serve billing portal — cancel here any time, or contact support for a receipt."
               : "Upgrading opens a secure checkout — KROFT never sees or stores your card details directly."}
           </Mono>
-          {subscribed && <Btn sm v="outline" disabled={billingLoading} onClick={onManageBilling}>{billingLoading ? <Spinner size={14} color={C.soft} thickness={2} /> : "Cancel plan"}</Btn>}
+          {subscribed && subscriptionStatus === "active" && !autoRenews && (
+            <Mono style={{ display:"block", color:C.muted, lineHeight:1.7, marginBottom:10 }}>
+              Your current payment method doesn't automatically renew — you'll need to manually resubscribe before your current period ends.
+            </Mono>
+          )}
+          {!subscribed && (
+            <Mono style={{ display:"block", color:C.muted, lineHeight:1.7, marginBottom:10 }}>
+              KROFT Plus renews automatically only with a card. Bank transfer, USSD, and mobile money are also accepted at checkout, but those don't auto-renew — you'd need to manually resubscribe each cycle.
+            </Mono>
+          )}
+          {subscribed && subscriptionStatus === "active" && <Btn sm v="outline" disabled={billingLoading} onClick={onManageBilling}>{billingLoading ? <Spinner size={14} color={C.soft} thickness={2} /> : "Cancel plan"}</Btn>}
+          {(subscriptionStatus === "past_due" || (!subscribed && subscriptionStatus !== "past_due")) && (
+            <Btn sm disabled={billingLoading} onClick={onUpgrade}>{billingLoading ? <Spinner size={14} color={C.black} thickness={2} /> : subscriptionStatus === "past_due" ? "Resubscribe" : "Upgrade"}</Btn>
+          )}
         </ProfileRow>
         <ProfileRow label="Payment Methods" sub={subscribed ? "On file with our payment partner" : "None on file"} expanded={openRow==="paymethods"} onToggle={()=>toggle("paymethods")}>
           <Mono style={{ display:"block", color:C.soft, lineHeight:1.7, marginBottom:subscribed?10:0 }}>
@@ -2043,6 +2058,14 @@ function KroftApp({ onFullReset } = {}) {
   const [monthlyReportMonth, setMonthlyReportMonth] = useState(() => todayISO().slice(0, 7));
   const reportsLeftThisMonth = () => Math.max(0, FREE_MONTHLY_REPORT_LIMIT - monthlyReportCount);
   const [subscribed, setSubscribed] = useState(false);
+  // Raw subscriptions.status ("inactive" | "active" | "past_due" | "canceled") — kept alongside
+  // the derived `subscribed` boolean so the UI can tell "never subscribed" apart from "a renewal
+  // charge failed", which needs its own notice rather than just silently losing Plus access.
+  const [subscriptionStatus, setSubscriptionStatus] = useState("inactive");
+  // Whether the payment method behind the current/last charge auto-renews (card) or not (bank
+  // transfer, USSD, mobile money, or an unconfirmed wallet-pay) — see isRecurringCapablePayment
+  // in api/_lib/flutterwave.js, which is what actually sets this on the server.
+  const [autoRenews, setAutoRenews] = useState(false);
   const [dailyMessageCount, setDailyMessageCount] = useState(0);
   const [messageCountDate, setMessageCountDate] = useState(() => new Date().toDateString());
 
@@ -2674,9 +2697,11 @@ function KroftApp({ onFullReset } = {}) {
     try {
       const { data: { user } = {} } = await supabase.auth.getUser();
       if (!user) return;
-      const { data, error } = await supabase.from("subscriptions").select("status").eq("user_id", user.id).maybeSingle();
+      const { data, error } = await supabase.from("subscriptions").select("status, auto_renews").eq("user_id", user.id).maybeSingle();
       if (error) return;
       setSubscribed(data?.status === "active");
+      setSubscriptionStatus(data?.status || "inactive");
+      setAutoRenews(!!data?.auto_renews);
     } catch {
       // Silent — a background status refresh, not a user-initiated action.
     }

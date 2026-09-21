@@ -1,5 +1,5 @@
 import { supabaseAdmin } from "../_lib/supabaseAdmin.js";
-import { verifyTransaction, applyChargeCompleted } from "../_lib/flutterwave.js";
+import { verifyTransaction, applyChargeEvent } from "../_lib/flutterwave.js";
 
 // Flutterwave redirects the user's browser here after checkout (the redirect_url passed to
 // initializeCheckout in api/billing/checkout.js), with status/tx_ref/transaction_id as query
@@ -23,15 +23,22 @@ export default async function handler(req) {
   const secretKey = process.env.FLUTTERWAVE_SECRET_KEY;
   if (!secretKey) return redirectTo(origin, "error", "not_configured");
 
-  const result = await verifyTransaction(secretKey, transactionId);
-  if (!result.ok) return redirectTo(origin, "error", "verification_failed");
+  const verifyResult = await verifyTransaction(secretKey, transactionId);
+  if (!verifyResult.ok) return redirectTo(origin, "error", "verification_failed");
 
-  const transaction = result.transaction;
+  const transaction = verifyResult.transaction;
   // Belt-and-suspenders on top of the verify call itself: confirm Flutterwave's own record
   // agrees the charge succeeded, not just that the API call to check it succeeded.
   if (transaction.status !== "successful") return redirectTo(origin, "error", "payment_not_successful");
 
-  await applyChargeCompleted(supabaseAdmin(), transaction);
+  const applyResult = await applyChargeEvent(supabaseAdmin(), transaction);
+  if (!applyResult.ok) {
+    // A real DB error while claiming this transaction for idempotent processing — NOT a normal
+    // "payment failed". The charge itself is real (verified above); leave it for
+    // api/billing/webhook.js's retried delivery to finish activating Plus rather than risk
+    // double-applying it here, and tell the user honestly that confirmation is still pending.
+    return redirectTo(origin, "error", "processing_delayed");
+  }
 
   return redirectTo(origin, "success");
 }

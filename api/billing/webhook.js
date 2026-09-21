@@ -24,9 +24,16 @@ export default async function handler(req) {
     return jsonResponse({ error: "Invalid payload" }, 400);
   }
 
-  await applyFlutterwaveEvent(supabaseAdmin(), event);
+  const result = await applyFlutterwaveEvent(supabaseAdmin(), event);
+  if (!result.ok) {
+    // A genuine DB error while claiming the transaction for idempotent processing — surfaced as
+    // a 5xx specifically so Flutterwave retries delivery, rather than acking a charge that never
+    // actually got applied. A normal duplicate delivery (already claimed) still returns ok:true
+    // and gets a 2xx here, since re-processing it would double-apply the charge.
+    return jsonResponse({ error: "Could not process event, please retry." }, 500);
+  }
 
-  // Flutterwave expects a fast 2xx ack regardless of what the event needed done, else it
-  // retries delivery.
+  // Flutterwave expects a fast 2xx ack once the event has been durably handled (or intentionally
+  // no-opped, e.g. a duplicate or an untracked event type), else it retries delivery.
   return jsonResponse({ received: true });
 }

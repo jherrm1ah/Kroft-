@@ -117,11 +117,19 @@ create table if not exists public.subscriptions (
   provider_subscription_id text, -- known only after the first successful recurring charge — null before then
   status                  text not null default 'inactive',
   current_period_end      timestamptz,
-  updated_at              timestamptz not null default now()
+  updated_at              timestamptz not null default now(),
+  -- Whether the payment method behind the current/last successful charge is one Flutterwave will
+  -- auto-recharge next cycle (currently: card only — see isRecurringCapablePayment in
+  -- api/_lib/flutterwave.js). false means the user must manually resubscribe before
+  -- current_period_end (e.g. they paid by bank transfer, USSD, or mobile money).
+  auto_renews             boolean not null default false
 );
 
 comment on table public.subscriptions is
   'KROFT Plus subscription status per user. Written only by api/billing/webhook.js and api/billing/callback.js via service_role — never by the client. Readable by the owning user (status/dates only, no payment details). Provider: Flutterwave.';
+
+comment on column public.subscriptions.status is
+  'inactive (never subscribed) | active | past_due (a renewal charge failed — not treated as subscribed) | canceled.';
 
 alter table public.subscriptions enable row level security;
 
@@ -143,3 +151,23 @@ create trigger subscriptions_set_updated_at
   before update on public.subscriptions
   for each row
   execute function public.subscriptions_set_updated_at();
+
+-- Idempotency ledger for Flutterwave charge processing (see
+-- api/_lib/flutterwave.js's claimTransactionForProcessing). One row per Flutterwave transaction
+-- id, inserted exactly once via ON CONFLICT DO NOTHING (an atomic claim, not check-then-act) —
+-- the same transaction can never be applied twice regardless of how many times
+-- api/billing/callback.js's redirect-driven verify and api/billing/webhook.js's event delivery
+-- overlap or retry. Server-only, same access pattern as oauth_tokens: RLS enabled with no
+-- policies, so only service_role can read or write it.
+create table if not exists public.payment_events (
+  transaction_id text primary key,
+  user_id        uuid references auth.users(id) on delete set null,
+  event_type     text not null,
+  status         text not null,
+  processed_at   timestamptz not null default now()
+);
+
+comment on table public.payment_events is
+  'Idempotency ledger for Flutterwave charge processing (see api/_lib/flutterwave.js''s claimTransactionForProcessing). One row per transaction id, inserted exactly once via ON CONFLICT DO NOTHING — the same transaction can never be applied twice regardless of how many times callback/webhook delivery overlaps or retries. Service_role only, same as oauth_tokens.';
+
+alter table public.payment_events enable row level security;

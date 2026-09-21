@@ -105,20 +105,106 @@ function periodEndFromTransaction(transaction) {
   return new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString();
 }
 
-export async function applyChargeCompleted(admin, transaction) {
-  const userId = transaction.meta?.supabase_user_id;
-  if (!userId || transaction.status !== "successful") return;
-  await admin.from("subscriptions").upsert(
-    {
-      user_id: userId,
-      provider: "flutterwave",
-      provider_customer_ref: transaction.customer?.email,
-      provider_subscription_id: transaction.plan || transaction.subscription_id || null,
-      status: "active",
-      current_period_end: periodEndFromTransaction(transaction),
-    },
-    { onConflict: "user_id" }
-  );
+// Whether the payment method behind a transaction is one Flutterwave will actually re-charge
+// automatically next cycle, versus a one-time payment the user would have to manually repeat.
+// Card is Flutterwave's documented tokenized-recurring method and is treated as the primary/only
+// trusted case. Bank transfer, USSD, and mobile money are explicitly NOT trusted to auto-renew —
+// they're one-time bank-side actions with no token Flutterwave can replay. Apple Pay / Google Pay
+// are wallet wrappers that may or may not tokenize into a re-chargeable card underneath depending
+// on the issuer/processor; rather than guess, this only trusts them when Flutterwave's own
+// response for this transaction shows evidence of a stored card token (the `card.token` field
+// tokenized/recurring-capable Flutterwave charges carry) — otherwise it's treated as one-time,
+// per instruction to never assume recurring-capability without the API confirming it.
+export function isRecurringCapablePayment(transaction) {
+  const type = (transaction.payment_type || "").toLowerCase();
+  if (type === "card") return true;
+  if ((type === "googlepay" || type === "applepay") && transaction.card?.token) return true;
+  return false;
+}
+
+// Resolves which Supabase user a transaction belongs to. meta.supabase_user_id (set at checkout
+// time in initializeCheckout) is authoritative and covers the first charge on a subscription.
+// Renewal charges happen with no browser/checkout call in this app's control, so as a fallback in
+// case Flutterwave doesn't echo the original meta back on a recurring charge, this also resolves
+// by the customer email already on file from a prior successful charge (provider_customer_ref).
+export async function resolveUserIdFromTransaction(admin, transaction) {
+  const metaUserId = transaction.meta?.supabase_user_id;
+  if (metaUserId) return metaUserId;
+  const email = transaction.customer?.email;
+  if (!email) return null;
+  const { data } = await admin.from("subscriptions").select("user_id").eq("provider_customer_ref", email).maybeSingle();
+  return data?.user_id || null;
+}
+
+// Idempotency guard against the same Flutterwave transaction being applied twice — necessary
+// because callback.js (redirect-driven verify) and webhook.js (event-driven) can both observe the
+// same successful transaction, and Flutterwave itself retries webhook delivery on anything short
+// of a fast 2xx. Uses an atomic INSERT ... ON CONFLICT DO NOTHING (via upsert+ignoreDuplicates)
+// rather than check-then-act, since two concurrent deliveries racing a plain select-then-insert
+// could both see "not yet processed" and both apply the charge.
+export async function claimTransactionForProcessing(admin, { transactionId, userId, eventType, status }) {
+  const { data, error } = await admin
+    .from("payment_events")
+    .upsert(
+      { transaction_id: String(transactionId), user_id: userId, event_type: eventType, status },
+      { onConflict: "transaction_id", ignoreDuplicates: true }
+    )
+    .select();
+  if (error) return { claimed: false, error };
+  // With ignoreDuplicates, a genuine first-time insert returns the inserted row; a conflict
+  // (already claimed by an earlier delivery) returns an empty result instead of erroring.
+  return { claimed: Array.isArray(data) && data.length > 0, error: null };
+}
+
+// Unified handler for a charge.completed event and for the post-checkout verify in
+// api/billing/callback.js (both hand this the same shape: a verified Flutterwave transaction
+// object). Never trusts the frontend/redirect alone — callers are required to have already
+// confirmed transaction.status via a server-side verify call before reaching this function.
+export async function applyChargeEvent(admin, transaction) {
+  const transactionId = transaction.id ?? transaction.tx_ref;
+  if (!transactionId) return { ok: true }; // nothing to key idempotency or a subscription update on
+
+  const userId = await resolveUserIdFromTransaction(admin, transaction);
+  if (!userId) return { ok: true }; // no known KROFT user to attribute this transaction to
+
+  const successful = transaction.status === "successful";
+  const claim = await claimTransactionForProcessing(admin, {
+    transactionId,
+    userId,
+    eventType: successful ? "charge.completed" : "charge.failed",
+    status: transaction.status,
+  });
+  // A genuine DB error while claiming must NOT be treated as "already processed" — that would
+  // silently drop a real charge. Callers surface this as a failure so it gets retried (Flutterwave
+  // retries a non-2xx webhook response; the callback path leaves it for the webhook to complete).
+  if (claim.error) return { ok: false, error: claim.error };
+  if (!claim.claimed) return { ok: true, duplicate: true }; // this exact transaction was already applied
+
+  if (successful) {
+    await admin.from("subscriptions").upsert(
+      {
+        user_id: userId,
+        provider: "flutterwave",
+        provider_customer_ref: transaction.customer?.email,
+        provider_subscription_id: transaction.plan || transaction.subscription_id || null,
+        status: "active",
+        current_period_end: periodEndFromTransaction(transaction),
+        auto_renews: isRecurringCapablePayment(transaction),
+      },
+      { onConflict: "user_id" }
+    );
+  } else {
+    // A failed charge for a user with no existing subscriptions row (e.g. a first attempt that
+    // never went through) has nothing to mark down — don't manufacture a row out of a failure.
+    // A failed charge for an existing subscriber is a failed renewal: move them to past_due so
+    // they lose Plus access (subscribed only ever means status === "active") rather than either
+    // silently keeping them active or being dropped entirely.
+    const { data: existing } = await admin.from("subscriptions").select("user_id").eq("user_id", userId).maybeSingle();
+    if (existing) {
+      await admin.from("subscriptions").update({ status: "past_due" }).eq("user_id", userId);
+    }
+  }
+  return { ok: true };
 }
 
 export async function applySubscriptionCancelled(admin, subscriptionEventData) {
@@ -126,21 +212,20 @@ export async function applySubscriptionCancelled(admin, subscriptionEventData) {
   // user id (Flutterwave subscription objects don't carry the same meta bag transactions do),
   // so resolution goes through our own stored provider_customer_ref instead of a direct id.
   const email = subscriptionEventData.customer_email || subscriptionEventData.customer?.email;
-  if (!email) return;
+  if (!email) return { ok: true };
   await admin.from("subscriptions").update({ status: "canceled" }).eq("provider_customer_ref", email);
+  return { ok: true };
 }
 
 export async function applyFlutterwaveEvent(admin, event) {
   switch (event.event) {
     case "charge.completed":
-      await applyChargeCompleted(admin, event.data);
-      return;
+      return applyChargeEvent(admin, event.data);
     case "subscription.cancelled":
-      await applySubscriptionCancelled(admin, event.data);
-      return;
+      return applySubscriptionCancelled(admin, event.data);
     default:
       // Every other event type is outside what this app tracks — acknowledged by the caller
       // regardless (Flutterwave, like Stripe, expects a fast 2xx on every event received).
-      return;
+      return { ok: true };
   }
 }
