@@ -1,4 +1,4 @@
-import { getAuthedUser, jsonResponse } from "../_lib/supabaseAdmin.js";
+import { getAuthedUser, supabaseAdmin, jsonResponse } from "../_lib/supabaseAdmin.js";
 import { initializeCheckout } from "../_lib/flutterwave.js";
 
 // Starts a real Flutterwave Checkout for KROFT Plus. Nothing here marks the user as
@@ -19,6 +19,17 @@ export default async function handler(req) {
 
   const user = await getAuthedUser(req);
   if (!user) return jsonResponse({ error: "Not authenticated" }, 401);
+
+  // Block starting a second checkout while already active — subscriptions is keyed one row per
+  // user_id, so a second successful charge would silently overwrite provider_subscription_id,
+  // permanently orphaning the first Flutterwave subscription: it would keep billing forever with
+  // no record of it left in our DB and no way for the user to ever cancel it through this app.
+  // past_due is intentionally NOT blocked here — resubscribing after a failed renewal reuses
+  // this same endpoint (see Kroft.jsx's "Resubscribe" button) and is exactly what should happen.
+  const { data: existingSubscription } = await supabaseAdmin().from("subscriptions").select("status").eq("user_id", user.id).maybeSingle();
+  if (existingSubscription?.status === "active") {
+    return jsonResponse({ error: "You already have an active KROFT Plus subscription." }, 409);
+  }
 
   const origin = new URL(req.url).origin;
   const result = await initializeCheckout(secretKey, {

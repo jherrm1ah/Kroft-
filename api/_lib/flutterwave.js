@@ -15,14 +15,24 @@
 const BASE_URL = "https://api.flutterwave.com/v3";
 
 export async function flutterwaveRequest(secretKey, method, path, body) {
-  const res = await fetch(`${BASE_URL}${path}`, {
-    method,
-    headers: {
-      Authorization: `Bearer ${secretKey}`,
-      "Content-Type": "application/json",
-    },
-    ...(body ? { body: JSON.stringify(body) } : {}),
-  });
+  let res;
+  try {
+    res = await fetch(`${BASE_URL}${path}`, {
+      method,
+      headers: {
+        Authorization: `Bearer ${secretKey}`,
+        "Content-Type": "application/json",
+      },
+      ...(body ? { body: JSON.stringify(body) } : {}),
+    });
+  } catch (networkError) {
+    // A network-level failure reaching Flutterwave itself (DNS, TLS, timeout, connection reset)
+    // — not an unhandled rejection callers have to guard against individually. This matters most
+    // right after a user has just paid (api/billing/callback.js's verify call): without this,
+    // a transient network blip would crash the request with a raw error instead of the clean
+    // "couldn't confirm, contact support" redirect the rest of that flow is built to show.
+    return { ok: false, status: 0, data: null, networkError };
+  }
   const data = await res.json().catch(() => null);
   // Flutterwave's own convention: a successful call has status:"success" in the body even
   // when the HTTP status is 200 — checking both catches a 200 that Flutterwave itself flags as

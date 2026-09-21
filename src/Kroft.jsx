@@ -2716,7 +2716,15 @@ function KroftApp({ onFullReset } = {}) {
     setBillingLoading(true);
     try {
       const res = await authedFetch("/api/billing/checkout", { method: "POST" });
-      if (!res.ok) { toast("Couldn't start checkout. Try again."); setBillingLoading(false); return; }
+      if (!res.ok) {
+        // 409 means the server already sees an active subscription (e.g. a stale second tab) —
+        // "try again" would be actively wrong advice there, since starting another checkout is
+        // exactly what api/billing/checkout.js just refused to prevent a duplicate charge.
+        toast(res.status === 409 ? "You're already on KROFT Plus." : "Couldn't start checkout. Try again.");
+        setBillingLoading(false);
+        if (res.status === 409) refreshSubscriptionStatus();
+        return;
+      }
       const { url } = await res.json();
       window.location.href = url; // full navigation — Flutterwave's checkout page won't render in a fetch response
     } catch {
