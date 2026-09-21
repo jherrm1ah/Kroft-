@@ -1,13 +1,10 @@
-import { getAuthedUser, getValidGoogleAccessToken, supabaseAdmin, jsonResponse } from "../_lib/google.js";
-import { extractPlainTextBody } from "../_lib/gmailMime.js";
+import { getAuthedUser, getValidGoogleAccessToken, supabaseAdmin, jsonResponse, fetchGmailMessages } from "../_lib/google.js";
 
-// Returns the most recent inbox messages, shaped to match Kroft.jsx's existing local `emails`
-// state ({ id, from, subject, tag, time, read, body }) so the frontend can drop real data
-// straight into the UI that already renders the mock seed data, with no shape changes needed
-// there.
+// Gmail-only inbox fetch, kept as its own route for direct testing/debugging. The frontend
+// calls the merged api/mail/messages.js instead, which combines this with Outlook when both
+// are connected — the actual fetch/parse logic lives in api/_lib/google.js's
+// fetchGmailMessages so both routes share one implementation.
 export const config = { runtime: "edge" };
-
-const MAX_RESULTS = 15;
 
 export default async function handler(req) {
   if (req.method !== "GET") return jsonResponse({ error: "Method not allowed" }, 405);
@@ -15,39 +12,11 @@ export default async function handler(req) {
   const user = await getAuthedUser(req);
   if (!user) return jsonResponse({ error: "Not authenticated" }, 401);
 
-  const admin = supabaseAdmin();
-  const accessToken = await getValidGoogleAccessToken(admin, user.id);
+  const accessToken = await getValidGoogleAccessToken(supabaseAdmin(), user.id);
   if (!accessToken) return jsonResponse({ error: "Gmail is not connected" }, 409);
 
-  const listRes = await fetch(
-    `https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=${MAX_RESULTS}&labelIds=INBOX`,
-    { headers: { Authorization: `Bearer ${accessToken}` } }
-  );
-  if (!listRes.ok) return jsonResponse({ error: "Failed to list Gmail messages" }, listRes.status);
-  const { messages = [] } = await listRes.json();
+  const messages = await fetchGmailMessages(accessToken);
+  if (messages === null) return jsonResponse({ error: "Failed to list Gmail messages" }, 502);
 
-  // Gmail's API only returns ids from the list endpoint — each message's actual content needs
-  // a separate fetch. Done in parallel since these are independent, read-only GETs.
-  const details = await Promise.all(
-    messages.map(async (m) => {
-      const r = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${m.id}?format=full`, {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      });
-      if (!r.ok) return null;
-      const msg = await r.json();
-      const headers = Object.fromEntries((msg.payload?.headers || []).map((h) => [h.name.toLowerCase(), h.value]));
-      const body = extractPlainTextBody(msg.payload) || msg.snippet || "";
-      return {
-        id: msg.id,
-        from: headers.from || "(unknown sender)",
-        subject: headers.subject || "(no subject)",
-        tag: "",
-        time: headers.date || "",
-        read: !(msg.labelIds || []).includes("UNREAD"),
-        body,
-      };
-    })
-  );
-
-  return jsonResponse({ messages: details.filter(Boolean) });
+  return jsonResponse({ messages });
 }

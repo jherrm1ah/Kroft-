@@ -67,8 +67,14 @@ const ANIM = `
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
 @keyframes spin{to{transform:rotate(360deg)}}
 @keyframes wave{0%,100%{transform:scaleY(.2)}50%{transform:scaleY(1)}}
-@keyframes slideIn{from{transform:translateX(108%);opacity:0}to{transform:translateX(0);opacity:1}}
+@keyframes slideIn{0%{transform:translateX(108%) scale(.9);opacity:0}70%{transform:translateX(-4%) scale(1.03);opacity:1}100%{transform:translateX(0) scale(1);opacity:1}}
 @keyframes stepIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
+/* ---- "Fun and haptic" pass: playful, springy feedback on the things people touch a lot ---- */
+@keyframes bouncePop{0%{transform:scale(.4) rotate(-8deg);opacity:0}55%{transform:scale(1.18) rotate(4deg);opacity:1}75%{transform:scale(.92) rotate(-2deg)}100%{transform:scale(1) rotate(0);opacity:1}}
+@keyframes checkPop{0%{transform:scale(1) rotate(0)}35%{transform:scale(1.4) rotate(-10deg)}65%{transform:scale(.88) rotate(6deg)}100%{transform:scale(1) rotate(0)}}
+@keyframes tabPop{0%{transform:scale(.85)}50%{transform:scale(1.12)}100%{transform:scale(1)}}
+@keyframes celebratePop{0%{transform:scale(.3);opacity:0}45%{transform:scale(1.2);opacity:1}70%{transform:scale(.92)}100%{transform:scale(1);opacity:1}}
+@keyframes confettiFall{0%{transform:translate(0,-10px) rotate(0deg);opacity:1}100%{transform:translate(var(--drift,0px),100vh) rotate(var(--spin,540deg));opacity:0}}
 `;
 
 // Uses Intl's native currency formatting instead of a hand-maintained symbol map, so any
@@ -108,6 +114,12 @@ const rand = arr => arr[Math.floor(Math.random() * arr.length)];
 // are created in the same millisecond (fast typing+Enter, rapid taps, batch actions) — every
 // edit/delete/toggle keyed on that ID would then silently affect both items at once.
 const uid = () => Date.now() + Math.random();
+// The Vibration API only exists on Android Chrome/Firefox — iOS Safari and every desktop
+// browser have no navigator.vibrate at all, so this is a best-effort tactile enhancement,
+// never something an interaction depends on to make sense. Wrapped in try/catch since some
+// browsers throw (rather than just no-op) calling vibrate() from certain contexts (e.g. an
+// iframe without the right permissions-policy).
+const haptic = pattern => { try { navigator.vibrate?.(pattern); } catch {} };
 const todayISO = () => new Date().toISOString().slice(0, 10);
 const fmtDate = iso => { if (!iso) return ""; const d = new Date(iso + "T00:00:00"); return isNaN(d) ? iso : d.toLocaleDateString("en-US", { month:"short", day:"numeric", year:"numeric" }); };
 // Advances an ISO date string forward by one occurrence of the given repeat cadence. Used to
@@ -366,12 +378,55 @@ const Btn = ({ children, onClick, v="solid", sm, disabled, full, style, "aria-la
   // Icon-only buttons (e.g. a lone "✕" or "✓") get a minimum square footprint so a
   // one-character label doesn't collapse into a hard-to-tap sliver on touch devices.
   const isIconOnly = typeof children === "string" && children.trim().length <= 2;
+  // Every Btn in the app gets a light haptic tap for free — this one shared component is used
+  // hundreds of times across every screen, so it's the highest-leverage place to add tactile
+  // feedback everywhere at once rather than touching each call site individually.
+  const handleClick = e => { if (disabled) return; haptic(8); onClick?.(e); };
   return (
-    <button onClick={onClick} disabled={disabled} aria-label={ariaLabel} style={{ width:full?"100%":"auto", minWidth:sm&&isIconOnly?36:"auto", minHeight:sm?36:44, background:s.bg, border:`1px solid ${s.bc}`, borderRadius:12, padding:sm?"8px 14px":"10px 22px", cursor:disabled?"not-allowed":"pointer", color:s.col, fontWeight:700, fontSize:sm?12:13, fontFamily:"'Space Grotesk',sans-serif", letterSpacing:.3, transition:"all .14s", opacity:disabled?.4:1, display:"inline-flex", alignItems:"center", justifyContent:"center", gap:6, boxSizing:"border-box", ...style }}>
+    <button onClick={handleClick} disabled={disabled} aria-label={ariaLabel} style={{ width:full?"100%":"auto", minWidth:sm&&isIconOnly?36:"auto", minHeight:sm?36:44, background:s.bg, border:`1px solid ${s.bc}`, borderRadius:12, padding:sm?"8px 14px":"10px 22px", cursor:disabled?"not-allowed":"pointer", color:s.col, fontWeight:700, fontSize:sm?12:13, fontFamily:"'Space Grotesk',sans-serif", letterSpacing:.3, transition:"all .18s cubic-bezier(.34,1.56,.64,1)", opacity:disabled?.4:1, display:"inline-flex", alignItems:"center", justifyContent:"center", gap:6, boxSizing:"border-box", ...style }}>
       {children}
     </button>
   );
 };
+
+// Dependency-free celebratory confetti burst — a fixed full-screen overlay of falling pieces
+// that removes itself once its animation finishes. Reserved for genuine milestones (see
+// KroftApp's celebrate()), not everyday interactions, so it stays a real "moment" rather than
+// noise. Pure CSS animation (see @keyframes confettiFall in ANIM), so prefers-reduced-motion
+// already neutralizes it the same way it does every other decorative animation in the app.
+function Confetti({ onDone }) {
+  const pieces = useMemo(() => {
+    const colors = [C.accent, C.positive, C.warning, C.negative, C.white];
+    return Array.from({ length: 40 }, (_, i) => ({
+      id: i,
+      left: Math.random() * 100,
+      delay: Math.random() * 0.25,
+      duration: 1.6 + Math.random() * 1.1,
+      drift: Math.round((Math.random() - 0.5) * 220),
+      spin: Math.round(360 + Math.random() * 360) * (Math.random() < 0.5 ? -1 : 1),
+      color: colors[i % colors.length],
+      w: 6 + Math.random() * 5,
+      h: 10 + Math.random() * 6,
+      round: Math.random() < 0.4,
+    }));
+  }, []);
+  useEffect(() => {
+    const t = setTimeout(onDone, 3000);
+    return () => clearTimeout(t);
+  }, []);
+  return (
+    <div style={{ position:"fixed", inset:0, zIndex:1500, pointerEvents:"none", overflow:"hidden" }} aria-hidden="true">
+      {pieces.map(p => (
+        <div key={p.id} style={{
+          position:"absolute", top:-16, left:`${p.left}%`,
+          width:p.w, height:p.h, background:p.color, borderRadius:p.round?"50%":2,
+          animation:`confettiFall ${p.duration}s ${p.delay}s cubic-bezier(.25,.46,.45,.94) forwards`,
+          "--drift": `${p.drift}px`, "--spin": `${p.spin}deg`,
+        }} />
+      ))}
+    </div>
+  );
+}
 
 // Parses a money input, returning null for anything that shouldn't reach the ledger. A bare
 // type="number" field still accepts a leading minus, so "-500" was storable as income — and a
@@ -643,6 +698,27 @@ const NavIcon = ({ id, size=20, color="currentColor" }) => {
       return <svg viewBox="0 0 24 24" style={s}><rect x="9" y="3" width="6" height="11" rx="3" {...p} /><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0" {...p} /><path d="M12 18v3" {...p} /></svg>;
     case "send":
       return <svg viewBox="0 0 24 24" style={s}><path d="M4.5 12h14" {...p} /><path d="M12.5 5.5 19 12l-6.5 6.5" {...p} /></svg>;
+    // ---- Workspace tool icons (the hub's ToolCard grid) ----
+    case "calendar":
+      return <svg viewBox="0 0 24 24" style={s}><rect x="4" y="5.5" width="16" height="14" rx="2" {...p} /><path d="M4 10h16" {...p} /><path d="M8 3.5v3M16 3.5v3" {...p} /></svg>;
+    case "email":
+      return <svg viewBox="0 0 24 24" style={s}><rect x="3.5" y="6" width="17" height="12" rx="2" {...p} /><path d="M4 7l8 6 8-6" {...p} /></svg>;
+    case "tasks":
+      return <svg viewBox="0 0 24 24" style={s}><rect x="4.5" y="4.5" width="15" height="15" rx="2.5" {...p} /><path d="M8.5 12.5l2.3 2.3 4.7-5" {...p} /></svg>;
+    case "reminders":
+      return <svg viewBox="0 0 24 24" style={s}><path d="M6 17v-5a6 6 0 0 1 12 0v5" {...p} /><path d="M4.5 17h15" {...p} /><path d="M10 20a2 2 0 0 0 4 0" {...p} /></svg>;
+    case "projects":
+      return <svg viewBox="0 0 24 24" style={s}><path d="M6 3.5v17" {...p} /><path d="M6 4.5h11l-2.5 3 2.5 3H6" {...p} /></svg>;
+    case "notes":
+      return <svg viewBox="0 0 24 24" style={s}><rect x="5.5" y="3.5" width="13" height="17" rx="1.5" {...p} /><path d="M8.5 8.5h7M8.5 12h7M8.5 15.5h4.5" {...p} /></svg>;
+    case "documents":
+      return <svg viewBox="0 0 24 24" style={s}><path d="M7 3.5h7l4 4v13a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1v-16a1 1 0 0 1 1-1z" {...p} /><path d="M14 3.5v4h4" {...p} /></svg>;
+    case "files":
+      return <svg viewBox="0 0 24 24" style={s}><path d="M4 7.5a1.5 1.5 0 0 1 1.5-1.5h4l2 2h7a1.5 1.5 0 0 1 1.5 1.5v8a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 17.5z" {...p} /></svg>;
+    case "memos":
+      return <svg viewBox="0 0 24 24" style={s}><path d="M5 12v.01M8.5 8v8M12 5v14M15.5 8v8M19 12v.01" {...p} /></svg>;
+    case "contacts":
+      return <svg viewBox="0 0 24 24" style={s}><circle cx="9" cy="8.5" r="2.6" {...p} /><path d="M4 19c0-2.8 2.2-5 5-5s5 2.2 5 5" {...p} /><circle cx="17" cy="9" r="2.2" {...p} /><path d="M14.5 19c.2-2.3 1.8-4 3.5-4 1.9 0 3.5 1.8 3.7 4" {...p} /></svg>;
     default:
       return null;
   }
@@ -930,23 +1006,34 @@ function VoiceMode({ state, transcript, reply, error, onStart, onStop, onClose, 
   );
 }
 
-function UberModal({ dest, onClose, onBook }) {
+// Uber's ride-booking API (real fare estimates, in-app booking) requires their business
+// partner program — a business/legal agreement, not something any amount of code can obtain.
+// Faking a price table and an "requested" toast instead, as this used to, means a real user
+// would get a confirmation for a ride that was never actually booked — worse than not having
+// the feature at all. Uber does, however, publish a public, keyless "Ride Request Deeplink"
+// (https://developer.uber.com/docs/riders/ride-requests/tutorials/deep-links/introduction)
+// specifically for third-party apps to hand off to Uber's own app or m.uber.com with a
+// destination pre-filled — no API key, no partnership, no approval process. That's what this
+// does: real pricing and real booking happen on Uber's side, honestly.
+function buildUberDeepLink(address) {
+  const url = new URL("https://m.uber.com/ul/");
+  url.searchParams.set("action", "setPickup");
+  url.searchParams.set("pickup", "my_location");
+  if (address) url.searchParams.set("dropoff[formatted_address]", address);
+  return url.toString();
+}
+
+function UberModal({ dest, onClose }) {
+  const address = dest.location || dest.name || "";
   return (
     <div style={{ position:"fixed", inset:0, zIndex:950, background:"rgba(0,0,0,.93)", display:"flex", alignItems:"center", justifyContent:"center", padding:24 }} onClick={onClose}>
       <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:18, padding:28, maxWidth:380, width:"100%", animation:"pop .3s ease" }} onClick={e => e.stopPropagation()}>
-        <div style={{ fontSize:12, fontWeight:600, color:C.muted, marginBottom:6 }}>Ride estimate</div>
-        <div style={{ fontSize:19, fontWeight:700, color:C.white, marginBottom:3 }}>To: {dest.location || dest.name}</div>
-        <Mono style={{ display:"block", color:C.soft, marginBottom:22 }}>{dest.time ? `${dest.time} · ${dest.date}` : dest.dist ? `${dest.dist} away` : "Nearby"}</Mono>
-        {[{type:"UberX",eta:"4 min",price:"$8–11"},{type:"Comfort",eta:"6 min",price:"$12–15"},{type:"UberXL",eta:"8 min",price:"$16–20"}].map(r => (
-          <div key={r.type} onClick={() => onBook(r.type, dest.location || dest.name)} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"13px 8px", borderBottom:`1px solid ${C.div}`, cursor:"pointer", borderRadius:8, transition:"background .14s" }} onMouseEnter={e => e.currentTarget.style.background=C.hover} onMouseLeave={e => e.currentTarget.style.background="transparent"}>
-            <div>
-              <div style={{ fontWeight:700, fontSize:14, color:C.white }}>{r.type}</div>
-              <Mono style={{ color:C.muted }}>{r.eta}</Mono>
-            </div>
-            <Mono style={{ color:C.white, fontWeight:700, fontSize:13 }}>{r.price}</Mono>
-          </div>
-        ))}
-        <Btn v="outline" full onClick={onClose} style={{ marginTop:18 }}>Cancel</Btn>
+        <div style={{ fontSize:12, fontWeight:600, color:C.muted, marginBottom:6 }}>Get a ride</div>
+        <div style={{ fontSize:19, fontWeight:700, color:C.white, marginBottom:3 }}>To: {address || "your destination"}</div>
+        <Mono style={{ display:"block", color:C.soft, marginBottom:18 }}>{dest.time ? `${dest.time} · ${dest.date}` : dest.dist ? `${dest.dist} away` : "Nearby"}</Mono>
+        <Mono style={{ display:"block", color:C.muted, marginBottom:22, lineHeight:1.6 }}>Opens Uber with your pickup location and this destination filled in. Real pricing, ETA and booking happen there — KROFT doesn't have its own ride pricing or booking.</Mono>
+        <Btn full onClick={() => { window.open(buildUberDeepLink(address), "_blank", "noopener,noreferrer"); onClose(); }}>Continue to Uber</Btn>
+        <Btn v="outline" full onClick={onClose} style={{ marginTop:10 }}>Cancel</Btn>
       </div>
     </div>
   );
@@ -1205,7 +1292,7 @@ function ProfileSwitch({ value, onChange }) {
   );
 }
 
-function ProfileSection({ user, onEditPreferences, onSignOut, theme, onToggleTheme, toast, subscribed, onSetSubscribed, dailyMessageCount, freeLimit, usageStats, voiceReplies, onSetVoiceReplies, proactiveInsights, onSetProactiveInsights, onSetupBiometric, onRemoveBiometric, onExportData, onImportData, notifPermission, notifPrefs, onEnableNotifications, onSetNotifPref, onTestNotification, aiExtrasCount, extrasLimit, monthlyReportCount, reportLimit, reportsLeftThisMonth, onUpgradeFromNotifs, voiceTurnsCount, voiceLimit }) {
+function ProfileSection({ user, onEditPreferences, onSignOut, theme, onToggleTheme, toast, subscribed, billingLoading, onUpgrade, onManageBilling, dailyMessageCount, freeLimit, usageStats, voiceReplies, onSetVoiceReplies, proactiveInsights, onSetProactiveInsights, onSetupBiometric, onRemoveBiometric, onExportData, onImportData, notifPermission, notifPrefs, onEnableNotifications, onSetNotifPref, onTestNotification, aiExtrasCount, extrasLimit, monthlyReportCount, reportLimit, reportsLeftThisMonth, voiceTurnsCount, voiceLimit }) {
   // null = main hub. Otherwise one of: "ai" | "productivity" | "privacy" | "subscription" | "support"
   const [screen, setScreen] = useState(null);
   const [openRow, setOpenRow] = useState(null);
@@ -1310,7 +1397,7 @@ function ProfileSection({ user, onEditPreferences, onSignOut, theme, onToggleThe
                 </div>
                 {subscribed
                   ? <ProfileSwitch value={!!notifPrefs.dailyBrief} onChange={v => onSetNotifPref("dailyBrief", v)} />
-                  : <Btn sm v="outline" onClick={onUpgradeFromNotifs}>Upgrade</Btn>}
+                  : <Btn sm v="outline" disabled={billingLoading} onClick={onUpgrade}>{billingLoading ? <Spinner size={14} color={C.soft} thickness={2} /> : "Upgrade"}</Btn>}
               </div>
               <Btn sm v="outline" onClick={onTestNotification} style={{ marginTop:4 }}>Send a test</Btn>
               {/* Stated plainly rather than letting people assume background delivery works. */}
@@ -1330,14 +1417,14 @@ function ProfileSection({ user, onEditPreferences, onSignOut, theme, onToggleThe
     <div style={{ animation:"fadeUp .25s ease" }}>
       <ProfileScreenHeader title="Productivity" onBack={goBack} />
       <Card style={{ padding:"2px 16px" }}>
-        <ProfileRow label="Calendar Connections" sub={user.connected.calendar ? "Google Calendar linked" : "Not linked"} expanded={openRow==="cal"} onToggle={()=>toggle("cal")}>
+        <ProfileRow label="Calendar Connections" sub={[user.connected.calendar&&"Google Calendar",user.connected.outlookCalendar&&"Outlook Calendar"].filter(Boolean).join(" + ")||"Not linked"} expanded={openRow==="cal"} onToggle={()=>toggle("cal")}>
           <Btn sm v="outline" onClick={onEditPreferences}>Manage connections</Btn>
         </ProfileRow>
-        <ProfileRow label="Email Accounts" sub={user.connected.gmail ? "Gmail linked" : "Not linked"} expanded={openRow==="mail"} onToggle={()=>toggle("mail")}>
+        <ProfileRow label="Email Accounts" sub={[user.connected.gmail&&"Gmail",user.connected.outlookMail&&"Outlook"].filter(Boolean).join(" + ")||"Not linked"} expanded={openRow==="mail"} onToggle={()=>toggle("mail")}>
           <Btn sm v="outline" onClick={onEditPreferences}>Manage connections</Btn>
         </ProfileRow>
         <ProfileRow label="Linked Apps" sub={`${Object.values(user.connected).filter(Boolean).length} connected`} expanded={openRow==="apps"} onToggle={()=>toggle("apps")}>
-          <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>Gmail, Google Calendar and Uber can be linked from Preferences.</Mono>
+          <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>Gmail, Google Calendar, Outlook Mail and Outlook Calendar can each be linked from Preferences. Uber works automatically — no linking needed.</Mono>
         </ProfileRow>
         <ProfileRow label="Smart Automations" sub="Reminders, briefings, insights" expanded={openRow==="auto"} onToggle={()=>toggle("auto")}
           right={<ProfileSwitch value={proactiveInsights} onChange={onSetProactiveInsights} />}>
@@ -1423,8 +1510,8 @@ function ProfileSection({ user, onEditPreferences, onSignOut, theme, onToggleThe
           <Mono style={{ display:"block", color:C.soft, marginBottom:14 }}>Unlimited chat, voice, drafts and reports.</Mono>
         )}
         {subscribed
-          ? <Btn sm v="outline" onClick={() => { onSetSubscribed(false); toast("Downgraded to the free plan."); }}>Cancel KROFT Plus</Btn>
-          : <Btn sm onClick={() => { onSetSubscribed(true); toast("KROFT Plus enabled — no charge, this build has no payment set up."); }}>Upgrade to KROFT Plus</Btn>}
+          ? <Btn sm v="outline" disabled={billingLoading} onClick={onManageBilling}>{billingLoading ? <Spinner size={14} color={C.soft} thickness={2} /> : "Cancel plan"}</Btn>
+          : <Btn sm disabled={billingLoading} onClick={onUpgrade}>{billingLoading ? <Spinner size={14} color={C.black} thickness={2} /> : "Upgrade to KROFT Plus"}</Btn>}
       </Card>
 
       <Card style={{ padding:"2px 16px" }}>
@@ -1456,15 +1543,38 @@ function ProfileSection({ user, onEditPreferences, onSignOut, theme, onToggleThe
           <Mono style={{ display:"block", color:C.muted, lineHeight:1.6, marginBottom:12, paddingTop:10, borderTop:`1px solid ${C.div}` }}>
             Finances, budgets, contacts, notes, tasks, recurring transactions and notifications are complete on the free plan and always will be — Plus is only about the AI calls above.
           </Mono>
-          {!subscribed && <Btn sm onClick={() => { onSetSubscribed(true); toast("KROFT Plus enabled — no charge, this build has no payment set up."); }}>Upgrade</Btn>}
+          {!subscribed && <Btn sm disabled={billingLoading} onClick={onUpgrade}>{billingLoading ? <Spinner size={14} color={C.black} thickness={2} /> : "Upgrade"}</Btn>}
         </ProfileRow>
-        <ProfileRow label="Billing" sub={subscribed ? "No charge — this build has no payment processor connected" : "No payment method on file"} expanded={openRow==="billing"} onToggle={()=>toggle("billing")}>
-          <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>
-            KROFT Plus is currently free to toggle in this build since no payment provider (Stripe, App Store, Play Billing) is connected yet. Nothing is charged.
+        <ProfileRow label="Billing" sub={subscriptionStatus === "past_due" ? "Renewal failed — action needed" : subscribed ? "Active" : "No payment method on file"} expanded={openRow==="billing"} onToggle={()=>toggle("billing")}>
+          <Mono style={{ display:"block", color:C.soft, lineHeight:1.7, marginBottom:10 }}>
+            {subscriptionStatus === "past_due"
+              ? "Your last renewal charge failed, so Plus access has paused. Resubscribe below to restore it."
+              : subscribed
+              ? "Your subscription and card are held by our secure payment partner, not KROFT. There's no self-serve billing portal — cancel here any time, or contact support for a receipt."
+              : "Upgrading opens a secure checkout — KROFT never sees or stores your card details directly."}
           </Mono>
+          {subscribed && !autoRenews && (
+            <Mono style={{ display:"block", color:C.muted, lineHeight:1.7, marginBottom:10 }}>
+              Your current payment method doesn't automatically renew — you'll need to manually resubscribe before your current period ends.
+            </Mono>
+          )}
+          {!subscribed && (
+            <Mono style={{ display:"block", color:C.muted, lineHeight:1.7, marginBottom:10 }}>
+              KROFT Plus renews automatically only with a card. Bank transfer, USSD, and mobile money are also accepted at checkout, but those don't auto-renew — you'd need to manually resubscribe each cycle.
+            </Mono>
+          )}
+          {subscribed && <Btn sm v="outline" disabled={billingLoading} onClick={onManageBilling}>{billingLoading ? <Spinner size={14} color={C.soft} thickness={2} /> : "Cancel plan"}</Btn>}
+          {!subscribed && (
+            <Btn sm disabled={billingLoading} onClick={onUpgrade}>{billingLoading ? <Spinner size={14} color={C.black} thickness={2} /> : subscriptionStatus === "past_due" ? "Resubscribe" : "Upgrade"}</Btn>
+          )}
         </ProfileRow>
-        <ProfileRow label="Payment Methods" sub="None on file" expanded={openRow==="paymethods"} onToggle={()=>toggle("paymethods")}>
-          <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>Card management will appear here once a real payment provider is integrated.</Mono>
+        <ProfileRow label="Payment Methods" sub={subscribed ? "On file with our payment partner" : "None on file"} expanded={openRow==="paymethods"} onToggle={()=>toggle("paymethods")}>
+          <Mono style={{ display:"block", color:C.soft, lineHeight:1.7, marginBottom:subscribed?10:0 }}>
+            {subscribed
+              ? "Card details live with our payment partner, not KROFT. There's no self-serve way to swap the card on an active plan — cancel here, then re-subscribe with the new card."
+              : "Card entry happens through our secure payment partner once you upgrade to KROFT Plus."}
+          </Mono>
+          {subscribed && <Btn sm v="outline" disabled={billingLoading} onClick={onManageBilling}>{billingLoading ? <Spinner size={14} color={C.soft} thickness={2} /> : "Cancel plan"}</Btn>}
         </ProfileRow>
         <ProfileRow label="Usage Statistics" sub="Real activity from this session" expanded={openRow==="usage"} onToggle={()=>toggle("usage")}>
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:9 }}>
@@ -1489,13 +1599,13 @@ function ProfileSection({ user, onEditPreferences, onSignOut, theme, onToggleThe
         <ProfileRow label="Manage Subscription" sub={subscribed ? "Change or cancel plan" : "You're on the free plan"} expanded={openRow==="managesub"} onToggle={()=>toggle("managesub")}>
           {subscribed ? (
             <>
-              <Mono style={{ display:"block", color:C.soft, lineHeight:1.7, marginBottom:10 }}>You're on KROFT Plus. Cancel any time — you'll return to the free plan's daily message limit immediately.</Mono>
-              <Btn sm v="outline" onClick={() => { onSetSubscribed(false); toast("Downgraded to the free plan."); }}>Cancel KROFT Plus</Btn>
+              <Mono style={{ display:"block", color:C.soft, lineHeight:1.7, marginBottom:10 }}>You're on KROFT Plus. Cancel any time, right here — there's no separate billing site to visit.</Mono>
+              <Btn sm v="outline" disabled={billingLoading} onClick={onManageBilling}>{billingLoading ? <Spinner size={14} color={C.soft} thickness={2} /> : "Cancel plan"}</Btn>
             </>
           ) : (
             <>
               <Mono style={{ display:"block", color:C.soft, lineHeight:1.7, marginBottom:10 }}>Nothing to manage yet — upgrade to KROFT Plus to remove your daily message limit.</Mono>
-              <Btn sm onClick={() => { onSetSubscribed(true); toast("KROFT Plus enabled — no charge, this build has no payment set up."); }}>Upgrade</Btn>
+              <Btn sm disabled={billingLoading} onClick={onUpgrade}>{billingLoading ? <Spinner size={14} color={C.black} thickness={2} /> : "Upgrade"}</Btn>
             </>
           )}
         </ProfileRow>
@@ -1751,7 +1861,7 @@ function KroftApp({ onFullReset } = {}) {
   // True while a signup/login request to Supabase Auth is in flight, so the button can show a
   // spinner and can't be double-submitted by an impatient extra click.
   const [authLoading, setAuthLoading] = useState(false);
-  const [user, setUser] = useState({ name:"", email:"", password:"", phone:"", photo:null, businessName:"", businessType:"", currency:"USD", connected:{gmail:false,calendar:false,uber:false} });
+  const [user, setUser] = useState({ name:"", email:"", password:"", phone:"", photo:null, businessName:"", businessType:"", currency:"USD", connected:{gmail:false,calendar:false,uber:false,outlookMail:false,outlookCalendar:false} });
   // Real Google connection state, as reported by api/google/status.js — the actual source of
   // truth for whether Gmail/Calendar are linked. user.connected.gmail/.calendar (persisted,
   // used for the read-only status text elsewhere in Profile) is kept in sync with this rather
@@ -1760,8 +1870,17 @@ function KroftApp({ onFullReset } = {}) {
   // "Connect accounts" list below for why.
   const [googleStatus, setGoogleStatus] = useState({ gmail:false, calendar:false });
   const [googleLinking, setGoogleLinking] = useState(false);
-  const [syncingGmail, setSyncingGmail] = useState(false);
+  // Microsoft/Outlook, same shape and reasoning as googleStatus/googleLinking above — see
+  // api/microsoft/status.js. Kept as separate state (rather than a generic {provider: {...}}
+  // map) since Gmail/Calendar and Outlook Mail/Calendar are each rendered as their own rows in
+  // Preferences with independent connect/disconnect actions.
+  const [microsoftStatus, setMicrosoftStatus] = useState({ mail:false, calendar:false });
+  const [microsoftLinking, setMicrosoftLinking] = useState(false);
+  const [syncingMail, setSyncingMail] = useState(false);
   const [syncingCalendar, setSyncingCalendar] = useState(false);
+  // True while a checkout redirect or a cancellation is in flight, so the Upgrade/Cancel plan
+  // buttons throughout Profile can't be double-clicked into two requests.
+  const [billingLoading, setBillingLoading] = useState(false);
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPw, setLoginPw] = useState("");
   const [showLoginPw, setShowLoginPw] = useState(false);
@@ -1794,7 +1913,6 @@ function KroftApp({ onFullReset } = {}) {
   const [homeSection, setHomeSection] = useState("overview");
   const [workspaceSection, setWorkspaceSection] = useState(null); // null = hub screen
   const [workspaceSearch, setWorkspaceSearch] = useState("");
-  const [showAllTools, setShowAllTools] = useState(false);
   const [income, setIncome] = useState([]);
   const [expenses, setExpenses] = useState([]);
   const [incomeCats, setIncomeCats] = useState(["Invoice","Sales","Consulting","Freelance","Other"]);
@@ -1934,6 +2052,10 @@ function KroftApp({ onFullReset } = {}) {
   const [listening, setListening] = useState(false);
   const [transcript, setTranscript] = useState("");
   const [toasts, setToasts] = useState([]);
+  // Confetti is a rare, deliberate "moment" (see celebrate() below) — a single boolean is
+  // enough since it's a fire-and-forget overlay; a second celebration while one is already
+  // playing just keeps the current burst running rather than stacking bursts.
+  const [showConfetti, setShowConfetti] = useState(false);
   const [hungry, setHungry] = useState(false);
   const [showBriefing, setShowBriefing] = useState(false);
   const [uberDest, setUberDest] = useState(null);
@@ -2015,6 +2137,14 @@ function KroftApp({ onFullReset } = {}) {
   const [monthlyReportMonth, setMonthlyReportMonth] = useState(() => todayISO().slice(0, 7));
   const reportsLeftThisMonth = () => Math.max(0, FREE_MONTHLY_REPORT_LIMIT - monthlyReportCount);
   const [subscribed, setSubscribed] = useState(false);
+  // Raw subscriptions.status ("inactive" | "active" | "past_due" | "canceled") — kept alongside
+  // the derived `subscribed` boolean so the UI can tell "never subscribed" apart from "a renewal
+  // charge failed", which needs its own notice rather than just silently losing Plus access.
+  const [subscriptionStatus, setSubscriptionStatus] = useState("inactive");
+  // Whether the payment method behind the current/last charge auto-renews (card) or not (bank
+  // transfer, USSD, mobile money, or an unconfirmed wallet-pay) — see isRecurringCapablePayment
+  // in api/_lib/flutterwave.js, which is what actually sets this on the server.
+  const [autoRenews, setAutoRenews] = useState(false);
   const [dailyMessageCount, setDailyMessageCount] = useState(0);
   const [messageCountDate, setMessageCountDate] = useState(() => new Date().toDateString());
 
@@ -2049,7 +2179,13 @@ function KroftApp({ onFullReset } = {}) {
       if (p.dailyBriefSentDate) setDailyBriefSentDate(p.dailyBriefSentDate);
       if (typeof p.voiceTurnsCount === "number") setVoiceTurnsCount(p.voiceTurnsCount);
       if (p.voiceTurnsDate) setVoiceTurnsDate(p.voiceTurnsDate);
-      if (typeof p.subscribed === "boolean") setSubscribed(p.subscribed);
+      // Deliberately NOT restoring p.subscribed here. kv_store is writable by the account owner
+      // themselves (see supabase/schema.sql's kv_store RLS policies) — trusting a self-persisted
+      // "am I paying" flag would let anyone grant themselves Plus by editing their own profile
+      // blob directly via the Supabase REST API. subscribed only ever becomes true through
+      // refreshSubscriptionStatus's read of the server-verified subscriptions row (written only
+      // by api/billing/webhook.js and api/billing/callback.js); defaulting to false here just
+      // means a brief flash of "Free plan" until that fetch resolves, not a lasting gap.
       if (typeof p.dailyMessageCount === "number") setDailyMessageCount(p.dailyMessageCount);
       if (p.messageCountDate) setMessageCountDate(p.messageCountDate);
       if (Array.isArray(p.incomeCats)) setIncomeCats(p.incomeCats);
@@ -2134,13 +2270,16 @@ function KroftApp({ onFullReset } = {}) {
   // Without that, a user who signs up and moves straight to the next onboarding step without
   // touching another profile field would have their name/email sitting only in the pre-auth
   // localStorage fallback, not yet under their new account — invisible on their next login.
-  const saveProfileNow = () => window.storage.set(STORAGE_KEYS.profile, JSON.stringify({ user, theme, voiceReplies, proactiveInsights, subscribed, dailyMessageCount, messageCountDate, incomeCats, expenseCats, notifPrefs, aiExtrasCount, aiExtrasDate, monthlyReportCount, monthlyReportMonth, dailyBriefSentDate, voiceTurnsCount, voiceTurnsDate }), false);
+  // subscribed is deliberately excluded — see hydrateAllGroups's comment on why it's never
+  // restored from this same blob; persisting it here would just re-create the value this app
+  // must never trust from client storage in the first place.
+  const saveProfileNow = () => window.storage.set(STORAGE_KEYS.profile, JSON.stringify({ user, theme, voiceReplies, proactiveInsights, dailyMessageCount, messageCountDate, incomeCats, expenseCats, notifPrefs, aiExtrasCount, aiExtrasDate, monthlyReportCount, monthlyReportMonth, dailyBriefSentDate, voiceTurnsCount, voiceTurnsDate }), false);
 
   useEffect(() => {
     if (!dataLoaded) return;
     const t = setTimeout(() => { saveProfileNow().catch(()=>{}); }, 900);
     return () => clearTimeout(t);
-  }, [dataLoaded, user, theme, voiceReplies, proactiveInsights, subscribed, dailyMessageCount, messageCountDate, incomeCats, expenseCats, notifPrefs, aiExtrasCount, aiExtrasDate, monthlyReportCount, monthlyReportMonth, dailyBriefSentDate, voiceTurnsCount, voiceTurnsDate]);
+  }, [dataLoaded, user, theme, voiceReplies, proactiveInsights, dailyMessageCount, messageCountDate, incomeCats, expenseCats, notifPrefs, aiExtrasCount, aiExtrasDate, monthlyReportCount, monthlyReportMonth, dailyBriefSentDate, voiceTurnsCount, voiceTurnsDate]);
 
   useEffect(() => {
     if (!dataLoaded) return;
@@ -2251,12 +2390,46 @@ function KroftApp({ onFullReset } = {}) {
 
   const toast = useCallback((msg, onUndo) => {
     const id = uid();
-    setToasts(p => [{ id, msg, onUndo }, ...p.slice(0,3)]);
+    // Capped at 2 concurrent toasts, not 4 — the fixed top-right stack has no reserved space of
+    // its own, so it floats directly over whatever's underneath (the app header, in particular).
+    // Four stacked toasts (each up to ~50px, some wrapping to two lines) grew tall enough to
+    // fully cover the header/logo for the several seconds they're all up — not toasts
+    // overlapping each other, but the stack overlapping real page content beneath it.
+    setToasts(p => [{ id, msg, onUndo }, ...p.slice(0,1)]);
+    haptic(10);
     // Undo gets meaningfully longer than a plain confirmation. Six seconds is fine at a desk,
     // but it's tight on a phone while walking, and a screen reader may still be queuing the
     // announcement when the only chance to reverse a deletion disappears.
     setTimeout(() => setToasts(p => p.filter(t => t.id !== id)), onUndo ? UNDO_MS : 4200);
   }, []);
+
+  // A real "moment" — confetti + a distinct, more festive haptic pattern — reserved for genuine
+  // milestones (see call sites: all tasks cleared, first-ever finance entry, KROFT Plus
+  // activated, wellness hitting 100), not everyday confirmations. Those keep the plain toast().
+  const celebrate = useCallback(() => { setShowConfetti(true); haptic([15, 60, 15, 60, 40]); }, []);
+
+  // Celebrates the first time wellness reaches a perfect 100 after having been lower — the ref
+  // re-arms once it dips back below 100, so climbing back up to 100 later celebrates again
+  // rather than only ever once per session. The initial hydration snapshot is recorded without
+  // celebrating — a returning user whose wellness was already 100 from a previous session
+  // shouldn't get a "you just reached it" moment on every reload.
+  const wellnessCelebratedRef = useRef(false);
+  const wellnessInitializedRef = useRef(false);
+  useEffect(() => {
+    if (!dataLoaded) return;
+    if (!wellnessInitializedRef.current) {
+      wellnessInitializedRef.current = true;
+      wellnessCelebratedRef.current = wellness >= 100;
+      return;
+    }
+    if (wellness >= 100 && !wellnessCelebratedRef.current) {
+      wellnessCelebratedRef.current = true;
+      toast("Wellness at 100 — you're taking great care of yourself.");
+      celebrate();
+    } else if (wellness < 100) {
+      wellnessCelebratedRef.current = false;
+    }
+  }, [wellness, dataLoaded]);
 
   const remind = appt => {
     const msg = `Hey ${user.name||"there"}, reminder: "${appt.title}" at ${appt.time}${appt.date?" on "+appt.date:""}${appt.location?" at "+appt.location:""}.`;
@@ -2321,6 +2494,7 @@ function KroftApp({ onFullReset } = {}) {
   }, [dataLoaded]);
 
   const applyMood = m => {
+    haptic(m==="happy" ? [10, 30, 10] : 12);
     // Entries carry a date as well as a time. Without one, yesterday's 9am and today's 9am were
     // indistinguishable in the log — which didn't show while nothing persisted, but makes the
     // history unreadable now that it does.
@@ -2483,6 +2657,24 @@ function KroftApp({ onFullReset } = {}) {
     });
   };
 
+  // Same idea as authedFetch, but for api/chat.js specifically: that endpoint only requires
+  // sign-in when Supabase is actually configured server-side (see its own comment) and stays
+  // open in local-only mode — so unlike authedFetch, this never throws. It attaches a session
+  // token opportunistically when one exists, and otherwise sends the request exactly as before.
+  const aiFetch = async (path, opts = {}) => {
+    const headers = { ...(opts.body ? { "Content-Type": "application/json" } : {}), ...opts.headers };
+    if (isSupabaseConfigured) {
+      try {
+        const { data: { session } = {} } = await supabase.auth.getSession();
+        if (session) headers.Authorization = `Bearer ${session.access_token}`;
+      } catch {
+        // Best-effort — if this fails for any reason, fall through and send the request
+        // unauthenticated exactly as it always used to, rather than blocking AI chat on it.
+      }
+    }
+    return fetch(path, { ...opts, headers });
+  };
+
   // The actual source of truth for Gmail/Calendar connection state — called after a successful
   // OAuth round-trip and once on reaching the dashboard, so user.connected.gmail/.calendar
   // (used for the read-only status text in Profile) never drifts from what's really connected.
@@ -2534,88 +2726,236 @@ function KroftApp({ onFullReset } = {}) {
     }
   };
 
-  // Pulls the real inbox from Gmail and replaces the local `emails` list with it — including
-  // the very first pull, which is exactly what should happen to the three seed/mock emails
-  // this app starts with (see the emails useState above): connecting a real inbox should show
-  // that real inbox, not a real inbox appended after fake sample data.
-  const syncGmail = async () => {
-    setSyncingGmail(true);
+  // Microsoft/Outlook — same shape and reasoning as the Google trio above, against
+  // api/microsoft/*. See api/_lib/microsoft.js for why disconnect only deletes KROFT's own
+  // stored copy rather than also revoking with Microsoft (unlike Google, there's no simple
+  // server-side revoke endpoint on their side).
+  const refreshMicrosoftStatus = async () => {
+    if (!isSupabaseConfigured) return;
     try {
-      const res = await authedFetch("/api/gmail/messages");
-      if (!res.ok) { toast(res.status===409 ? "Gmail isn't connected." : "Couldn't load Gmail right now."); return; }
-      const { messages } = await res.json();
-      setEmails(messages);
-      toast(`Loaded ${messages.length} email${messages.length===1?"":"s"} from Gmail.`);
+      const res = await authedFetch("/api/microsoft/status");
+      if (!res.ok) return;
+      const status = await res.json();
+      setMicrosoftStatus({ mail: !!status.mail, calendar: !!status.calendar });
+      // Mirrors into user.connected under distinct keys (not gmail/calendar, which stay
+      // Google-specific) so the read-only status text elsewhere in Profile — which only knows
+      // about user.connected, not googleStatus/microsoftStatus — stays accurate too.
+      setUser(u => ({ ...u, connected: { ...u.connected, outlookMail: !!status.mail, outlookCalendar: !!status.calendar } }));
     } catch {
-      toast("Couldn't load Gmail right now.");
-    } finally {
-      setSyncingGmail(false);
+      // Silent — background status refresh, same reasoning as refreshGoogleStatus.
     }
   };
 
-  // Pulls upcoming events from Google Calendar and merges them into the local `appts` list,
-  // replacing any previously-synced Google events (tagged source:"google") so a re-sync
+  const connectMicrosoft = async () => {
+    setMicrosoftLinking(true);
+    try {
+      const res = await authedFetch("/api/microsoft/start");
+      if (!res.ok) { toast("Couldn't start Microsoft sign-in. Try again."); setMicrosoftLinking(false); return; }
+      const { url } = await res.json();
+      window.location.href = url;
+    } catch {
+      toast("Couldn't start Microsoft sign-in. Try again.");
+      setMicrosoftLinking(false);
+    }
+  };
+
+  const disconnectMicrosoft = async () => {
+    setMicrosoftLinking(true);
+    try {
+      const res = await authedFetch("/api/microsoft/disconnect", { method: "POST" });
+      setMicrosoftLinking(false);
+      if (!res.ok) { toast("Couldn't disconnect Microsoft. Try again."); return; }
+      setMicrosoftStatus({ mail: false, calendar: false });
+      setUser(u => ({ ...u, connected: { ...u.connected, outlookMail: false, outlookCalendar: false } }));
+      toast("Microsoft account disconnected.");
+    } catch {
+      setMicrosoftLinking(false);
+      toast("Couldn't disconnect Microsoft. Try again.");
+    }
+  };
+
+  // Pulls the real inbox from whichever email account(s) are connected (Gmail, Outlook, or
+  // both — api/mail/messages.js merges them) and replaces the local `emails` list with it —
+  // including the very first pull, which is exactly what should happen to the three seed/mock
+  // emails this app starts with (see the emails useState above): connecting a real inbox
+  // should show that real inbox, not a real inbox appended after fake sample data.
+  const syncMail = async () => {
+    setSyncingMail(true);
+    try {
+      const res = await authedFetch("/api/mail/messages");
+      if (!res.ok) { toast(res.status===409 ? "No email account is connected." : "Couldn't load your inbox right now."); return; }
+      const { messages } = await res.json();
+      setEmails(messages);
+      toast(`Loaded ${messages.length} email${messages.length===1?"":"s"}.`);
+    } catch {
+      toast("Couldn't load your inbox right now.");
+    } finally {
+      setSyncingMail(false);
+    }
+  };
+
+  // Pulls upcoming events from whichever calendar(s) are connected (Google, Outlook, or both —
+  // api/calendar/events.js merges them) and merges them into the local `appts` list, replacing
+  // any previously-synced remote events (tagged source:"google"|"outlook") so a re-sync
   // doesn't pile up duplicates, while leaving purely local appointments (added directly in
-  // Kroft, never sent to Google) untouched.
-  const syncGoogleCalendar = async () => {
+  // Kroft, never sent to a connected calendar) untouched.
+  const syncCalendar = async () => {
     setSyncingCalendar(true);
     try {
       const res = await authedFetch("/api/calendar/events");
-      if (!res.ok) { toast(res.status===409 ? "Google Calendar isn't connected." : "Couldn't load Calendar right now."); return; }
-      const { appts: googleAppts } = await res.json();
-      setAppts(p => [...p.filter(a => a.source !== "google"), ...googleAppts]);
-      toast(`Loaded ${googleAppts.length} event${googleAppts.length===1?"":"s"} from Google Calendar.`);
+      if (!res.ok) { toast(res.status===409 ? "No calendar is connected." : "Couldn't load your calendar right now."); return; }
+      const { appts: remoteAppts } = await res.json();
+      setAppts(p => [...p.filter(a => a.source !== "google" && a.source !== "outlook"), ...remoteAppts]);
+      toast(`Loaded ${remoteAppts.length} event${remoteAppts.length===1?"":"s"}.`);
     } catch {
-      toast("Couldn't load Calendar right now.");
+      toast("Couldn't load your calendar right now.");
     } finally {
       setSyncingCalendar(false);
     }
   };
 
-  // Mirrors a locally-added appointment onto the user's real Google Calendar when it's
-  // connected. Deliberately fire-and-forget: the appointment already exists in Kroft's own
-  // local `appts` (the app's source of truth for what it displays) the instant it's added,
-  // regardless of whether this call succeeds, is slow, or Calendar isn't connected at all —
-  // nothing about adding an appointment should block on, or fail because of, a third-party API.
-  const mirrorAppointmentToGoogleCalendar = (appt) => {
-    if (!googleStatus.calendar) return;
+  // Mirrors a locally-added appointment onto every connected real calendar (api/calendar/
+  // events.js's POST creates it on Google and/or Outlook, whichever are connected).
+  // Deliberately fire-and-forget: the appointment already exists in Kroft's own local `appts`
+  // (the app's source of truth for what it displays) the instant it's added, regardless of
+  // whether this call succeeds, is slow, or no calendar is connected at all — nothing about
+  // adding an appointment should block on, or fail because of, a third-party API.
+  const mirrorAppointmentToCalendars = (appt) => {
+    if (!googleStatus.calendar && !microsoftStatus.calendar) return;
     authedFetch("/api/calendar/events", {
       method: "POST",
       body: JSON.stringify({ title: appt.title, date: appt.date, time: appt.time, location: appt.location, notes: appt.notes }),
     }).catch(() => {}); // best-effort — see comment above
   };
 
-  // Consumes the oauth=success/error query params Google's consent flow lands back on the app
-  // with (see api/google/callback.js's redirectTo) — shows the right toast once, then strips
-  // them from the URL so a manual refresh doesn't re-show a stale result. Runs once on mount;
-  // this is independent of the main hydration effect since it reflects what just happened in
-  // the browser's address bar, not persisted account data.
+  // The real source of truth for KROFT Plus — reads the subscriptions row Flutterwave's webhook
+  // and post-checkout verification (api/billing/webhook.js, api/billing/callback.js) keep in
+  // sync, never something set directly by a client action. "active" counts as subscribed;
+  // everything else (inactive, canceled, or no row at all for a user who's never subscribed)
+  // doesn't.
+  const refreshSubscriptionStatus = async () => {
+    if (!isSupabaseConfigured) return;
+    try {
+      const { data: { user } = {} } = await supabase.auth.getUser();
+      if (!user) return;
+      const { data, error } = await supabase.from("subscriptions").select("status, auto_renews").eq("user_id", user.id).maybeSingle();
+      if (error) return;
+      setSubscribed(data?.status === "active");
+      setSubscriptionStatus(data?.status || "inactive");
+      setAutoRenews(!!data?.auto_renews);
+    } catch {
+      // Silent — a background status refresh, not a user-initiated action.
+    }
+  };
+
+  // Redirects to Flutterwave's hosted Checkout for a new subscription. Nothing here can make
+  // `subscribed` true directly — that only ever happens once api/billing/callback.js verifies
+  // a real payment server-side (or, for later renewals, once api/billing/webhook.js confirms
+  // one) and refreshSubscriptionStatus picks it up (see the billing=success handling below).
+  const startCheckout = async () => {
+    if (!isSupabaseConfigured) { toast("Sign in with a real account to upgrade."); return; }
+    setBillingLoading(true);
+    try {
+      const res = await authedFetch("/api/billing/checkout", { method: "POST" });
+      if (!res.ok) {
+        // 409 means the server already sees an active subscription (e.g. a stale second tab) —
+        // "try again" would be actively wrong advice there, since starting another checkout is
+        // exactly what api/billing/checkout.js just refused to prevent a duplicate charge.
+        toast(res.status === 409 ? "You're already on KROFT Plus." : "Couldn't start checkout. Try again.");
+        setBillingLoading(false);
+        if (res.status === 409) refreshSubscriptionStatus();
+        return;
+      }
+      const { url } = await res.json();
+      window.location.href = url; // full navigation — Flutterwave's checkout page won't render in a fetch response
+    } catch {
+      toast("Couldn't start checkout. Try again.");
+      setBillingLoading(false);
+    }
+  };
+
+  // Cancels KROFT Plus directly. Unlike Stripe, Flutterwave has no hosted self-serve portal to
+  // redirect to — this calls Flutterwave's cancel-subscription API on the user's behalf (see
+  // api/billing/cancel.js), confirmed here first since there's no separate confirmation screen
+  // on Flutterwave's side the way a portal would provide.
+  const cancelKroftPlus = async () => {
+    if (!window.confirm("Cancel KROFT Plus? You'll lose unlimited access once this takes effect.")) return;
+    setBillingLoading(true);
+    try {
+      const res = await authedFetch("/api/billing/cancel", { method: "POST" });
+      setBillingLoading(false);
+      if (!res.ok) {
+        toast(res.status === 409 ? "No active subscription to cancel." : "Couldn't cancel. Try again.");
+        return;
+      }
+      setSubscribed(false);
+      toast("KROFT Plus cancelled.");
+    } catch {
+      setBillingLoading(false);
+      toast("Couldn't cancel. Try again.");
+    }
+  };
+
+  // Consumes the billing=success/cancelled/error query params api/billing/callback.js lands
+  // back on the app with after a Flutterwave checkout attempt — same pattern as the
+  // oauth=success/error handling below, kept separate since they're unrelated redirects that
+  // can each arrive independently.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const billingResult = params.get("billing");
+    if (!billingResult) return;
+    if (billingResult === "success") {
+      toast("Payment received — welcome to KROFT Plus.");
+      celebrate();
+      refreshSubscriptionStatus();
+    } else if (billingResult === "cancelled") {
+      toast("Checkout cancelled — no charge was made.");
+    } else if (billingResult === "error") {
+      // api/billing/callback.js's own server-side verification didn't confirm the payment —
+      // shown distinctly from a plain cancellation since this means something went wrong with
+      // an attempted charge, not that the user simply backed out.
+      toast("Couldn't confirm the payment. If you were charged, contact support.");
+    }
+    params.delete("billing"); params.delete("billing_error");
+    const cleanUrl = window.location.pathname + (params.toString() ? `?${params}` : "") + window.location.hash;
+    window.history.replaceState({}, "", cleanUrl);
+  }, []);
+
+  // Consumes the oauth=success/error query params Google's or Microsoft's consent flow lands
+  // back on the app with (see api/google/callback.js and api/microsoft/callback.js's
+  // redirectTo — oauth_provider distinguishes which one) — shows the right toast once, then
+  // strips them from the URL so a manual refresh doesn't re-show a stale result. Runs once on
+  // mount; this is independent of the main hydration effect since it reflects what just
+  // happened in the browser's address bar, not persisted account data.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const oauthResult = params.get("oauth");
     if (!oauthResult) return;
+    const provider = params.get("oauth_provider") === "microsoft" ? "Microsoft" : "Google";
     if (oauthResult === "success") {
-      toast("Google account connected.");
+      toast(`${provider} account connected.`);
       refreshGoogleStatus();
+      refreshMicrosoftStatus();
       // Best-effort first pull so the newly-connected inbox/calendar aren't still showing
       // stale mock data or an empty list the moment the user lands back on the dashboard —
       // each call is a no-op (a handled 409) if that particular scope wasn't actually granted.
-      syncGmail();
-      syncGoogleCalendar();
+      syncMail();
+      syncCalendar();
     } else if (oauthResult === "error") {
       const reason = params.get("oauth_error") || "unknown_error";
-      toast(reason === "access_denied" ? "Google sign-in was cancelled." : "Couldn't connect Google. Try again.");
+      toast(reason === "access_denied" ? `${provider} sign-in was cancelled.` : `Couldn't connect ${provider}. Try again.`);
     }
     params.delete("oauth"); params.delete("oauth_provider"); params.delete("oauth_error");
     const cleanUrl = window.location.pathname + (params.toString() ? `?${params}` : "") + window.location.hash;
     window.history.replaceState({}, "", cleanUrl);
   }, []);
 
-  // Keeps the connected badges accurate whenever the dashboard is (re)entered — covers a
-  // fresh login, a returning already-signed-in session, and finishing onboarding via "Enter
-  // KROFT", without needing each of those call sites to remember to trigger it themselves.
+  // Keeps the connected badges and subscription status accurate whenever the dashboard is
+  // (re)entered — covers a fresh login, a returning already-signed-in session, and finishing
+  // onboarding via "Enter KROFT", without needing each of those call sites to remember to
+  // trigger it themselves.
   useEffect(() => {
-    if (step === "dashboard") refreshGoogleStatus();
+    if (step === "dashboard") { refreshGoogleStatus(); refreshMicrosoftStatus(); refreshSubscriptionStatus(); }
   }, [step]);
 
   const doSignup = async () => {
@@ -2889,6 +3229,7 @@ function KroftApp({ onFullReset } = {}) {
     try {
       raw = await runKroftCompletion(convo, {
         signal: controller.signal,
+        usageType: "voice",
         onDelta: partial => {
           if (!voiceOpenRef.current) return;
           latest = partial;
@@ -3191,7 +3532,7 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
         const title = str(action.title); if (!title) return null;
         const item = { id:uid(), title, date:validDate(action.date)?action.date:todayISO(), time:str(action.time)||"09:00", location:str(action.location), notes:"", urgent:false, repeat:"none", contactId:null };
         setAppts(p => [...p, item]);
-        mirrorAppointmentToGoogleCalendar(item);
+        mirrorAppointmentToCalendars(item);
         return { label:`Appointment added: ${title}`, undo:() => setAppts(p => p.filter(x => x.id !== item.id)) };
       }
       case "add_note": {
@@ -3234,7 +3575,7 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
   // onDelta streams tokens as they arrive; without it the call resolves with the full text.
   // Streaming matters most here because replies are long enough that a spinner-then-dump feels
   // broken, and because the first sentence can start being read aloud while the rest arrives.
-  const runKroftCompletion = async (messages, { onDelta, signal } = {}) => {
+  const runKroftCompletion = async (messages, { onDelta, signal, usageType = "chat" } = {}) => {
     const recent = messages.slice(-historyLimit());
     const body = {
       model:"claude-sonnet-4-6",
@@ -3245,12 +3586,23 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
     };
     let res;
     try {
-      res = await fetch("/api/chat", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body), signal });
+      res = await aiFetch("/api/chat", { method:"POST", headers:{"Content-Type":"application/json","X-Kroft-Usage-Type":usageType}, body:JSON.stringify(body), signal });
     } catch (e) {
       if (e.name === "AbortError") throw e;
       throw new KroftError("I can't reach the network right now. Check your connection and try again.");
     }
-    if (!res.ok) throw new KroftError(friendlyError(res.status));
+    if (!res.ok) {
+      // api/chat.js's own server-side quota check (the real, unspoofable enforcement — see its
+      // comments) returns a distinct quota_exceeded body on 429, separate from an upstream AI
+      // provider rate limit — surfaced with its own message rather than friendlyError's generic
+      // "give it a moment and try again", which would be actively wrong advice for a daily/
+      // monthly limit.
+      if (res.status === 429) {
+        const data = await res.json().catch(() => null);
+        if (data?.error === "quota_exceeded") throw new KroftError(data.message);
+      }
+      throw new KroftError(friendlyError(res.status));
+    }
 
     if (!onDelta) {
       const data = await res.json();
@@ -3465,7 +3817,7 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
     const nearBudget = budgetStatus().filter(b => b.pct >= 0.8 && b.pct < 1);
     const context = `Today: ${today}. Appointments today: ${todays.length ? todays.map(a=>`${a.title} at ${a.time}`).join("; ") : "none"}. Open tasks: ${openTasks.length}. Budgets over limit: ${overBudget.length ? overBudget.map(b=>b.cat).join(", ") : "none"}. Budgets close to limit: ${nearBudget.length ? nearBudget.map(b=>b.cat).join(", ") : "none"}. Name: ${user.name||"there"}.`;
     try {
-      const res = await fetch("/api/chat", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ model:"claude-sonnet-4-6", max_tokens:80, system:"Write exactly one short sentence greeting the user by name and flagging the single most useful thing about their day from the context — a tight schedule, a budget issue, or an open task count if nothing else stands out. Never state a specific dollar amount, even if one seems implied — this reads out loud on a lock screen others may see. Plain text, no preamble, no quotes, under 22 words.", messages:[{ role:"user", content:context }] }) });
+      const res = await aiFetch("/api/chat", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ model:"claude-sonnet-4-6", max_tokens:80, system:"Write exactly one short sentence greeting the user by name and flagging the single most useful thing about their day from the context — a tight schedule, a budget issue, or an open task count if nothing else stands out. Never state a specific dollar amount, even if one seems implied — this reads out loud on a lock screen others may see. Plain text, no preamble, no quotes, under 22 words.", messages:[{ role:"user", content:context }] }) });
       const data = await res.json();
       const text = data.content?.map(b=>b.text||"").join("").trim();
       return (res.ok && text) || `Good morning, ${user.name||"there"} — ${openTasks.length} tasks open today.`;
@@ -3840,11 +4192,14 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
     if (!spendAiExtra()) return;
     toast("KROFT is drafting a reply…");
     try {
-      const res = await fetch("/api/chat", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ model:"claude-sonnet-4-6", max_tokens:400, messages:[{ role:"user", content:`Draft a concise professional reply (under 5 sentences). From: ${email.from}, Subject: ${email.subject}, Body: "${email.body}"` }] }) });
+      const res = await aiFetch("/api/chat", { method:"POST", headers:{"Content-Type":"application/json","X-Kroft-Usage-Type":"extra"}, body:JSON.stringify({ model:"claude-sonnet-4-6", max_tokens:400, messages:[{ role:"user", content:`Draft a concise professional reply (under 5 sentences). From: ${email.from}, Subject: ${email.subject}, Body: "${email.body}"` }] }) });
       const data = await res.json();
       const body = data.content?.map(b=>b.text||"").join("").trim();
       if (!res.ok || !body) { toast("Draft failed — try again."); return; }
-      setComposeDraft({ to:email.from, subject:"Re: "+email.subject, body });
+      // Carries the original email's provider through so the reply sends from the same
+      // account it arrived on (see api/mail/send.js's provider field), rather than defaulting
+      // to whichever account the send endpoint picks first.
+      setComposeDraft({ to:email.from, subject:"Re: "+email.subject, body, provider:email.source });
     } catch { toast("Draft failed."); }
   };
 
@@ -3855,7 +4210,7 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
     setSuggestingReminder(true);
     const context = `Appointments: ${appts.length>0 ? appts.map(a=>`${a.title} at ${a.time} on ${a.date}`).join("; ") : "none"}. Tasks: ${tasks.length>0 ? tasks.filter(t=>!t.done).map(t=>t.title).join("; ") : "none"}. Mood: ${mood}.`;
     try {
-      const res = await fetch("/api/chat", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ model:"claude-sonnet-4-6", max_tokens:120, system:"Suggest exactly ONE short, genuinely useful reminder for this user based on their context. Reply with ONLY the reminder text itself — no preamble, no quotes, under 15 words.", messages:[{ role:"user", content:context }] }) });
+      const res = await aiFetch("/api/chat", { method:"POST", headers:{"Content-Type":"application/json","X-Kroft-Usage-Type":"extra"}, body:JSON.stringify({ model:"claude-sonnet-4-6", max_tokens:120, system:"Suggest exactly ONE short, genuinely useful reminder for this user based on their context. Reply with ONLY the reminder text itself — no preamble, no quotes, under 15 words.", messages:[{ role:"user", content:context }] }) });
       const data = await res.json();
       const suggestion = data.content?.map(b=>b.text||"").join("").trim();
       if (!res.ok || !suggestion) { toast("Couldn't get a suggestion — try again."); }
@@ -3888,7 +4243,7 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
     setGeneratingReport(true);
     const context = `Month: ${monthLabel(now.toISOString().slice(0,10))}. Income entries: ${monthInc.length} totaling ${fmtCur(incTotal,user.currency)}. Expense entries: ${monthExp.length} totaling ${fmtCur(expTotal,user.currency)}. Net: ${fmtCur(net,user.currency)}. Top expense categories: ${topCats.length>0?topCats.map(([c,v])=>`${c} (${fmtCur(v,user.currency)})`).join(", "):"none"}. Business: ${user.businessName||"not set"} (${user.businessType||""}).`;
     try {
-      const res = await fetch("/api/chat", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ model:"claude-sonnet-4-6", max_tokens:400, system:"You are KROFT, a bookkeeping assistant. Given a user's monthly income/expense summary, write a short end-of-month summary: 2-3 sentences on what the numbers show, then 2-3 practical observations about their own spending patterns. Describe what happened in their data — do not recommend financial products, investments, tax positions, borrowing, or anything requiring a licensed advisor. Frame observations as prompts to consider, not instructions. No preamble, no headers, plain text only.", messages:[{ role:"user", content:context }] }) });
+      const res = await aiFetch("/api/chat", { method:"POST", headers:{"Content-Type":"application/json","X-Kroft-Usage-Type":"report"}, body:JSON.stringify({ model:"claude-sonnet-4-6", max_tokens:400, system:"You are KROFT, a bookkeeping assistant. Given a user's monthly income/expense summary, write a short end-of-month summary: 2-3 sentences on what the numbers show, then 2-3 practical observations about their own spending patterns. Describe what happened in their data — do not recommend financial products, investments, tax positions, borrowing, or anything requiring a licensed advisor. Frame observations as prompts to consider, not instructions. No preamble, no headers, plain text only.", messages:[{ role:"user", content:context }] }) });
       const data = await res.json();
       const advice = (res.ok && data.content?.map(b=>b.text||"").join("").trim()) || "Couldn't generate advice right now — try again shortly.";
       setMonthlyReport({ month:monthLabel(now.toISOString().slice(0,10)), incTotal, expTotal, net, topCats, advice, generatedAt:Date.now() });
@@ -4019,8 +4374,8 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
     if (isNaturalLanguage) {
       // Let Claude interpret the natural-language request into a place-type query
       try {
-        const res = await fetch("/api/chat", {
-          method:"POST", headers:{"Content-Type":"application/json"},
+        const res = await aiFetch("/api/chat", {
+          method:"POST", headers:{"Content-Type":"application/json","X-Kroft-Usage-Type":"extra"},
           body:JSON.stringify({
             model:"claude-sonnet-4-6", max_tokens:60,
             system:"Convert the user's request into a single short search term (2-4 words max) suitable for a places search API, such as 'coffee shop', 'pharmacy open now', 'budget hotel', or 'ATM'. Reply with ONLY the search term, nothing else.",
@@ -4082,7 +4437,12 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
     .hbtn:hover{opacity:.75} .tabBtn:hover{background:${C.surface}!important;color:${C.white}!important}
     .row:hover{background:${C.hover}!important}
     input::placeholder,textarea::placeholder{color:${C.muted}}
-    select option{background:${C.surface}} button:active{transform:scale(.96)}
+    select option{background:${C.surface}}
+    /* Punchier, springier press feedback than a flat scale — applies to every button in the
+       app (including raw <button>s that don't set their own inline transition; Btn's own
+       inline transition takes precedence where it's set, same springy curve either way). */
+    button{transition:transform .18s cubic-bezier(.34,1.56,.64,1)}
+    button:active{transform:scale(.92)}
     /* Any input/select/textarea under 16px triggers iOS Safari's auto-zoom-on-focus —
        most fields in this app were set well below that. Force 16px at the type level,
        independent of each component's own (still-smaller) visual font-size. */
@@ -4331,32 +4691,33 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
           <div style={{ marginBottom:22 }}>
             <Mono style={{ display:"block", color:C.soft, marginBottom:11 }}>Connect accounts</Mono>
             {!isSupabaseConfigured && (
-              <Mono style={{ display:"block", color:C.muted, fontSize:10, marginBottom:9 }}>Sign in with a real account (Supabase isn't configured) to connect Gmail or Calendar.</Mono>
+              <Mono style={{ display:"block", color:C.muted, fontSize:10, marginBottom:9 }}>Sign in with a real account (Supabase isn't configured) to connect an email or calendar provider.</Mono>
             )}
             <div style={{ display:"flex", flexDirection:"column", gap:9 }}>
-              {/* Gmail and Calendar go through one real Google OAuth grant (both scopes are
-                  requested together in api/google/start.js), so linking or unlinking either
-                  row acts on the whole Google connection, not just that one feature. Uber has
-                  no real integration (see api/_lib/google.js's neighbors — there's no
-                  api/uber/* at all, deliberately: Uber's ride-booking API requires their
-                  business partner program, not a self-serve OAuth app), so it keeps the
-                  original local-only toggle rather than pretending to connect to anything. */}
-              {[{k:"gmail",n:"Gmail",d:"Read & send real emails",google:true},{k:"calendar",n:"Google Calendar",d:"Sync appointments",google:true},{k:"uber",n:"Uber",d:"Book rides to meetings",google:false}].map(a => {
-                const linked = a.google ? googleStatus[a.k] : user.connected[a.k];
-                return (
-                  <div key={a.k} style={{ background:linked?C.fillStrong:C.card, border:`1px solid ${linked?C.soft:C.cardB}`, borderRadius:10, padding:"11px 14px", display:"flex", alignItems:"center", gap:12 }}>
-                    <div style={{ flex:1 }}><div style={{ fontWeight:700, fontSize:13, color:C.white, marginBottom:1 }}>{a.n}</div><Mono style={{ color:C.muted, fontSize:10 }}>{a.d}</Mono></div>
-                    {a.google ? (
-                      <Btn sm v={linked?"solid":"outline"} disabled={!isSupabaseConfigured||googleLinking}
-                        onClick={() => linked ? disconnectGoogle() : connectGoogle()}>
-                        {googleLinking ? <Spinner size={14} color={linked?C.black:C.soft} thickness={2} /> : linked ? "Unlink" : "Link"}
-                      </Btn>
-                    ) : (
-                      <Btn sm v={linked?"solid":"outline"} onClick={() => setUser(u => ({...u,connected:{...u.connected,[a.k]:!u.connected[a.k]}}))}>{linked?"Linked":"Link"}</Btn>
-                    )}
-                  </div>
-                );
-              })}
+              {/* Gmail+Calendar share one Google OAuth grant, and Outlook Mail+Calendar share
+                  one Microsoft grant (both scopes requested together in api/google/start.js
+                  and api/microsoft/start.js respectively) — so linking or unlinking either row
+                  within a provider acts on that whole connection, not just one feature. Both
+                  providers can be connected at once: api/mail/messages.js and
+                  api/calendar/events.js merge data from whichever are connected into one
+                  inbox/calendar rather than needing separate views per provider. Uber isn't
+                  listed here at all: its ride-request deep link (see UberModal/
+                  buildUberDeepLink above) needs no account connection or API key — it works
+                  the same for every user the moment they tap "Uber" anywhere in the app. */}
+              {[
+                { k:"gmail", n:"Gmail", d:"Read & send real emails", linked:googleStatus.gmail, linking:googleLinking, connect:connectGoogle, disconnect:disconnectGoogle },
+                { k:"googleCalendar", n:"Google Calendar", d:"Sync appointments", linked:googleStatus.calendar, linking:googleLinking, connect:connectGoogle, disconnect:disconnectGoogle },
+                { k:"outlookMail", n:"Outlook Mail", d:"Read & send real emails", linked:microsoftStatus.mail, linking:microsoftLinking, connect:connectMicrosoft, disconnect:disconnectMicrosoft },
+                { k:"outlookCalendar", n:"Outlook Calendar", d:"Sync appointments", linked:microsoftStatus.calendar, linking:microsoftLinking, connect:connectMicrosoft, disconnect:disconnectMicrosoft },
+              ].map(a => (
+                <div key={a.k} style={{ background:a.linked?C.fillStrong:C.card, border:`1px solid ${a.linked?C.soft:C.cardB}`, borderRadius:10, padding:"11px 14px", display:"flex", alignItems:"center", gap:12 }}>
+                  <div style={{ flex:1 }}><div style={{ fontWeight:700, fontSize:13, color:C.white, marginBottom:1 }}>{a.n}</div><Mono style={{ color:C.muted, fontSize:10 }}>{a.d}</Mono></div>
+                  <Btn sm v={a.linked?"solid":"outline"} disabled={!isSupabaseConfigured||a.linking}
+                    onClick={() => a.linked ? a.disconnect() : a.connect()}>
+                    {a.linking ? <Spinner size={14} color={a.linked?C.black:C.soft} thickness={2} /> : a.linked ? "Unlink" : "Link"}
+                  </Btn>
+                </div>
+              ))}
             </div>
           </div>
           <div style={{ display:"flex", gap:10 }}><Btn v="outline" onClick={() => setStep("business")} style={{ flex:1 }}>Back</Btn><Btn onClick={() => setStep("done")} style={{ flex:2 }}>Almost done</Btn></div>
@@ -4401,15 +4762,18 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
     <div key={themeTick} style={{ fontFamily:"'Space Grotesk',sans-serif", background:C.bg, minHeight:"100vh", color:C.text, overflowX:"hidden", maxWidth:"100vw", touchAction:"pan-y" }}>
       <style>{G}</style>
       {showBriefing && <Briefing user={user} income={totalIncome} expenses={totalExpenses} emails={emails} appts={appts} onClose={() => setShowBriefing(false)} />}
-      {uberDest && <UberModal dest={uberDest} onClose={() => setUberDest(null)} onBook={(type,loc) => { toast(`${type} requested to ${loc}`); setUberDest(null); }} />}
+      {uberDest && <UberModal dest={uberDest} onClose={() => setUberDest(null)} />}
       {composeDraft && <ComposeModal draft={composeDraft} onChange={setComposeDraft} onSend={async d => {
-        // Real send when Gmail is actually connected — otherwise fall back to the original
-        // simulated send (a toast plus a scripted fake reply a few seconds later), so the
-        // compose flow still demos sensibly for anyone who hasn't linked a real account.
-        if (googleStatus.gmail) {
+        // Real send when a real email account is connected — otherwise fall back to the
+        // original simulated send (a toast plus a scripted fake reply a few seconds later), so
+        // the compose flow still demos sensibly for anyone who hasn't linked a real account.
+        // d.provider (set on Reply/AI Draft from the original message's source) sends the
+        // reply from the same account it arrived on; a fresh compose omits it and
+        // api/mail/send.js picks whichever connected account comes first.
+        if (googleStatus.gmail || microsoftStatus.mail) {
           try {
-            const res = await authedFetch("/api/gmail/send", { method:"POST", body:JSON.stringify({ to:d.to, subject:d.subject, body:d.body }) });
-            if (!res.ok) { toast("Couldn't send — Gmail rejected the message."); return; }
+            const res = await authedFetch("/api/mail/send", { method:"POST", body:JSON.stringify({ to:d.to, subject:d.subject, body:d.body, provider:d.provider }) });
+            if (!res.ok) { toast("Couldn't send — the email provider rejected the message."); return; }
             toast(`Email sent to ${d.to}`);
             setComposeDraft(null);
           } catch {
@@ -4496,6 +4860,8 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
           </div>
         ))}
       </div>
+
+      {showConfetti && <Confetti onDone={() => setShowConfetti(false)} />}
 
       {tab!=="workspace" && (
       <header style={{ borderBottom:`1px solid ${C.cardB}`, padding:"11px 16px", display:"flex", alignItems:"center", justifyContent:"space-between", background:C.bg, position:"sticky", top:0, zIndex:200, backdropFilter:"blur(14px)", gap:10 }}>
@@ -4615,7 +4981,10 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
                     const mColor = {calm:C.positive,happy:C.accent,stressed:C.warning,angry:C.negative}[m];
                     const active = mood===m;
                     return (
-                    <button key={m} onClick={() => applyMood(m)} style={{ background:active?mColor+"22":C.surface, border:`1.5px solid ${active?mColor:C.cardB}`, borderRadius:10, padding:"9px 6px", cursor:"pointer", color:active?mColor:C.soft, fontSize:11, fontWeight:700, textAlign:"center", boxShadow:active?`0 0 12px ${mColor}40`:"none", transition:"all .15s" }}>
+                    // Keying on the active transition (not just `m`) forces a fresh DOM node the
+                    // moment a mood is picked, so its pop-in animation replays every tap — even
+                    // tapping the same mood again a moment later, not just the first time.
+                    <button key={active ? `${m}-on` : m} onClick={() => applyMood(m)} style={{ background:active?mColor+"22":C.surface, border:`1.5px solid ${active?mColor:C.cardB}`, borderRadius:10, padding:"9px 6px", cursor:"pointer", color:active?mColor:C.soft, fontSize:11, fontWeight:700, textAlign:"center", boxShadow:active?`0 0 12px ${mColor}40`:"none", transition:"all .15s", animation:active?"bouncePop .4s cubic-bezier(.34,1.56,.64,1)":"none" }}>
                       {m.charAt(0).toUpperCase()+m.slice(1)}
                     </button>
                     );
@@ -4840,6 +5209,7 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
                     if (!newInc.label) return;
                     const amt = parseAmount(newInc.amount);
                     if (amt === null) { toast("Enter an amount greater than zero."); return; }
+                    const isFirstEverEntry = income.length === 0 && expenses.length === 0;
                     {
                       const base = { id:uid(), ...newInc, amount:amt, date:newInc.date||todayISO(), cur:user.currency };
                       // A repeating entry counts as its own first posting, so nextDate starts one
@@ -4848,7 +5218,8 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
                       setIncome(p => [...p, base]);
                     }
                     setNewInc({label:"",amount:"",cat:"Invoice",date:todayISO(),repeat:"none"}); setShowAddInc(false);
-                    toast(`Income added: ${fmtCur(amt,user.currency)}`);
+                    if (isFirstEverEntry) { toast("First entry logged — you're on your way."); celebrate(); }
+                    else toast(`Income added: ${fmtCur(amt,user.currency)}`);
                   }}>Add</Btn>
                 </div>
               </Card>
@@ -4871,6 +5242,7 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
                     if (!newExp.label) return;
                     const amt = parseAmount(newExp.amount);
                     if (amt === null) { toast("Enter an amount greater than zero."); return; }
+                    const isFirstEverEntry = income.length === 0 && expenses.length === 0;
                     {
                       const base = { id:uid(), ...newExp, amount:amt, date:newExp.date||todayISO(), cur:user.currency };
                       // A repeating entry counts as its own first posting, so nextDate starts one
@@ -4879,7 +5251,8 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
                       setExpenses(p => [...p, base]);
                     }
                     setNewExp({label:"",amount:"",cat:"Operations",date:todayISO(),repeat:"none"}); setShowAddExp(false);
-                    toast(`Expense added: ${fmtCur(amt,user.currency)}`);
+                    if (isFirstEverEntry) { toast("First entry logged — you're on your way."); celebrate(); }
+                    else toast(`Expense added: ${fmtCur(amt,user.currency)}`);
                   }}>Add</Btn>
                 </div>
               </Card>
@@ -5032,12 +5405,15 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
             { k:"reminders", l:"Reminders", count:smartReminders.length, sub:"reminders", tone: smartReminders.some(r=>r.aiSuggested) ? "accent" : undefined },
             { k:"contacts", l:"Contacts", count:contacts.length, sub:"saved" },
           ];
-          const QUICK = ["calendar","notes","email","tasks"];
           const q = workspaceSearch.trim().toLowerCase();
           const searching = q.length > 0;
           const matches = searching ? TOOLS.filter(t => t.l.toLowerCase().includes(q)) : [];
-          const visible = searching ? matches : TOOLS.filter(t => QUICK.includes(t.k));
-          const rest = TOOLS.filter(t => !QUICK.includes(t.k));
+          // Tools carrying a tone (unread mail, active tasks, in-progress projects, an
+          // AI-suggested reminder) surface first as "Needs attention" — real signals worth
+          // acting on, not just an arbitrary "quick access" shortlist. Everything else follows
+          // in one full grid; nothing is hidden behind a "show more" click anymore.
+          const attention = !searching ? TOOLS.filter(t => t.tone) : [];
+          const rest = !searching ? TOOLS.filter(t => !t.tone) : [];
           const toneColors = { positive:C.positive, negative:C.negative, warning:C.warning, accent:C.accent };
           const toneBgs = { positive:C.positiveBg, negative:C.negativeBg, warning:C.warningBg, accent:C.accentBg };
 
@@ -5062,7 +5438,9 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
           const ToolCard = ({ t }) => (
             <Card key={t.k} onClick={() => { setWorkspaceSection(t.k); setWorkspaceSearch(""); }} style={{ cursor:"pointer", minWidth:0 }}>
               <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:8 }}>
-                <div style={{ width:34, height:34, borderRadius:12, background:t.tone?toneBgs[t.tone]:C.surface, border:`1px solid ${t.tone?toneColors[t.tone]+"55":C.cardB}`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:14, fontWeight:800, color:t.tone?toneColors[t.tone]:C.white, marginBottom:10, flexShrink:0 }}>{t.l[0]}</div>
+                <div style={{ width:36, height:36, borderRadius:12, background:t.tone?toneBgs[t.tone]:C.surface, border:`1px solid ${t.tone?toneColors[t.tone]+"55":C.cardB}`, display:"flex", alignItems:"center", justifyContent:"center", marginBottom:10, flexShrink:0 }}>
+                  <NavIcon id={t.k} size={17} color={t.tone?toneColors[t.tone]:C.white} />
+                </div>
                 {t.count>0 && <Tag tone={t.tone} style={{ whiteSpace:"normal", textAlign:"right", maxWidth:"70%", boxSizing:"border-box", lineHeight:1.4 }}>{t.count} {t.sub}</Tag>}
               </div>
               <div style={{ fontSize:14, fontWeight:700, color:C.white, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{t.l}</div>
@@ -5073,21 +5451,15 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
           return (
             <div style={{ animation:"fadeUp .35s ease" }}>
               <Inp placeholder="Search your workspace…" value={workspaceSearch} onChange={e=>setWorkspaceSearch(e.target.value)} style={{ marginBottom:18, width:"100%", boxSizing:"border-box" }} />
-              {!searching && <div style={{ fontSize:12, fontWeight:600, color:C.muted, marginBottom:11 }}>Quick access</div>}
               {searching && matches.length===0 && contentHits.length===0 && (
                 <Card level="inset" style={{ textAlign:"center", padding:26, borderStyle:"dashed" }}>
                   <div style={{ fontSize:15, fontWeight:600, color:C.white, marginBottom:6 }}>Nothing matches "{workspaceSearch}"</div>
                   <Mono style={{ display:"block", color:C.soft }}>Try a different word, or open a tool below to add something.</Mono>
                 </Card>
               )}
-              {matches.length > 0 && (
+              {searching && matches.length > 0 && (
                 <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:11, marginBottom:contentHits.length?18:0 }}>
-                  {visible.map(t => <ToolCard key={t.k} t={t} />)}
-                </div>
-              )}
-              {!searching && (
-                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:11, marginBottom:8 }}>
-                  {visible.map(t => <ToolCard key={t.k} t={t} />)}
+                  {matches.map(t => <ToolCard key={t.k} t={t} />)}
                 </div>
               )}
               {contentHits.length > 0 && (
@@ -5108,16 +5480,22 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
                   </div>
                 </>
               )}
+              {!searching && attention.length > 0 && (
+                <>
+                  <div style={{ fontSize:12, fontWeight:600, color:C.muted, marginBottom:11 }}>Needs attention</div>
+                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:11, marginBottom:22 }}>
+                    {attention.map(t => <ToolCard key={t.k} t={t} />)}
+                  </div>
+                </>
+              )}
               {!searching && (
                 <>
-                  <button onClick={() => setShowAllTools(v=>!v)} style={{ background:"none", border:"none", color:C.soft, cursor:"pointer", fontSize:12, fontFamily:"'Space Mono',monospace", padding:"14px 0", textDecoration:"underline" }}>
-                    {showAllTools ? "Show fewer tools" : `Show all ${TOOLS.length} tools`}
-                  </button>
-                  {showAllTools && (
-                    <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:11, animation:"fadeUp .3s ease" }}>
-                      {rest.map(t => <ToolCard key={t.k} t={t} />)}
-                    </div>
-                  )}
+                  <div style={{ fontSize:12, fontWeight:600, color:C.muted, marginBottom:11 }}>
+                    {attention.length > 0 ? "All tools" : "Your tools"}
+                  </div>
+                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:11 }}>
+                    {rest.map(t => <ToolCard key={t.k} t={t} />)}
+                  </div>
                 </>
               )}
             </div>
@@ -5129,7 +5507,7 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:18 }}>
               <h2 style={{ fontSize:22, fontWeight:700, color:C.white, letterSpacing:-1 }}>Calendar</h2>
               <div style={{ display:"flex", alignItems:"center", gap:9 }}>
-                {googleStatus.calendar && <Btn sm v="outline" disabled={syncingCalendar} onClick={syncGoogleCalendar}>{syncingCalendar ? <Spinner size={14} color={C.soft} thickness={2} /> : "Refresh"}</Btn>}
+                {(googleStatus.calendar || microsoftStatus.calendar) && <Btn sm v="outline" disabled={syncingCalendar} onClick={syncCalendar}>{syncingCalendar ? <Spinner size={14} color={C.soft} thickness={2} /> : "Refresh"}</Btn>}
                 <Btn sm onClick={() => setShowAddAppt(v=>!v)}>Add Appointment</Btn>
               </div>
             </div>
@@ -5144,7 +5522,7 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
                     <label style={{ display:"flex", alignItems:"center", gap:6, cursor:"pointer" }}><input type="checkbox" checked={newAppt.urgent} onChange={e=>setNewAppt(v=>({...v,urgent:e.target.checked}))} style={{ accentColor:C.white, width:14, height:14 }} /><Mono style={{ color:C.soft }}>Urgent</Mono></label>
                     <select value={newAppt.repeat} onChange={e=>setNewAppt(v=>({...v,repeat:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:8, padding:"7px 11px", color:C.text, fontSize:11, fontFamily:"'Space Mono',monospace", outline:"none" }}>{["none","daily","weekly","monthly"].map(r=><option key={r}>{r}</option>)}</select>
                     {contacts.length > 0 && <ContactSelect value={newAppt.contactId} onChange={id=>setNewAppt(v=>({...v,contactId:id}))} contacts={contacts} />}
-                    <Btn sm onClick={() => { if (!newAppt.title||!newAppt.date) return; const item = {...newAppt,id:uid()}; setAppts(p=>[...p,item]); mirrorAppointmentToGoogleCalendar(item); setNewAppt({title:"",time:"",date:todayISO(),location:"",notes:"",urgent:false,repeat:"none",contactId:null}); setShowAddAppt(false); toast(`Appointment added: ${newAppt.title}`); }}>Add</Btn>
+                    <Btn sm onClick={() => { if (!newAppt.title||!newAppt.date) return; const item = {...newAppt,id:uid()}; setAppts(p=>[...p,item]); mirrorAppointmentToCalendars(item); setNewAppt({title:"",time:"",date:todayISO(),location:"",notes:"",urgent:false,repeat:"none",contactId:null}); setShowAddAppt(false); toast(`Appointment added: ${newAppt.title}`); }}>Add</Btn>
                   </div>
                 </div>
               </Card>
@@ -5209,19 +5587,23 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:18 }}>
               <h2 style={{ fontSize:22, fontWeight:700, color:C.white, letterSpacing:-1 }}>Email</h2>
               <div style={{ display:"flex", alignItems:"center", gap:9 }}>
-                <Tag tone={user.connected.gmail?"positive":undefined}>{user.connected.gmail?"Gmail connected":"Gmail not linked"}</Tag>
-                {googleStatus.gmail && <Btn sm v="outline" disabled={syncingGmail} onClick={syncGmail}>{syncingGmail ? <Spinner size={14} color={C.soft} thickness={2} /> : "Refresh"}</Btn>}
+                {(() => {
+                  const mailConnected = googleStatus.gmail || microsoftStatus.mail;
+                  const label = googleStatus.gmail && microsoftStatus.mail ? "Gmail + Outlook connected" : googleStatus.gmail ? "Gmail connected" : microsoftStatus.mail ? "Outlook connected" : "No email connected";
+                  return <Tag tone={mailConnected?"positive":undefined}>{label}</Tag>;
+                })()}
+                {(googleStatus.gmail || microsoftStatus.mail) && <Btn sm v="outline" disabled={syncingMail} onClick={syncMail}>{syncingMail ? <Spinner size={14} color={C.soft} thickness={2} /> : "Refresh"}</Btn>}
                 {contacts.some(c => c.email) && <Btn sm v="outline" onClick={() => setContactPicker({ mode:"email" })}>From Contacts</Btn>}
                 <Btn sm onClick={() => setComposeDraft({to:"",subject:"",body:""})}>Compose</Btn>
               </div>
             </div>
             {emails.length===0 && (
               <Card level="inset" style={{ textAlign:"center", padding:26, borderStyle:"dashed" }}>
-                <div style={{ fontSize:15, fontWeight:600, color:C.white, marginBottom:6 }}>{user.connected.gmail ? "Inbox is empty" : "No email connected"}</div>
-                <Mono style={{ display:"block", color:C.soft, marginBottom:18 }}>{user.connected.gmail ? "Nothing here right now — compose a new email to get started." : "Connect Gmail or Outlook to let KROFT organize your inbox."}</Mono>
+                <div style={{ fontSize:15, fontWeight:600, color:C.white, marginBottom:6 }}>{(googleStatus.gmail || microsoftStatus.mail) ? "Inbox is empty" : "No email connected"}</div>
+                <Mono style={{ display:"block", color:C.soft, marginBottom:18 }}>{(googleStatus.gmail || microsoftStatus.mail) ? "Nothing here right now — compose a new email to get started." : "Connect Gmail or Outlook to let KROFT organize your inbox."}</Mono>
                 <div style={{ display:"flex", gap:9, justifyContent:"center" }}>
                   <Btn sm onClick={() => setComposeDraft({to:"",subject:"",body:""})}>Compose Email</Btn>
-                  {!user.connected.gmail && <Btn sm v="outline" onClick={() => setStep("prefs")}>Connect Email</Btn>}
+                  {!(googleStatus.gmail || microsoftStatus.mail) && <Btn sm v="outline" onClick={() => setStep("prefs")}>Connect Email</Btn>}
                 </div>
               </Card>
             )}
@@ -5240,7 +5622,7 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
                   </div>
                   <div style={{ display:"flex", flexDirection:"column", gap:6, flexShrink:0 }}>
                     <Btn sm onClick={ev=>{ev.stopPropagation();speak(e.body);toast("Reading aloud…")}}>Read</Btn>
-                    <Btn sm v="outline" onClick={ev=>{ev.stopPropagation();setComposeDraft({to:e.from,subject:"Re: "+e.subject,body:""})}}>Reply</Btn>
+                    <Btn sm v="outline" onClick={ev=>{ev.stopPropagation();setComposeDraft({to:e.from,subject:"Re: "+e.subject,body:"",provider:e.source})}}>Reply</Btn>
                     <Btn sm v="outline" onClick={ev=>{ev.stopPropagation();aiDraftReply(e)}}>AI Draft</Btn>
                   </div>
                 </div>
@@ -5361,18 +5743,28 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
               ) : (
               <Card key={t.id} {...longPress(() => setActionSheet(holdActions({ title:t.title, subtitle:t.done ? "Completed" : t.priority, onEdit:() => setEditingTask({...t}), list:tasks, setList:setTasks, id:t.id, deletedLabel:"Task deleted." })))} style={{ marginBottom:9, opacity:t.done?.55:1, WebkitTouchCallout:"none", WebkitUserSelect:"none", userSelect:"none", }}>
                 <div style={{ display:"flex", alignItems:"center", gap:12 }}>
-                  <button onClick={() => setTasks(p => {
-                    const target = p.find(x => x.id === t.id);
-                    const completing = target && !target.done;
-                    const toggled = p.map(x => x.id===t.id ? {...x,done:!x.done} : x);
-                    // Tasks have no due-date field to advance the way appointments do, so a
-                    // repeating task's "next occurrence" is a fresh unchecked copy spawned the
-                    // moment the current one is completed — the completed one stays as a record.
-                    if (completing && target.repeat !== "none") {
-                      return [{ id:uid(), title:target.title, priority:target.priority, repeat:target.repeat, contactId:target.contactId, done:false }, ...toggled];
+                  <button key={`${t.id}-cb-${t.done}`} onClick={() => {
+                    const completingThis = !t.done;
+                    haptic(completingThis ? [12, 40, 12] : 10);
+                    setTasks(p => {
+                      const target = p.find(x => x.id === t.id);
+                      const completing = target && !target.done;
+                      const toggled = p.map(x => x.id===t.id ? {...x,done:!x.done} : x);
+                      // Tasks have no due-date field to advance the way appointments do, so a
+                      // repeating task's "next occurrence" is a fresh unchecked copy spawned the
+                      // moment the current one is completed — the completed one stays as a record.
+                      if (completing && target.repeat !== "none") {
+                        return [{ id:uid(), title:target.title, priority:target.priority, repeat:target.repeat, contactId:target.contactId, done:false }, ...toggled];
+                      }
+                      return toggled;
+                    });
+                    // A genuine "clear the list" moment — every other task was already done and
+                    // this was the last one standing, not just any single completion.
+                    if (completingThis && tasks.every(x => x.id===t.id || x.done)) {
+                      toast("All tasks done — nice work.");
+                      celebrate();
                     }
-                    return toggled;
-                  })} style={{ width:20, height:20, borderRadius:6, border:`1.5px solid ${t.done?C.white:C.soft}`, background:t.done?C.white:"transparent", cursor:"pointer", flexShrink:0, display:"flex", alignItems:"center", justifyContent:"center", color:C.black, fontSize:12, fontWeight:900 }}>
+                  }} style={{ width:20, height:20, borderRadius:6, border:`1.5px solid ${t.done?C.white:C.soft}`, background:t.done?C.white:"transparent", cursor:"pointer", flexShrink:0, display:"flex", alignItems:"center", justifyContent:"center", color:C.black, fontSize:12, fontWeight:900, animation:t.done?"checkPop .4s cubic-bezier(.34,1.56,.64,1)":"none" }}>
                     {t.done ? "✓" : ""}
                   </button>
                   <div style={{ flex:1, minWidth:0, cursor:"pointer" }} onClick={() => setEditingTask({...t})}>
@@ -6396,7 +6788,6 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
               reportsLeftThisMonth={reportsLeftThisMonth()}
               voiceTurnsCount={voiceTurnsCount}
               voiceLimit={FREE_DAILY_VOICE_LIMIT}
-              onUpgradeFromNotifs={() => { setSubscribed(true); toast("KROFT Plus enabled — no charge, this build has no payment set up."); }}
               onSignOut={async () => {
                 // Signing out previously only flipped `step` back to the login screen — every
                 // bit of data stayed live in memory, so returning to the dashboard showed the
@@ -6416,7 +6807,9 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
               onToggleTheme={setTheme}
               toast={toast}
               subscribed={subscribed}
-              onSetSubscribed={setSubscribed}
+              billingLoading={billingLoading}
+              onUpgrade={startCheckout}
+              onManageBilling={cancelKroftPlus}
               dailyMessageCount={dailyMessageCount}
               freeLimit={FREE_DAILY_MESSAGE_LIMIT}
               voiceReplies={voiceReplies}
@@ -6443,7 +6836,7 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
           {NAV_TABS.map(t => {
             const active = tab === t.id;
             return (
-              <button key={t.id} onClick={() => { setTab(t.id); if (t.id==="workspace") setWorkspaceSection(null); }} title={t.label} aria-current={active?"page":undefined}
+              <button key={t.id} onClick={() => { haptic(12); setTab(t.id); if (t.id==="workspace") setWorkspaceSection(null); }} title={t.label} aria-current={active?"page":undefined}
                 style={{
                   width:64, height:52, borderRadius:18, border:"none", cursor:"pointer",
                   display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:4,
@@ -6453,7 +6846,11 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
                   background: active ? C.text : "transparent",
                   transition:"background .18s",
                 }}>
-                <NavIcon id={t.id} size={20} color={active ? C.card : C.muted} />
+                {/* Keyed on the active transition so the icon pops in fresh every time this
+                    becomes the selected tab, not just background-fades like before. */}
+                <span key={active ? `${t.id}-on` : t.id} style={{ display:"inline-flex", animation: active ? "tabPop .3s cubic-bezier(.34,1.56,.64,1)" : "none" }}>
+                  <NavIcon id={t.id} size={20} color={active ? C.card : C.muted} />
+                </span>
                 <span style={{ fontSize:9, fontWeight:700, color: active ? C.card : C.muted, letterSpacing:.3, fontFamily:"'Space Grotesk',sans-serif" }}>{t.label}</span>
               </button>
             );

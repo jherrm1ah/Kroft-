@@ -1,8 +1,17 @@
-import { createClient } from "@supabase/supabase-js";
+import { extractPlainTextBody, toBase64Url } from "./gmailMime.js";
 
 // Shared server-side helpers for the Google OAuth integration (api/google/*, api/gmail/*,
-// api/calendar/*). Everything here runs on Vercel's Edge runtime, so only Web-standard APIs
-// (fetch, Web Crypto, TextEncoder) are used — no Node-only modules.
+// api/calendar/*, api/mail/*). Everything here runs on Vercel's Edge runtime, so only
+// Web-standard APIs (fetch, Web Crypto, TextEncoder) are used — no Node-only modules.
+//
+// jsonResponse/supabaseAdmin/getAuthedUser used to be defined here directly; they moved to
+// supabaseAdmin.js once billing needed them too (they were never Google-specific), and are
+// re-exported below so every existing `import { getAuthedUser, ... } from "../_lib/google.js"`
+// across api/google/*, api/gmail/*, api/calendar/* keeps working unchanged.
+export { jsonResponse, supabaseAdmin, getAuthedUser } from "./supabaseAdmin.js";
+// Likewise signState/verifyState moved to oauthState.js once Microsoft's OAuth flow needed the
+// exact same CSRF-safe state mechanism (it was never Google-specific either).
+export { signState, verifyState } from "./oauthState.js";
 
 export const GOOGLE_SCOPES = [
   "https://www.googleapis.com/auth/gmail.readonly",
@@ -10,81 +19,6 @@ export const GOOGLE_SCOPES = [
   "https://www.googleapis.com/auth/calendar.readonly",
   "https://www.googleapis.com/auth/calendar.events",
 ].join(" ");
-
-export function jsonResponse(body, status = 200) {
-  return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
-}
-
-// A server-only Supabase client using the service_role key, which bypasses RLS entirely.
-// This is the ONLY thing in this codebase that's allowed to read/write oauth_tokens — never
-// expose SUPABASE_SERVICE_ROLE_KEY to the client, and never import this file from client code.
-export function supabaseAdmin() {
-  return createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, {
-    auth: { persistSession: false, autoRefreshToken: false },
-  });
-}
-
-// Verifies the Supabase access token the frontend sends in Authorization: Bearer <jwt> and
-// returns the authenticated user, or null. Delegates verification to Supabase's own Auth
-// server rather than checking the JWT signature locally, trading a small amount of latency
-// for not having to handle key rotation ourselves.
-export async function getAuthedUser(req) {
-  const authHeader = req.headers.get("authorization") || "";
-  const jwt = authHeader.replace(/^Bearer\s+/i, "").trim();
-  if (!jwt) return null;
-  const { data, error } = await supabaseAdmin().auth.getUser(jwt);
-  if (error || !data?.user) return null;
-  return data.user;
-}
-
-// ---- Signed OAuth state (CSRF protection + carries which user is connecting) ----
-//
-// The OAuth callback (api/google/callback.js) is a top-level browser redirect from Google, so
-// it has no Authorization header to identify the user by. The state parameter we hand Google
-// at the start of the flow carries the user's id instead, signed with HMAC-SHA256 so it can't
-// be forged into attaching stolen tokens to someone else's account, and time-boxed so an old
-// state can't be replayed later.
-async function hmacKey(secret) {
-  return crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign", "verify"]);
-}
-function toBase64Url(bytes) {
-  let binary = "";
-  for (const b of bytes) binary += String.fromCharCode(b);
-  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-}
-function fromBase64Url(str) {
-  const padded = str.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - (str.length % 4)) % 4);
-  return atob(padded);
-}
-
-export async function signState(payload) {
-  const body = toBase64Url(new TextEncoder().encode(JSON.stringify(payload)));
-  const key = await hmacKey(process.env.OAUTH_STATE_SECRET);
-  const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(body));
-  return `${body}.${toBase64Url(new Uint8Array(sig))}`;
-}
-
-export async function verifyState(token) {
-  if (!token || !token.includes(".")) return null;
-  const [body, sig] = token.split(".");
-  const key = await hmacKey(process.env.OAUTH_STATE_SECRET);
-  const expectedSigBytes = new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(body)));
-  const givenSigBytes = Uint8Array.from(fromBase64Url(sig), (c) => c.charCodeAt(0));
-  if (expectedSigBytes.length !== givenSigBytes.length) return null;
-  // Constant-time compare — a plain === on the decoded signature would leak timing
-  // information about how many leading bytes matched, letting an attacker forge a valid
-  // signature byte-by-byte over many requests.
-  let diff = 0;
-  for (let i = 0; i < expectedSigBytes.length; i++) diff |= expectedSigBytes[i] ^ givenSigBytes[i];
-  if (diff !== 0) return null;
-  try {
-    const payload = JSON.parse(fromBase64Url(body));
-    if (typeof payload.exp !== "number" || Date.now() > payload.exp) return null;
-    return payload;
-  } catch {
-    return null;
-  }
-}
 
 // ---- Token storage + refresh ----
 
@@ -137,4 +71,123 @@ export async function getValidGoogleAccessToken(admin, userId) {
   } catch {
     return null;
   }
+}
+
+// ---- Mail (shared by api/gmail/messages.js and the merged api/mail/messages.js) ----
+
+const GMAIL_MAX_RESULTS = 15;
+
+export async function fetchGmailMessages(accessToken) {
+  const listRes = await fetch(
+    `https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=${GMAIL_MAX_RESULTS}&labelIds=INBOX`,
+    { headers: { Authorization: `Bearer ${accessToken}` } }
+  );
+  if (!listRes.ok) return null;
+  const { messages = [] } = await listRes.json();
+
+  // Gmail's API only returns ids from the list endpoint — each message's actual content needs
+  // a separate fetch. Done in parallel since these are independent, read-only GETs.
+  const details = await Promise.all(
+    messages.map(async (m) => {
+      const r = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${m.id}?format=full`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      if (!r.ok) return null;
+      const msg = await r.json();
+      const headers = Object.fromEntries((msg.payload?.headers || []).map((h) => [h.name.toLowerCase(), h.value]));
+      const body = extractPlainTextBody(msg.payload) || msg.snippet || "";
+      return {
+        id: `gmail:${msg.id}`,
+        from: headers.from || "(unknown sender)",
+        subject: headers.subject || "(no subject)",
+        tag: "",
+        time: headers.date || "",
+        read: !(msg.labelIds || []).includes("UNREAD"),
+        body,
+        source: "gmail",
+        sortDate: headers.date ? new Date(headers.date) : new Date(0),
+      };
+    })
+  );
+  return details.filter(Boolean);
+}
+
+// `to`/`subject` end up as raw header lines in the hand-built MIME message below. Kroft.jsx's
+// Reply button prefills `to` straight from a received email's own From: header (see
+// fetchGmailMessages) — attacker-influenced content, since anyone can email a KROFT user with
+// whatever From/Subject they like. An embedded CR/LF there would inject arbitrary extra headers
+// (Bcc, X-*, a second Subject, ...) into the message Gmail actually sends on Reply. Stripped
+// rather than rejected outright, since a legitimate address/subject should never contain one.
+function stripHeaderInjection(value) {
+  return String(value).replace(/[\r\n]+/g, " ");
+}
+
+export async function sendGmailMessage(accessToken, { to, subject, body }) {
+  const mimeMessage = [`To: ${stripHeaderInjection(to)}`, `Subject: ${stripHeaderInjection(subject)}`, "Content-Type: text/plain; charset=utf-8", "", body].join("\r\n");
+  const res = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/messages/send", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ raw: toBase64Url(mimeMessage) }),
+  });
+  if (!res.ok) return { ok: false, detail: await res.text().catch(() => "") };
+  return { ok: true };
+}
+
+// ---- Calendar (shared by api/calendar/events.js) ----
+
+const GOOGLE_CALENDAR_URL = "https://www.googleapis.com/calendar/v3/calendars/primary/events";
+
+export async function fetchGoogleCalendarEvents(accessToken) {
+  const params = new URLSearchParams({
+    timeMin: new Date().toISOString(),
+    maxResults: "20",
+    singleEvents: "true",
+    orderBy: "startTime",
+  });
+  const res = await fetch(`${GOOGLE_CALENDAR_URL}?${params}`, { headers: { Authorization: `Bearer ${accessToken}` } });
+  if (!res.ok) return null;
+  const { items = [] } = await res.json();
+
+  return items.map((item) => {
+    // An all-day event has start.date ("2026-09-21"); a timed event has start.dateTime
+    // ("2026-09-21T14:00:00-07:00") — only the latter has a meaningful clock time to show.
+    const isAllDay = !!item.start?.date;
+    const startIso = item.start?.dateTime || item.start?.date;
+    return {
+      id: `google:${item.id}`,
+      title: item.summary || "(untitled event)",
+      date: (startIso || "").slice(0, 10),
+      time: isAllDay ? "" : new Date(startIso).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" }),
+      location: item.location || "",
+      notes: item.description || "",
+      urgent: false,
+      repeat: "none",
+      contactId: null,
+      source: "google",
+    };
+  });
+}
+
+export async function createGoogleCalendarEvent(accessToken, { title, date, time, location, notes }) {
+  // A bare date + a free-text time string (Kroft.jsx's <Inp placeholder="Time e.g. 4:00 PM">
+  // takes any text, not a structured time) doesn't reliably parse into an exact instant, so a
+  // specified time still creates a timed event defaulting to local midnight rather than
+  // silently dropping it — an imprecise time beats losing it, and the notes field carries the
+  // original text through either way. No time given creates a real all-day event.
+  const event = {
+    summary: title,
+    location: location || undefined,
+    description: [notes, time ? `Time noted in Kroft: ${time}` : null].filter(Boolean).join("\n") || undefined,
+    ...(time
+      ? { start: { dateTime: `${date}T00:00:00`, timeZone: "UTC" }, end: { dateTime: `${date}T01:00:00`, timeZone: "UTC" } }
+      : { start: { date }, end: { date } }),
+  };
+  const res = await fetch(GOOGLE_CALENDAR_URL, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+    body: JSON.stringify(event),
+  });
+  if (!res.ok) return { ok: false, detail: await res.text().catch(() => "") };
+  const created = await res.json();
+  return { ok: true, id: created.id };
 }
