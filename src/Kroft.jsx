@@ -3114,6 +3114,7 @@ function KroftApp({ onFullReset } = {}) {
     try {
       raw = await runKroftCompletion(convo, {
         signal: controller.signal,
+        usageType: "voice",
         onDelta: partial => {
           if (!voiceOpenRef.current) return;
           latest = partial;
@@ -3459,7 +3460,7 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
   // onDelta streams tokens as they arrive; without it the call resolves with the full text.
   // Streaming matters most here because replies are long enough that a spinner-then-dump feels
   // broken, and because the first sentence can start being read aloud while the rest arrives.
-  const runKroftCompletion = async (messages, { onDelta, signal } = {}) => {
+  const runKroftCompletion = async (messages, { onDelta, signal, usageType = "chat" } = {}) => {
     const recent = messages.slice(-historyLimit());
     const body = {
       model:"claude-sonnet-4-6",
@@ -3470,12 +3471,23 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
     };
     let res;
     try {
-      res = await aiFetch("/api/chat", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body), signal });
+      res = await aiFetch("/api/chat", { method:"POST", headers:{"Content-Type":"application/json","X-Kroft-Usage-Type":usageType}, body:JSON.stringify(body), signal });
     } catch (e) {
       if (e.name === "AbortError") throw e;
       throw new KroftError("I can't reach the network right now. Check your connection and try again.");
     }
-    if (!res.ok) throw new KroftError(friendlyError(res.status));
+    if (!res.ok) {
+      // api/chat.js's own server-side quota check (the real, unspoofable enforcement — see its
+      // comments) returns a distinct quota_exceeded body on 429, separate from an upstream AI
+      // provider rate limit — surfaced with its own message rather than friendlyError's generic
+      // "give it a moment and try again", which would be actively wrong advice for a daily/
+      // monthly limit.
+      if (res.status === 429) {
+        const data = await res.json().catch(() => null);
+        if (data?.error === "quota_exceeded") throw new KroftError(data.message);
+      }
+      throw new KroftError(friendlyError(res.status));
+    }
 
     if (!onDelta) {
       const data = await res.json();
@@ -4065,7 +4077,7 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
     if (!spendAiExtra()) return;
     toast("KROFT is drafting a reply…");
     try {
-      const res = await aiFetch("/api/chat", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ model:"claude-sonnet-4-6", max_tokens:400, messages:[{ role:"user", content:`Draft a concise professional reply (under 5 sentences). From: ${email.from}, Subject: ${email.subject}, Body: "${email.body}"` }] }) });
+      const res = await aiFetch("/api/chat", { method:"POST", headers:{"Content-Type":"application/json","X-Kroft-Usage-Type":"extra"}, body:JSON.stringify({ model:"claude-sonnet-4-6", max_tokens:400, messages:[{ role:"user", content:`Draft a concise professional reply (under 5 sentences). From: ${email.from}, Subject: ${email.subject}, Body: "${email.body}"` }] }) });
       const data = await res.json();
       const body = data.content?.map(b=>b.text||"").join("").trim();
       if (!res.ok || !body) { toast("Draft failed — try again."); return; }
@@ -4083,7 +4095,7 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
     setSuggestingReminder(true);
     const context = `Appointments: ${appts.length>0 ? appts.map(a=>`${a.title} at ${a.time} on ${a.date}`).join("; ") : "none"}. Tasks: ${tasks.length>0 ? tasks.filter(t=>!t.done).map(t=>t.title).join("; ") : "none"}. Mood: ${mood}.`;
     try {
-      const res = await aiFetch("/api/chat", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ model:"claude-sonnet-4-6", max_tokens:120, system:"Suggest exactly ONE short, genuinely useful reminder for this user based on their context. Reply with ONLY the reminder text itself — no preamble, no quotes, under 15 words.", messages:[{ role:"user", content:context }] }) });
+      const res = await aiFetch("/api/chat", { method:"POST", headers:{"Content-Type":"application/json","X-Kroft-Usage-Type":"extra"}, body:JSON.stringify({ model:"claude-sonnet-4-6", max_tokens:120, system:"Suggest exactly ONE short, genuinely useful reminder for this user based on their context. Reply with ONLY the reminder text itself — no preamble, no quotes, under 15 words.", messages:[{ role:"user", content:context }] }) });
       const data = await res.json();
       const suggestion = data.content?.map(b=>b.text||"").join("").trim();
       if (!res.ok || !suggestion) { toast("Couldn't get a suggestion — try again."); }
@@ -4116,7 +4128,7 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
     setGeneratingReport(true);
     const context = `Month: ${monthLabel(now.toISOString().slice(0,10))}. Income entries: ${monthInc.length} totaling ${fmtCur(incTotal,user.currency)}. Expense entries: ${monthExp.length} totaling ${fmtCur(expTotal,user.currency)}. Net: ${fmtCur(net,user.currency)}. Top expense categories: ${topCats.length>0?topCats.map(([c,v])=>`${c} (${fmtCur(v,user.currency)})`).join(", "):"none"}. Business: ${user.businessName||"not set"} (${user.businessType||""}).`;
     try {
-      const res = await aiFetch("/api/chat", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ model:"claude-sonnet-4-6", max_tokens:400, system:"You are KROFT, a bookkeeping assistant. Given a user's monthly income/expense summary, write a short end-of-month summary: 2-3 sentences on what the numbers show, then 2-3 practical observations about their own spending patterns. Describe what happened in their data — do not recommend financial products, investments, tax positions, borrowing, or anything requiring a licensed advisor. Frame observations as prompts to consider, not instructions. No preamble, no headers, plain text only.", messages:[{ role:"user", content:context }] }) });
+      const res = await aiFetch("/api/chat", { method:"POST", headers:{"Content-Type":"application/json","X-Kroft-Usage-Type":"report"}, body:JSON.stringify({ model:"claude-sonnet-4-6", max_tokens:400, system:"You are KROFT, a bookkeeping assistant. Given a user's monthly income/expense summary, write a short end-of-month summary: 2-3 sentences on what the numbers show, then 2-3 practical observations about their own spending patterns. Describe what happened in their data — do not recommend financial products, investments, tax positions, borrowing, or anything requiring a licensed advisor. Frame observations as prompts to consider, not instructions. No preamble, no headers, plain text only.", messages:[{ role:"user", content:context }] }) });
       const data = await res.json();
       const advice = (res.ok && data.content?.map(b=>b.text||"").join("").trim()) || "Couldn't generate advice right now — try again shortly.";
       setMonthlyReport({ month:monthLabel(now.toISOString().slice(0,10)), incTotal, expTotal, net, topCats, advice, generatedAt:Date.now() });
@@ -4248,7 +4260,7 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
       // Let Claude interpret the natural-language request into a place-type query
       try {
         const res = await aiFetch("/api/chat", {
-          method:"POST", headers:{"Content-Type":"application/json"},
+          method:"POST", headers:{"Content-Type":"application/json","X-Kroft-Usage-Type":"extra"},
           body:JSON.stringify({
             model:"claude-sonnet-4-6", max_tokens:60,
             system:"Convert the user's request into a single short search term (2-4 words max) suitable for a places search API, such as 'coffee shop', 'pharmacy open now', 'budget hotel', or 'ATM'. Reply with ONLY the search term, nothing else.",

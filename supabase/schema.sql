@@ -171,3 +171,51 @@ comment on table public.payment_events is
   'Idempotency ledger for Flutterwave charge processing (see api/_lib/flutterwave.js''s claimTransactionForProcessing). One row per transaction id, inserted exactly once via ON CONFLICT DO NOTHING — the same transaction can never be applied twice regardless of how many times callback/webhook delivery overlaps or retries. Service_role only, same as oauth_tokens.';
 
 alter table public.payment_events enable row level security;
+
+-- Server-side backing for KROFT's free-tier AI usage limits (see api/chat.js). The equivalent
+-- client-side counters (dailyMessageCount, aiExtrasCount, voiceTurnsCount, monthlyReportCount)
+-- live in kv_store, which the account owner can write directly via RLS — so they're display-only;
+-- this table plus increment_ai_usage() below are the real, unspoofable enforcement point.
+create table if not exists public.ai_usage (
+  user_id    uuid not null references auth.users(id) on delete cascade,
+  usage_type text not null, -- 'chat' | 'extra' | 'voice' | 'report'
+  period     text not null, -- 'YYYY-MM-DD' for daily types, 'YYYY-MM' for the monthly report type
+  count      integer not null default 0,
+  updated_at timestamptz not null default now(),
+  primary key (user_id, usage_type, period)
+);
+
+comment on table public.ai_usage is
+  'Server-side, unspoofable counters backing KROFT''s free-tier AI usage limits (see api/chat.js and increment_ai_usage()). Written only via increment_ai_usage, called by api/chat.js using service_role. No RLS policies for anon/authenticated — same access pattern as oauth_tokens/payment_events.';
+
+alter table public.ai_usage enable row level security;
+
+-- Atomic claim-a-unit-of-quota operation: a single INSERT ... ON CONFLICT DO UPDATE avoids the
+-- race a plain select-then-upsert would have (two concurrent requests both reading "4 used,
+-- limit 5" and both proceeding, over-granting quota) — the same reasoning as
+-- claimTransactionForProcessing in api/_lib/flutterwave.js, applied to counting up instead of
+-- claiming a single id. Ordinary SECURITY INVOKER (the default, no DEFINER) is used since there's
+-- no need to escalate privilege here.
+create or replace function public.increment_ai_usage(p_user_id uuid, p_usage_type text, p_period text)
+returns integer
+language plpgsql
+set search_path = pg_catalog, public
+as $$
+declare
+  new_count integer;
+begin
+  insert into public.ai_usage (user_id, usage_type, period, count, updated_at)
+  values (p_user_id, p_usage_type, p_period, 1, now())
+  on conflict (user_id, usage_type, period)
+  do update set count = public.ai_usage.count + 1, updated_at = now()
+  returning count into new_count;
+  return new_count;
+end;
+$$;
+
+-- IMPORTANT: Supabase grants EXECUTE on every new public-schema function to anon/authenticated by
+-- default, independent of the `public` pseudo-role — revoking from `public` alone does NOT
+-- remove this. Without the explicit revoke below, any signed-in (or even anonymous) caller could
+-- invoke this RPC directly with an arbitrary p_user_id and grief another user's quota.
+revoke execute on function public.increment_ai_usage(uuid, text, text) from public, anon, authenticated;
+grant execute on function public.increment_ai_usage(uuid, text, text) to service_role;
