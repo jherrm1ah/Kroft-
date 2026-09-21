@@ -2100,7 +2100,13 @@ function KroftApp({ onFullReset } = {}) {
       if (p.dailyBriefSentDate) setDailyBriefSentDate(p.dailyBriefSentDate);
       if (typeof p.voiceTurnsCount === "number") setVoiceTurnsCount(p.voiceTurnsCount);
       if (p.voiceTurnsDate) setVoiceTurnsDate(p.voiceTurnsDate);
-      if (typeof p.subscribed === "boolean") setSubscribed(p.subscribed);
+      // Deliberately NOT restoring p.subscribed here. kv_store is writable by the account owner
+      // themselves (see supabase/schema.sql's kv_store RLS policies) — trusting a self-persisted
+      // "am I paying" flag would let anyone grant themselves Plus by editing their own profile
+      // blob directly via the Supabase REST API. subscribed only ever becomes true through
+      // refreshSubscriptionStatus's read of the server-verified subscriptions row (written only
+      // by api/billing/webhook.js and api/billing/callback.js); defaulting to false here just
+      // means a brief flash of "Free plan" until that fetch resolves, not a lasting gap.
       if (typeof p.dailyMessageCount === "number") setDailyMessageCount(p.dailyMessageCount);
       if (p.messageCountDate) setMessageCountDate(p.messageCountDate);
       if (Array.isArray(p.incomeCats)) setIncomeCats(p.incomeCats);
@@ -2185,13 +2191,16 @@ function KroftApp({ onFullReset } = {}) {
   // Without that, a user who signs up and moves straight to the next onboarding step without
   // touching another profile field would have their name/email sitting only in the pre-auth
   // localStorage fallback, not yet under their new account — invisible on their next login.
-  const saveProfileNow = () => window.storage.set(STORAGE_KEYS.profile, JSON.stringify({ user, theme, voiceReplies, proactiveInsights, subscribed, dailyMessageCount, messageCountDate, incomeCats, expenseCats, notifPrefs, aiExtrasCount, aiExtrasDate, monthlyReportCount, monthlyReportMonth, dailyBriefSentDate, voiceTurnsCount, voiceTurnsDate }), false);
+  // subscribed is deliberately excluded — see hydrateAllGroups's comment on why it's never
+  // restored from this same blob; persisting it here would just re-create the value this app
+  // must never trust from client storage in the first place.
+  const saveProfileNow = () => window.storage.set(STORAGE_KEYS.profile, JSON.stringify({ user, theme, voiceReplies, proactiveInsights, dailyMessageCount, messageCountDate, incomeCats, expenseCats, notifPrefs, aiExtrasCount, aiExtrasDate, monthlyReportCount, monthlyReportMonth, dailyBriefSentDate, voiceTurnsCount, voiceTurnsDate }), false);
 
   useEffect(() => {
     if (!dataLoaded) return;
     const t = setTimeout(() => { saveProfileNow().catch(()=>{}); }, 900);
     return () => clearTimeout(t);
-  }, [dataLoaded, user, theme, voiceReplies, proactiveInsights, subscribed, dailyMessageCount, messageCountDate, incomeCats, expenseCats, notifPrefs, aiExtrasCount, aiExtrasDate, monthlyReportCount, monthlyReportMonth, dailyBriefSentDate, voiceTurnsCount, voiceTurnsDate]);
+  }, [dataLoaded, user, theme, voiceReplies, proactiveInsights, dailyMessageCount, messageCountDate, incomeCats, expenseCats, notifPrefs, aiExtrasCount, aiExtrasDate, monthlyReportCount, monthlyReportMonth, dailyBriefSentDate, voiceTurnsCount, voiceTurnsDate]);
 
   useEffect(() => {
     if (!dataLoaded) return;
