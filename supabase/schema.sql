@@ -99,22 +99,29 @@ create trigger oauth_tokens_set_updated_at
   for each row
   execute function public.oauth_tokens_set_updated_at();
 
--- Tracks KROFT Plus subscription status per user, kept in sync exclusively by Stripe's webhook
--- (api/billing/webhook.js) via the service_role key. A user can read their own row (this is
--- just a status string and dates, not sensitive the way an OAuth token is), but has no
--- insert/update/delete access at all — "subscribed" can only ever become true because Stripe
--- confirmed a real payment, never because a client set a flag.
+-- Tracks KROFT Plus subscription status per user, kept in sync exclusively by Flutterwave's
+-- webhook and post-checkout verification (api/billing/webhook.js, api/billing/callback.js) via
+-- the service_role key. A user can read their own row (this is just a status string and dates,
+-- not sensitive the way an OAuth token is), but has no insert/update/delete access at all —
+-- "subscribed" can only ever become true because Flutterwave confirmed a real payment, never
+-- because a client set a flag.
+--
+-- Provider was originally Stripe; switched to Flutterwave since Stripe doesn't support payouts
+-- to Nigerian bank accounts, so it was never usable for this app's actual merchant. No real
+-- subscribers existed yet, so the provider-specific columns were renamed in place rather than
+-- migrated.
 create table if not exists public.subscriptions (
-  user_id               uuid primary key references auth.users(id) on delete cascade,
-  stripe_customer_id    text,
-  stripe_subscription_id text,
-  status                text not null default 'inactive',
-  current_period_end    timestamptz,
-  updated_at            timestamptz not null default now()
+  user_id                 uuid primary key references auth.users(id) on delete cascade,
+  provider                text not null default 'flutterwave',
+  provider_customer_ref   text, -- Flutterwave identifies customers by email, not a dedicated customer-id concept
+  provider_subscription_id text, -- known only after the first successful recurring charge — null before then
+  status                  text not null default 'inactive',
+  current_period_end      timestamptz,
+  updated_at              timestamptz not null default now()
 );
 
 comment on table public.subscriptions is
-  'KROFT Plus subscription status per user. Written only by api/billing/webhook.js via service_role — never by the client. Readable by the owning user (status/dates only, no payment details).';
+  'KROFT Plus subscription status per user. Written only by api/billing/webhook.js and api/billing/callback.js via service_role — never by the client. Readable by the owning user (status/dates only, no payment details). Provider: Flutterwave.';
 
 alter table public.subscriptions enable row level security;
 

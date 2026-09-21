@@ -1434,7 +1434,7 @@ function ProfileSection({ user, onEditPreferences, onSignOut, theme, onToggleThe
           <Mono style={{ display:"block", color:C.soft, marginBottom:14 }}>Unlimited chat, voice, drafts and reports.</Mono>
         )}
         {subscribed
-          ? <Btn sm v="outline" disabled={billingLoading} onClick={onManageBilling}>{billingLoading ? <Spinner size={14} color={C.soft} thickness={2} /> : "Manage billing"}</Btn>
+          ? <Btn sm v="outline" disabled={billingLoading} onClick={onManageBilling}>{billingLoading ? <Spinner size={14} color={C.soft} thickness={2} /> : "Cancel plan"}</Btn>
           : <Btn sm disabled={billingLoading} onClick={onUpgrade}>{billingLoading ? <Spinner size={14} color={C.black} thickness={2} /> : "Upgrade to KROFT Plus"}</Btn>}
       </Card>
 
@@ -1469,21 +1469,21 @@ function ProfileSection({ user, onEditPreferences, onSignOut, theme, onToggleThe
           </Mono>
           {!subscribed && <Btn sm disabled={billingLoading} onClick={onUpgrade}>{billingLoading ? <Spinner size={14} color={C.black} thickness={2} /> : "Upgrade"}</Btn>}
         </ProfileRow>
-        <ProfileRow label="Billing" sub={subscribed ? "Managed by Stripe" : "No payment method on file"} expanded={openRow==="billing"} onToggle={()=>toggle("billing")}>
+        <ProfileRow label="Billing" sub={subscribed ? "Managed by Flutterwave" : "No payment method on file"} expanded={openRow==="billing"} onToggle={()=>toggle("billing")}>
           <Mono style={{ display:"block", color:C.soft, lineHeight:1.7, marginBottom:subscribed?10:0 }}>
             {subscribed
-              ? "Your subscription, payment method and receipts are all managed by Stripe. Open Manage billing to update your card, view invoices, or cancel."
-              : "Upgrading opens Stripe's secure checkout — KROFT never sees or stores your card details directly."}
+              ? "Your subscription and card are held by Flutterwave, not KROFT. There's no self-serve billing portal — cancel here any time, or contact support for a receipt."
+              : "Upgrading opens Flutterwave's secure checkout — KROFT never sees or stores your card details directly."}
           </Mono>
-          {subscribed && <Btn sm v="outline" disabled={billingLoading} onClick={onManageBilling}>{billingLoading ? <Spinner size={14} color={C.soft} thickness={2} /> : "Manage billing"}</Btn>}
+          {subscribed && <Btn sm v="outline" disabled={billingLoading} onClick={onManageBilling}>{billingLoading ? <Spinner size={14} color={C.soft} thickness={2} /> : "Cancel plan"}</Btn>}
         </ProfileRow>
-        <ProfileRow label="Payment Methods" sub={subscribed ? "Managed via Stripe" : "None on file"} expanded={openRow==="paymethods"} onToggle={()=>toggle("paymethods")}>
+        <ProfileRow label="Payment Methods" sub={subscribed ? "Held by Flutterwave" : "None on file"} expanded={openRow==="paymethods"} onToggle={()=>toggle("paymethods")}>
           <Mono style={{ display:"block", color:C.soft, lineHeight:1.7, marginBottom:subscribed?10:0 }}>
             {subscribed
-              ? "Card details live with Stripe, not KROFT. Manage billing opens Stripe's own portal to add, remove or update a card."
-              : "Card management opens through Stripe once you upgrade to KROFT Plus."}
+              ? "Card details live with Flutterwave, not KROFT. There's no self-serve way to swap the card on an active plan — cancel here, then re-subscribe with the new card."
+              : "Card entry happens through Flutterwave once you upgrade to KROFT Plus."}
           </Mono>
-          {subscribed && <Btn sm v="outline" disabled={billingLoading} onClick={onManageBilling}>{billingLoading ? <Spinner size={14} color={C.soft} thickness={2} /> : "Manage billing"}</Btn>}
+          {subscribed && <Btn sm v="outline" disabled={billingLoading} onClick={onManageBilling}>{billingLoading ? <Spinner size={14} color={C.soft} thickness={2} /> : "Cancel plan"}</Btn>}
         </ProfileRow>
         <ProfileRow label="Usage Statistics" sub="Real activity from this session" expanded={openRow==="usage"} onToggle={()=>toggle("usage")}>
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:9 }}>
@@ -1508,8 +1508,8 @@ function ProfileSection({ user, onEditPreferences, onSignOut, theme, onToggleThe
         <ProfileRow label="Manage Subscription" sub={subscribed ? "Change or cancel plan" : "You're on the free plan"} expanded={openRow==="managesub"} onToggle={()=>toggle("managesub")}>
           {subscribed ? (
             <>
-              <Mono style={{ display:"block", color:C.soft, lineHeight:1.7, marginBottom:10 }}>You're on KROFT Plus. Manage billing opens Stripe's portal, where you can update your payment method or cancel any time — Stripe's own settings decide whether that takes effect immediately or at the end of your current billing period.</Mono>
-              <Btn sm v="outline" disabled={billingLoading} onClick={onManageBilling}>{billingLoading ? <Spinner size={14} color={C.soft} thickness={2} /> : "Manage billing"}</Btn>
+              <Mono style={{ display:"block", color:C.soft, lineHeight:1.7, marginBottom:10 }}>You're on KROFT Plus. Cancel any time — Flutterwave has no self-serve portal, so this cancels directly through KROFT.</Mono>
+              <Btn sm v="outline" disabled={billingLoading} onClick={onManageBilling}>{billingLoading ? <Spinner size={14} color={C.soft} thickness={2} /> : "Cancel plan"}</Btn>
             </>
           ) : (
             <>
@@ -1787,8 +1787,8 @@ function KroftApp({ onFullReset } = {}) {
   const [microsoftLinking, setMicrosoftLinking] = useState(false);
   const [syncingMail, setSyncingMail] = useState(false);
   const [syncingCalendar, setSyncingCalendar] = useState(false);
-  // True while a checkout/portal redirect is being prepared, so the Upgrade/Manage billing
-  // buttons throughout Profile can't be double-clicked into two Stripe sessions.
+  // True while a checkout redirect or a cancellation is in flight, so the Upgrade/Cancel plan
+  // buttons throughout Profile can't be double-clicked into two requests.
   const [billingLoading, setBillingLoading] = useState(false);
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPw, setLoginPw] = useState("");
@@ -2664,10 +2664,11 @@ function KroftApp({ onFullReset } = {}) {
     }).catch(() => {}); // best-effort — see comment above
   };
 
-  // The real source of truth for KROFT Plus — reads the subscriptions row Stripe's webhook
-  // (api/billing/webhook.js) keeps in sync, never something set directly by a client action.
-  // "active" and "trialing" both count as subscribed; everything else (inactive, past_due,
-  // canceled, or no row at all for a user who's never subscribed) doesn't.
+  // The real source of truth for KROFT Plus — reads the subscriptions row Flutterwave's webhook
+  // and post-checkout verification (api/billing/webhook.js, api/billing/callback.js) keep in
+  // sync, never something set directly by a client action. "active" counts as subscribed;
+  // everything else (inactive, canceled, or no row at all for a user who's never subscribed)
+  // doesn't.
   const refreshSubscriptionStatus = async () => {
     if (!isSupabaseConfigured) return;
     try {
@@ -2675,16 +2676,16 @@ function KroftApp({ onFullReset } = {}) {
       if (!user) return;
       const { data, error } = await supabase.from("subscriptions").select("status").eq("user_id", user.id).maybeSingle();
       if (error) return;
-      setSubscribed(data?.status === "active" || data?.status === "trialing");
+      setSubscribed(data?.status === "active");
     } catch {
       // Silent — a background status refresh, not a user-initiated action.
     }
   };
 
-  // Redirects to Stripe's hosted Checkout for a new subscription. Nothing here can make
-  // `subscribed` true directly — that only ever happens once Stripe's webhook confirms a real
-  // payment and refreshSubscriptionStatus picks it up after the redirect back (see the
-  // billing=success handling below).
+  // Redirects to Flutterwave's hosted Checkout for a new subscription. Nothing here can make
+  // `subscribed` true directly — that only ever happens once api/billing/callback.js verifies
+  // a real payment server-side (or, for later renewals, once api/billing/webhook.js confirms
+  // one) and refreshSubscriptionStatus picks it up (see the billing=success handling below).
   const startCheckout = async () => {
     if (!isSupabaseConfigured) { toast("Sign in with a real account to upgrade."); return; }
     setBillingLoading(true);
@@ -2692,36 +2693,39 @@ function KroftApp({ onFullReset } = {}) {
       const res = await authedFetch("/api/billing/checkout", { method: "POST" });
       if (!res.ok) { toast("Couldn't start checkout. Try again."); setBillingLoading(false); return; }
       const { url } = await res.json();
-      window.location.href = url; // full navigation — Stripe Checkout won't render in a fetch response
+      window.location.href = url; // full navigation — Flutterwave's checkout page won't render in a fetch response
     } catch {
       toast("Couldn't start checkout. Try again.");
       setBillingLoading(false);
     }
   };
 
-  // Redirects to Stripe's hosted Customer Portal — the real place to update a payment method,
-  // view invoices, or cancel. KROFT never handles card details or cancellation logic itself.
-  const openBillingPortal = async () => {
+  // Cancels KROFT Plus directly. Unlike Stripe, Flutterwave has no hosted self-serve portal to
+  // redirect to — this calls Flutterwave's cancel-subscription API on the user's behalf (see
+  // api/billing/cancel.js), confirmed here first since there's no separate confirmation screen
+  // on Flutterwave's side the way a portal would provide.
+  const cancelKroftPlus = async () => {
+    if (!window.confirm("Cancel KROFT Plus? You'll lose unlimited access once this takes effect.")) return;
     setBillingLoading(true);
     try {
-      const res = await authedFetch("/api/billing/portal", { method: "POST" });
+      const res = await authedFetch("/api/billing/cancel", { method: "POST" });
+      setBillingLoading(false);
       if (!res.ok) {
-        setBillingLoading(false);
-        toast(res.status === 409 ? "Upgrade to KROFT Plus first." : "Couldn't open billing. Try again.");
+        toast(res.status === 409 ? "No active subscription to cancel." : "Couldn't cancel. Try again.");
         return;
       }
-      const { url } = await res.json();
-      window.location.href = url;
+      setSubscribed(false);
+      toast("KROFT Plus cancelled.");
     } catch {
       setBillingLoading(false);
-      toast("Couldn't open billing. Try again.");
+      toast("Couldn't cancel. Try again.");
     }
   };
 
-  // Consumes the billing=success/cancelled query params Stripe Checkout/Portal land back on
-  // the app with (see api/billing/checkout.js and portal.js's success_url/return_url) — same
-  // pattern as the oauth=success/error handling below, kept separate since they're unrelated
-  // redirects that can each arrive independently.
+  // Consumes the billing=success/cancelled/error query params api/billing/callback.js lands
+  // back on the app with after a Flutterwave checkout attempt — same pattern as the
+  // oauth=success/error handling below, kept separate since they're unrelated redirects that
+  // can each arrive independently.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const billingResult = params.get("billing");
@@ -2731,12 +2735,13 @@ function KroftApp({ onFullReset } = {}) {
       refreshSubscriptionStatus();
     } else if (billingResult === "cancelled") {
       toast("Checkout cancelled — no charge was made.");
-    } else if (billingResult === "portal_return") {
-      // Covers both a cancellation and a payment-method update — refresh either way rather
-      // than trying to guess which happened from the redirect alone.
-      refreshSubscriptionStatus();
+    } else if (billingResult === "error") {
+      // api/billing/callback.js's own server-side verification didn't confirm the payment —
+      // shown distinctly from a plain cancellation since this means something went wrong with
+      // an attempted charge, not that the user simply backed out.
+      toast("Couldn't confirm the payment. If you were charged, contact support.");
     }
-    params.delete("billing");
+    params.delete("billing"); params.delete("billing_error");
     const cleanUrl = window.location.pathname + (params.toString() ? `?${params}` : "") + window.location.hash;
     window.history.replaceState({}, "", cleanUrl);
   }, []);
@@ -6588,7 +6593,7 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
               subscribed={subscribed}
               billingLoading={billingLoading}
               onUpgrade={startCheckout}
-              onManageBilling={openBillingPortal}
+              onManageBilling={cancelKroftPlus}
               dailyMessageCount={dailyMessageCount}
               freeLimit={FREE_DAILY_MESSAGE_LIMIT}
               voiceReplies={voiceReplies}

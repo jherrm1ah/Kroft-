@@ -1,34 +1,32 @@
 import { supabaseAdmin, jsonResponse } from "../_lib/supabaseAdmin.js";
-import { verifyStripeWebhookSignature, applyStripeEvent } from "../_lib/stripe.js";
+import { verifyFlutterwaveWebhookSignature, applyFlutterwaveEvent } from "../_lib/flutterwave.js";
 
-// The only place "subscribed" is ever allowed to become true. Stripe calls this directly (no
-// Supabase JWT — see verifyStripeWebhookSignature for how this request is actually
-// authenticated instead) whenever a checkout completes or a subscription's status changes.
-// The actual per-event-type logic lives in api/_lib/stripe.js's applyStripeEvent, factored out
-// so it can be unit-tested with a fake admin client instead of a live Supabase project.
+// The durable path for keeping subscription status in sync — covers renewals, which happen via
+// Flutterwave's tokenized recurring billing with no browser present at all (unlike the first
+// payment, which also gets an immediate check in api/billing/callback.js right after the
+// redirect back). Flutterwave calls this directly, authenticated via a static shared secret in
+// the verif-hash header (see verifyFlutterwaveWebhookSignature) rather than a Supabase JWT.
 export const config = { runtime: "edge" };
 
 export default async function handler(req) {
   if (req.method !== "POST") return jsonResponse({ error: "Method not allowed" }, 405);
 
-  const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
-  const secretKey = process.env.STRIPE_SECRET_KEY;
-  if (!webhookSecret || !secretKey) return jsonResponse({ error: "Billing isn't configured on the server yet." }, 501);
+  const secretHash = process.env.FLUTTERWAVE_WEBHOOK_SECRET_HASH;
+  if (!secretHash) return jsonResponse({ error: "Billing isn't configured on the server yet." }, 501);
 
-  const rawBody = await req.text();
-  const signatureValid = await verifyStripeWebhookSignature(rawBody, req.headers.get("stripe-signature"), webhookSecret);
-  if (!signatureValid) return jsonResponse({ error: "Invalid signature" }, 400);
+  const signatureValid = verifyFlutterwaveWebhookSignature(req.headers.get("verif-hash"), secretHash);
+  if (!signatureValid) return jsonResponse({ error: "Invalid signature" }, 401);
 
   let event;
   try {
-    event = JSON.parse(rawBody);
+    event = JSON.parse(await req.text());
   } catch {
     return jsonResponse({ error: "Invalid payload" }, 400);
   }
 
-  await applyStripeEvent(supabaseAdmin(), secretKey, event);
+  await applyFlutterwaveEvent(supabaseAdmin(), event);
 
-  // Stripe expects a fast 2xx ack regardless of what the event needed done, else it retries
-  // (and eventually gives up and flags the endpoint as failing in the Stripe dashboard).
+  // Flutterwave expects a fast 2xx ack regardless of what the event needed done, else it
+  // retries delivery.
   return jsonResponse({ received: true });
 }
