@@ -1477,7 +1477,7 @@ function ProfileSection({ user, onEditPreferences, onSignOut, theme, onToggleThe
               ? "Your subscription and card are held by our secure payment partner, not KROFT. There's no self-serve billing portal — cancel here any time, or contact support for a receipt."
               : "Upgrading opens a secure checkout — KROFT never sees or stores your card details directly."}
           </Mono>
-          {subscribed && subscriptionStatus === "active" && !autoRenews && (
+          {subscribed && !autoRenews && (
             <Mono style={{ display:"block", color:C.muted, lineHeight:1.7, marginBottom:10 }}>
               Your current payment method doesn't automatically renew — you'll need to manually resubscribe before your current period ends.
             </Mono>
@@ -1487,8 +1487,8 @@ function ProfileSection({ user, onEditPreferences, onSignOut, theme, onToggleThe
               KROFT Plus renews automatically only with a card. Bank transfer, USSD, and mobile money are also accepted at checkout, but those don't auto-renew — you'd need to manually resubscribe each cycle.
             </Mono>
           )}
-          {subscribed && subscriptionStatus === "active" && <Btn sm v="outline" disabled={billingLoading} onClick={onManageBilling}>{billingLoading ? <Spinner size={14} color={C.soft} thickness={2} /> : "Cancel plan"}</Btn>}
-          {(subscriptionStatus === "past_due" || (!subscribed && subscriptionStatus !== "past_due")) && (
+          {subscribed && <Btn sm v="outline" disabled={billingLoading} onClick={onManageBilling}>{billingLoading ? <Spinner size={14} color={C.soft} thickness={2} /> : "Cancel plan"}</Btn>}
+          {!subscribed && (
             <Btn sm disabled={billingLoading} onClick={onUpgrade}>{billingLoading ? <Spinner size={14} color={C.black} thickness={2} /> : subscriptionStatus === "past_due" ? "Resubscribe" : "Upgrade"}</Btn>
           )}
         </ProfileRow>

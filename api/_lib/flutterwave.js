@@ -132,7 +132,15 @@ export async function resolveUserIdFromTransaction(admin, transaction) {
   if (metaUserId) return metaUserId;
   const email = transaction.customer?.email;
   if (!email) return null;
-  const { data } = await admin.from("subscriptions").select("user_id").eq("provider_customer_ref", email).maybeSingle();
+  const { data, error } = await admin.from("subscriptions").select("user_id").eq("provider_customer_ref", email).maybeSingle();
+  if (error) {
+    // .maybeSingle() errors (rather than just returning no row) if more than one subscriptions
+    // row shares this email — a real data-integrity issue retrying won't fix. Logged rather than
+    // silently swallowed so it's actually visible, since the caller can't do anything but skip
+    // this transaction (same as "no match") when the right user is ambiguous.
+    console.error("resolveUserIdFromTransaction: email lookup failed", error);
+    return null;
+  }
   return data?.user_id || null;
 }
 
@@ -180,8 +188,22 @@ export async function applyChargeEvent(admin, transaction) {
   if (claim.error) return { ok: false, error: claim.error };
   if (!claim.claimed) return { ok: true, duplicate: true }; // this exact transaction was already applied
 
+  const applied = await writeSubscriptionState(admin, userId, transaction, successful);
+  if (!applied.ok) {
+    // The transaction got claimed but the actual subscriptions write failed — release the claim
+    // so a retried delivery (Flutterwave's webhook retry, or a second hit of callback.js) gets a
+    // real chance to apply it. Without this, the next delivery would see the transaction id
+    // already in payment_events and short-circuit as "duplicate, already applied" even though
+    // the charge was never actually reflected in subscriptions — permanently losing it.
+    await admin.from("payment_events").delete().eq("transaction_id", String(transactionId));
+    return { ok: false, error: applied.error };
+  }
+  return { ok: true };
+}
+
+async function writeSubscriptionState(admin, userId, transaction, successful) {
   if (successful) {
-    await admin.from("subscriptions").upsert(
+    const { error } = await admin.from("subscriptions").upsert(
       {
         user_id: userId,
         provider: "flutterwave",
@@ -193,16 +215,20 @@ export async function applyChargeEvent(admin, transaction) {
       },
       { onConflict: "user_id" }
     );
-  } else {
-    // A failed charge for a user with no existing subscriptions row (e.g. a first attempt that
-    // never went through) has nothing to mark down — don't manufacture a row out of a failure.
-    // A failed charge for an existing subscriber is a failed renewal: move them to past_due so
-    // they lose Plus access (subscribed only ever means status === "active") rather than either
-    // silently keeping them active or being dropped entirely.
-    const { data: existing } = await admin.from("subscriptions").select("user_id").eq("user_id", userId).maybeSingle();
-    if (existing) {
-      await admin.from("subscriptions").update({ status: "past_due" }).eq("user_id", userId);
-    }
+    if (error) return { ok: false, error };
+    return { ok: true };
+  }
+
+  // A failed charge for a user with no existing subscriptions row (e.g. a first attempt that
+  // never went through) has nothing to mark down — don't manufacture a row out of a failure.
+  // A failed charge for an existing subscriber is a failed renewal: move them to past_due so
+  // they lose Plus access (subscribed only ever means status === "active") rather than either
+  // silently keeping them active or being dropped entirely.
+  const { data: existing, error: selectError } = await admin.from("subscriptions").select("user_id").eq("user_id", userId).maybeSingle();
+  if (selectError) return { ok: false, error: selectError };
+  if (existing) {
+    const { error } = await admin.from("subscriptions").update({ status: "past_due" }).eq("user_id", userId);
+    if (error) return { ok: false, error };
   }
   return { ok: true };
 }
