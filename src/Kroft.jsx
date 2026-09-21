@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo, Component } from "react";
 import { BarChart, Bar, Cell, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
+import { supabase, isSupabaseConfigured } from "./supabaseClient.js";
 
 // Theme-aware palette — black, white and off-white only, no grey scale.
 // Dark mode: near-black surfaces, white/off-white text.
@@ -1675,7 +1676,7 @@ const STORAGE_KEYS = {
   emailData: "kroft:emails",
 };
 
-function KroftApp() {
+function KroftApp({ onFullReset } = {}) {
   // Theme: "dark" or "light". C's properties are reassigned in place (see effect below)
   // rather than swapping which object C points to, since ~250 style props across this file
   // already read C.xxx directly. themeTick forces React to re-render after that mutation,
@@ -1741,9 +1742,15 @@ function KroftApp() {
   // below. When off, KROFT should only respond when asked, not surface unprompted toasts.
   const [proactiveInsights, setProactiveInsights] = useState(true);
 
-  // Starts at signup: a fresh device has no account, so a login form there is a dead end.
-  // The load effect below switches to login once a saved account is found.
+  // Starts at signup. With Supabase configured, the load effect below jumps straight to the
+  // dashboard when a real session already exists (a returning, still-signed-in user), the same
+  // way any app with real sessions keeps you signed in across a reload. Without Supabase
+  // configured (local-only mode), it instead switches to login once a saved local account is
+  // found, matching this app's original device-local behavior.
   const [step, setStep] = useState("signup");
+  // True while a signup/login request to Supabase Auth is in flight, so the button can show a
+  // spinner and can't be double-submitted by an impatient extra click.
+  const [authLoading, setAuthLoading] = useState(false);
   const [user, setUser] = useState({ name:"", email:"", password:"", phone:"", photo:null, businessName:"", businessType:"", currency:"USD", connected:{gmail:false,calendar:false,uber:false} });
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPw, setLoginPw] = useState("");
@@ -2001,81 +2008,107 @@ function KroftApp() {
   const [dailyMessageCount, setDailyMessageCount] = useState(0);
   const [messageCountDate, setMessageCountDate] = useState(() => new Date().toDateString());
 
-  // Hydrate all persisted groups once on mount. window.storage.get throws (not returns null)
-  // for a key that's never been written — expected for a first-ever run — so each key is
-  // caught individually rather than letting one missing key abort the whole load. Nothing is
-  // written back to storage until this finishes (see the `dataLoaded` guard on every save
-  // effect below); saving before then could overwrite real saved data with the still-default
-  // initial state.
+  // Loads all persisted groups from window.storage and applies them to state. window.storage.get
+  // throws (not returns null) for a key that's never been written — expected for a first-ever
+  // run, or for a user who's never saved this particular group — so each key is caught
+  // individually rather than letting one missing key abort the whole load. Factored out of the
+  // mount effect below so it can also be re-run right after a successful login: with Supabase
+  // configured, storage is scoped to whichever user is currently signed in (see
+  // storageShim.js), and at mount time nobody is signed in yet, so the mount-time call finds
+  // nothing for a returning user logging back in — their real data only becomes reachable once
+  // doLogin's supabase.auth.signInWithPassword() call succeeds.
+  const hydrateAllGroups = async () => {
+    const entries = await Promise.all(Object.entries(STORAGE_KEYS).map(async ([group, key]) => {
+      try {
+        const r = await window.storage.get(key, false);
+        return [group, r?.value ? JSON.parse(r.value) : null];
+      } catch { return [group, null]; }
+    }));
+    const data = Object.fromEntries(entries);
+    if (data.profile) {
+      const p = data.profile;
+      if (p.user) setUser(u => ({ ...u, ...p.user }));
+      if (p.theme) setTheme(p.theme);
+      if (typeof p.voiceReplies === "boolean") setVoiceReplies(p.voiceReplies);
+      if (typeof p.proactiveInsights === "boolean") setProactiveInsights(p.proactiveInsights);
+      if (p.notifPrefs) setNotifPrefs(v => ({ ...v, ...p.notifPrefs }));
+      if (typeof p.aiExtrasCount === "number") setAiExtrasCount(p.aiExtrasCount);
+      if (p.aiExtrasDate) setAiExtrasDate(p.aiExtrasDate);
+      if (typeof p.monthlyReportCount === "number") setMonthlyReportCount(p.monthlyReportCount);
+      if (p.monthlyReportMonth) setMonthlyReportMonth(p.monthlyReportMonth);
+      if (p.dailyBriefSentDate) setDailyBriefSentDate(p.dailyBriefSentDate);
+      if (typeof p.voiceTurnsCount === "number") setVoiceTurnsCount(p.voiceTurnsCount);
+      if (p.voiceTurnsDate) setVoiceTurnsDate(p.voiceTurnsDate);
+      if (typeof p.subscribed === "boolean") setSubscribed(p.subscribed);
+      if (typeof p.dailyMessageCount === "number") setDailyMessageCount(p.dailyMessageCount);
+      if (p.messageCountDate) setMessageCountDate(p.messageCountDate);
+      if (Array.isArray(p.incomeCats)) setIncomeCats(p.incomeCats);
+      if (Array.isArray(p.expenseCats)) setExpenseCats(p.expenseCats);
+    }
+    if (data.finance) { setIncome(data.finance.income||[]); setExpenses(data.finance.expenses||[]); setBudgets(data.finance.budgets||{}); setBudgetAlerts(data.finance.budgetAlerts||{}); setBudgetCarryover(data.finance.budgetCarryover||{}); if (data.finance.budgetRolloverMonth) setBudgetRolloverMonth(data.finance.budgetRolloverMonth); }
+    if (data.productivity) {
+      setTasks(data.productivity.tasks||[]);
+      setSmartReminders(data.productivity.smartReminders||[]);
+      setNotes(data.productivity.notes||[]);
+      // A pending call from days ago (the browser was closed the whole time) shouldn't
+      // suddenly ring on the next launch — it's stale, not due. Anything more than a day
+      // overdue is marked missed on load rather than left pending.
+      const now = Date.now();
+      setScheduledCalls((data.productivity.scheduledCalls||[]).map(c => {
+        if (c.status !== "pending") return c;
+        const due = new Date(`${c.date}T${c.time||"00:00"}:00`).getTime();
+        return (now - due > 86400000) ? { ...c, status:"missed" } : c;
+      }));
+    }
+    if (data.calendarData) { setAppts(data.calendarData.appts||[]); if (data.calendarData.remindersFired) setRemindersFired(data.calendarData.remindersFired); }
+    if (data.contactsData) setContacts(data.contactsData.contacts||[]);
+    if (data.projectsData) { setProjects(data.projectsData.projects||[]); setDocuments(data.projectsData.documents||[]); }
+    // Strip transient flags on restore. A reply interrupted mid-stream (tab closed, app
+    // backgrounded) would otherwise come back with streaming:true and sit there showing a
+    // blinking caret for a response that will never finish arriving.
+    if (data.wellnessData) {
+      const w = data.wellnessData;
+      if (typeof w.wellness === "number") setWellness(w.wellness);
+      if (w.wellnessDate) setWellnessDate(w.wellnessDate);
+      if (w.selfCare) setSelfCare(w.selfCare);
+      if (w.mood) setMood(w.mood);
+      // Backfill ids on entries saved before they carried one, so every row has a stable
+      // handle for React keys and for deletion.
+      if (Array.isArray(w.moodLog)) setMoodLog(w.moodLog.map(m => m.id ? m : { ...m, id:uid() }));
+    }
+    // Read/unread and deletions were lost on every reload — the inbox silently reset to
+    // all-unread, so marking things read never stuck.
+    if (data.emailData && Array.isArray(data.emailData.emails)) setEmails(data.emailData.emails);
+    if (data.chatData) setAiMessages((data.chatData.aiMessages||[]).map(({ streaming, ...m }) => m));
+    return data;
+  };
+
+  // Nothing is written back to storage until this finishes (see the `dataLoaded` guard on every
+  // save effect below); saving before then could overwrite real saved data with the
+  // still-default initial state.
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const entries = await Promise.all(Object.entries(STORAGE_KEYS).map(async ([group, key]) => {
-        try {
-          const r = await window.storage.get(key, false);
-          return [group, r?.value ? JSON.parse(r.value) : null];
-        } catch { return [group, null]; }
-      }));
+      // With Supabase configured: a persisted session (refresh token already in this browser)
+      // means a returning, still-signed-in user — skip straight to their dashboard once their
+      // data loads, rather than making them log in again on every reload.
+      let hasSession = false;
+      if (isSupabaseConfigured) {
+        const { data: { session } = {} } = await supabase.auth.getSession();
+        hasSession = !!session;
+      }
+      const data = await hydrateAllGroups();
       if (cancelled) return;
-      const data = Object.fromEntries(entries);
-      if (data.profile) {
+      if (hasSession) {
+        setStep("dashboard");
+      } else if (!isSupabaseConfigured) {
+        // Local-only mode (no Supabase configured): fall back to this app's original
+        // device-local behavior — a previously-saved account on this device means Login
+        // instead of Signup. Requires real credentials on file, not just an email, since
+        // login verifies against them.
         const p = data.profile;
-        if (p.user) setUser(u => ({ ...u, ...p.user }));
-        if (p.theme) setTheme(p.theme);
-        if (typeof p.voiceReplies === "boolean") setVoiceReplies(p.voiceReplies);
-        if (typeof p.proactiveInsights === "boolean") setProactiveInsights(p.proactiveInsights);
-        if (p.notifPrefs) setNotifPrefs(v => ({ ...v, ...p.notifPrefs }));
-        if (typeof p.aiExtrasCount === "number") setAiExtrasCount(p.aiExtrasCount);
-        if (p.aiExtrasDate) setAiExtrasDate(p.aiExtrasDate);
-        if (typeof p.monthlyReportCount === "number") setMonthlyReportCount(p.monthlyReportCount);
-        if (p.monthlyReportMonth) setMonthlyReportMonth(p.monthlyReportMonth);
-        if (p.dailyBriefSentDate) setDailyBriefSentDate(p.dailyBriefSentDate);
-        if (typeof p.voiceTurnsCount === "number") setVoiceTurnsCount(p.voiceTurnsCount);
-        if (p.voiceTurnsDate) setVoiceTurnsDate(p.voiceTurnsDate);
-        if (typeof p.subscribed === "boolean") setSubscribed(p.subscribed);
-        if (typeof p.dailyMessageCount === "number") setDailyMessageCount(p.dailyMessageCount);
-        if (p.messageCountDate) setMessageCountDate(p.messageCountDate);
-        if (Array.isArray(p.incomeCats)) setIncomeCats(p.incomeCats);
-        if (Array.isArray(p.expenseCats)) setExpenseCats(p.expenseCats);
-        // A previously-saved account exists — show Login instead of Signup. Requires real
-        // credentials on file, not just an email, since login now verifies against them.
-        if (p.user?.email && (p.user?.passwordHash || p.user?.password)) setStep("login");
+        if (p?.user?.email && (p.user?.passwordHash || p.user?.password)) setStep("login");
       }
-      if (data.finance) { setIncome(data.finance.income||[]); setExpenses(data.finance.expenses||[]); setBudgets(data.finance.budgets||{}); setBudgetAlerts(data.finance.budgetAlerts||{}); setBudgetCarryover(data.finance.budgetCarryover||{}); if (data.finance.budgetRolloverMonth) setBudgetRolloverMonth(data.finance.budgetRolloverMonth); }
-      if (data.productivity) {
-        setTasks(data.productivity.tasks||[]);
-        setSmartReminders(data.productivity.smartReminders||[]);
-        setNotes(data.productivity.notes||[]);
-        // A pending call from days ago (the browser was closed the whole time) shouldn't
-        // suddenly ring on the next launch — it's stale, not due. Anything more than a day
-        // overdue is marked missed on load rather than left pending.
-        const now = Date.now();
-        setScheduledCalls((data.productivity.scheduledCalls||[]).map(c => {
-          if (c.status !== "pending") return c;
-          const due = new Date(`${c.date}T${c.time||"00:00"}:00`).getTime();
-          return (now - due > 86400000) ? { ...c, status:"missed" } : c;
-        }));
-      }
-      if (data.calendarData) { setAppts(data.calendarData.appts||[]); if (data.calendarData.remindersFired) setRemindersFired(data.calendarData.remindersFired); }
-      if (data.contactsData) setContacts(data.contactsData.contacts||[]);
-      if (data.projectsData) { setProjects(data.projectsData.projects||[]); setDocuments(data.projectsData.documents||[]); }
-      // Strip transient flags on restore. A reply interrupted mid-stream (tab closed, app
-      // backgrounded) would otherwise come back with streaming:true and sit there showing a
-      // blinking caret for a response that will never finish arriving.
-      if (data.wellnessData) {
-        const w = data.wellnessData;
-        if (typeof w.wellness === "number") setWellness(w.wellness);
-        if (w.wellnessDate) setWellnessDate(w.wellnessDate);
-        if (w.selfCare) setSelfCare(w.selfCare);
-        if (w.mood) setMood(w.mood);
-        // Backfill ids on entries saved before they carried one, so every row has a stable
-        // handle for React keys and for deletion.
-        if (Array.isArray(w.moodLog)) setMoodLog(w.moodLog.map(m => m.id ? m : { ...m, id:uid() }));
-      }
-      // Read/unread and deletions were lost on every reload — the inbox silently reset to
-      // all-unread, so marking things read never stuck.
-      if (data.emailData && Array.isArray(data.emailData.emails)) setEmails(data.emailData.emails);
-      if (data.chatData) setAiMessages((data.chatData.aiMessages||[]).map(({ streaming, ...m }) => m));
       setDataLoaded(true);
     })();
     return () => { cancelled = true; };
@@ -2086,9 +2119,16 @@ function KroftApp() {
   // literal, since a new object reference every render would otherwise reset the debounce timer
   // constantly and the save would never actually fire). Debounced so rapid edits (several
   // additions in a row) collapse into one write instead of one per change.
+  // Factored out so a just-completed Supabase signup can write the profile immediately (see
+  // doSignup) instead of waiting on this debounce to fire from some later, unrelated change.
+  // Without that, a user who signs up and moves straight to the next onboarding step without
+  // touching another profile field would have their name/email sitting only in the pre-auth
+  // localStorage fallback, not yet under their new account — invisible on their next login.
+  const saveProfileNow = () => window.storage.set(STORAGE_KEYS.profile, JSON.stringify({ user, theme, voiceReplies, proactiveInsights, subscribed, dailyMessageCount, messageCountDate, incomeCats, expenseCats, notifPrefs, aiExtrasCount, aiExtrasDate, monthlyReportCount, monthlyReportMonth, dailyBriefSentDate, voiceTurnsCount, voiceTurnsDate }), false);
+
   useEffect(() => {
     if (!dataLoaded) return;
-    const t = setTimeout(() => { window.storage.set(STORAGE_KEYS.profile, JSON.stringify({ user, theme, voiceReplies, proactiveInsights, subscribed, dailyMessageCount, messageCountDate, incomeCats, expenseCats, notifPrefs, aiExtrasCount, aiExtrasDate, monthlyReportCount, monthlyReportMonth, dailyBriefSentDate, voiceTurnsCount, voiceTurnsDate }), false).catch(()=>{}); }, 900);
+    const t = setTimeout(() => { saveProfileNow().catch(()=>{}); }, 900);
     return () => clearTimeout(t);
   }, [dataLoaded, user, theme, voiceReplies, proactiveInsights, subscribed, dailyMessageCount, messageCountDate, incomeCats, expenseCats, notifPrefs, aiExtrasCount, aiExtrasDate, monthlyReportCount, monthlyReportMonth, dailyBriefSentDate, voiceTurnsCount, voiceTurnsDate]);
 
@@ -2283,14 +2323,41 @@ function KroftApp() {
     else toast(`Mood: ${m}`);
   };
 
-  // True only once an account actually exists on this device. Without this check, doLogin's
-  // `ok` flag stayed true when neither a hash nor a legacy password was present — so on a fresh
-  // install any email and any password went straight through to the dashboard.
+  // True only once an account actually exists on this device. Local-only-mode fallback only —
+  // with Supabase configured, doLogin asks the server instead of checking anything local, since
+  // a real account can now be logged into from a device that's never seen it before.
   const hasAccount = !!(user.passwordHash || user.password);
 
   const doLogin = async () => {
     if (locked) return;
     if (!loginEmail||!loginPw) { setLoginError("Please enter your email and password."); return; }
+
+    if (isSupabaseConfigured) {
+      setAuthLoading(true);
+      const { error } = await supabase.auth.signInWithPassword({ email: loginEmail.trim(), password: loginPw });
+      setAuthLoading(false);
+      if (error) {
+        const next = loginAttempts + 1; setLoginAttempts(next);
+        const rem = 5 - next;
+        // Supabase's own error message ("Invalid login credentials", etc.) is already generic
+        // enough not to reveal which half was wrong, so it's shown directly rather than
+        // replaced with a custom string — but the attempt-lockout UX stays, layered on top of
+        // Supabase's own server-side rate limiting rather than replacing it.
+        if (next >= 5) { setLocked(true); setLoginError("Too many failed attempts. Locked for 30 seconds."); }
+        else setLoginError(`${error.message || "Incorrect email or password."} ${rem} attempt${rem!==1?"s":""} remaining.`);
+        return;
+      }
+      setLoginError(""); setLoginAttempts(0); setLoginPw("");
+      // The mount-time hydration effect ran before anyone was signed in and found nothing for
+      // this account — load it for real now that we know who's signed in.
+      await hydrateAllGroups();
+      setStep("dashboard");
+      toast(`Welcome back, ${user.name||"there"}.`);
+      return;
+    }
+
+    // Local-only mode (no Supabase configured): fall back to this app's original device-local
+    // credential check.
     if (!hasAccount) { setLoginError("No account on this device yet. Create one to get started."); return; }
     let ok = false;
     if (user.passwordHash) {
@@ -2393,6 +2460,36 @@ function KroftApp() {
     if (pwScore < 3) { setSignupError("Password too weak. Add uppercase, numbers and symbols."); return; }
     if (!confirmPw) { setSignupError("Please confirm your password."); return; }
     if (confirmPw !== signupPw) { setSignupError("Passwords do not match."); return; }
+
+    if (isSupabaseConfigured) {
+      setAuthLoading(true);
+      const { data, error } = await supabase.auth.signUp({
+        email: user.email.trim(),
+        password: signupPw,
+        options: { data: { name: user.name } },
+      });
+      setAuthLoading(false);
+      if (error) { setSignupError(error.message || "Couldn't create your account. Try again."); return; }
+      setSignupPw(""); setConfirmPw(""); setSignupError("");
+      if (!data.session) {
+        // This project's Auth settings require email confirmation — there's no session yet,
+        // so there's nothing to load and nowhere secure to send them. Say so plainly rather
+        // than silently landing on a dashboard with no data.
+        setStep("login");
+        toast("Check your email to confirm your account, then log in.");
+        return;
+      }
+      // Write the profile now rather than waiting for the debounced save effect to pick up
+      // some later, unrelated change — without this, a user who signs up and moves straight
+      // to onboarding without touching another profile field would have their name/email
+      // sitting only in the pre-auth localStorage fallback, not yet under their new account.
+      saveProfileNow().catch(()=>{});
+      setStep("photo");
+      return;
+    }
+
+    // Local-only mode (no Supabase configured): fall back to this app's original device-local
+    // account scheme — a locally hashed password, no real server, no cross-device login.
     if (!window.crypto?.subtle) { setSignupError("This browser can't securely hash passwords — try updating it, or use HTTPS."); return; }
     const salt = generateSalt();
     const passwordHash = await hashPassword(signupPw, salt);
@@ -3896,7 +3993,7 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
               <Mono style={{ color:C.soft, lineHeight:1.5 }}>{loginError}</Mono>
             </div>
           )}
-          <Btn full onClick={doLogin} disabled={locked} style={{ padding:"13px", fontSize:14, marginBottom:10 }}>{locked?`Locked (${lockTimer}s)`:"Log In"}</Btn>
+          <Btn full onClick={doLogin} disabled={locked||authLoading} style={{ padding:"13px", fontSize:14, marginBottom:10 }}>{locked?`Locked (${lockTimer}s)`:authLoading?(<><Spinner size={16} color={C.black} thickness={2} />Logging in…</>):"Log In"}</Btn>
           {user.webauthnCredentialId && (
             <button onClick={doFingerprint} disabled={fpLoading||fpSuccess||locked} style={{ width:"100%", background:fpSuccess?"rgba(255,255,255,.1)":C.surface, border:`1px solid ${fpSuccess?C.white:C.muted}`, borderRadius:12, padding:"11px", cursor:locked||fpLoading||fpSuccess?"not-allowed":"pointer", color:fpSuccess?C.white:C.soft, fontSize:13, fontWeight:600, marginBottom:14, display:"flex", alignItems:"center", justifyContent:"center", gap:10, fontFamily:"'Space Grotesk',sans-serif", transition:"all .3s", opacity:locked?.4:1 }}>
               {fpLoading ? (<><Spinner size={16} color={C.white} thickness={2} />Verifying…</>) : fpSuccess ? "Fingerprint verified" : "Sign in with Fingerprint / Face ID"}
@@ -3963,7 +4060,7 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
           {signupError && <div style={{ background:C.fill, border:`1px solid ${C.border}`, borderRadius:8, padding:"9px 13px", marginBottom:10, marginTop:8 }}><Mono style={{ color:C.soft, lineHeight:1.5 }}>{signupError}</Mono></div>}
           <div style={{ display:"flex", gap:10, marginTop:12 }}>
             <Btn v="outline" onClick={() => setStep("login")} style={{ flex:1 }}>Back</Btn>
-            <Btn onClick={doSignup} disabled={!user.name||!user.email||!signupPw||pwScore<3||!confirmPw||confirmPw!==signupPw} style={{ flex:2 }}>Sign Up</Btn>
+            <Btn onClick={doSignup} disabled={authLoading||!user.name||!user.email||!signupPw||pwScore<3||!confirmPw||confirmPw!==signupPw} style={{ flex:2 }}>{authLoading?(<><Spinner size={16} color={C.black} thickness={2} />Creating account…</>):"Sign Up"}</Btn>
           </div>
         </OShell>
       )}
@@ -6098,20 +6195,20 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
               voiceTurnsCount={voiceTurnsCount}
               voiceLimit={FREE_DAILY_VOICE_LIMIT}
               onUpgradeFromNotifs={() => { setSubscribed(true); toast("KROFT Plus enabled — no charge, this build has no payment set up."); }}
-              onSignOut={() => {
+              onSignOut={async () => {
                 // Signing out previously only flipped `step` back to the login screen — every
                 // bit of data stayed live in memory, so returning to the dashboard showed the
-                // previous session's chat, finances and contacts untouched. Clear the
-                // session-scoped state and stop any speech still playing.
+                // previous session's chat, finances and contacts untouched. End the real
+                // Supabase session (so the refresh token this browser holds stops working) and
+                // stop any speech still playing, then fully reset via onFullReset (see Kroft())
+                // rather than clearing state field by field — with real accounts, a different
+                // person can genuinely sign into this same browser next.
                 if ("speechSynthesis" in window) window.speechSynthesis.cancel();
-                setStep("login"); setTab("home"); setHomeSection("overview"); setWorkspaceSection(null);
-                setAiMessages([]); setAiInput(""); setTranscript("");
-                setLoginPw(""); setFpSuccess(false); setLoginError(""); setLoginAttempts(0);
-                setActionSheet(null); setContactActivity(null); setComposeDraft(null);
-                setOpenEmail(null); setOpenNote(null); setOpenAppt(null);
-                setEditingEntry(null); setEditingContact(null);
-                setShowBriefing(false);
+                if (isSupabaseConfigured) await supabase.auth.signOut();
                 toast("Signed out.");
+                // Short delay so the toast above is actually visible before onFullReset swaps
+                // this whole component out for a clean instance.
+                setTimeout(() => onFullReset?.(), 400);
               }}
               theme={theme}
               onToggleTheme={setTheme}
@@ -6167,9 +6264,16 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
 }
 
 export default function Kroft() {
+  // Bumped on sign-out to force KroftApp to fully unmount and remount, resetting every piece
+  // of its state to its initial default in one guaranteed sweep. With real Supabase accounts,
+  // a different person can genuinely sign into the same browser next — a `key` remount is the
+  // reliable way to ensure nothing from the previous account (finance figures, contacts, chat
+  // history, an in-progress edit) lingers in memory for the next one to see, rather than
+  // auditing and manually resetting several dozen individual state variables by hand.
+  const [sessionEpoch, setSessionEpoch] = useState(0);
   return (
     <ErrorBoundary>
-      <KroftApp />
+      <KroftApp key={sessionEpoch} onFullReset={() => setSessionEpoch(e => e + 1)} />
     </ErrorBoundary>
   );
 }
