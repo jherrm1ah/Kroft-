@@ -67,8 +67,14 @@ const ANIM = `
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
 @keyframes spin{to{transform:rotate(360deg)}}
 @keyframes wave{0%,100%{transform:scaleY(.2)}50%{transform:scaleY(1)}}
-@keyframes slideIn{from{transform:translateX(108%);opacity:0}to{transform:translateX(0);opacity:1}}
+@keyframes slideIn{0%{transform:translateX(108%) scale(.9);opacity:0}70%{transform:translateX(-4%) scale(1.03);opacity:1}100%{transform:translateX(0) scale(1);opacity:1}}
 @keyframes stepIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
+/* ---- "Fun and haptic" pass: playful, springy feedback on the things people touch a lot ---- */
+@keyframes bouncePop{0%{transform:scale(.4) rotate(-8deg);opacity:0}55%{transform:scale(1.18) rotate(4deg);opacity:1}75%{transform:scale(.92) rotate(-2deg)}100%{transform:scale(1) rotate(0);opacity:1}}
+@keyframes checkPop{0%{transform:scale(1) rotate(0)}35%{transform:scale(1.4) rotate(-10deg)}65%{transform:scale(.88) rotate(6deg)}100%{transform:scale(1) rotate(0)}}
+@keyframes tabPop{0%{transform:scale(.85)}50%{transform:scale(1.12)}100%{transform:scale(1)}}
+@keyframes celebratePop{0%{transform:scale(.3);opacity:0}45%{transform:scale(1.2);opacity:1}70%{transform:scale(.92)}100%{transform:scale(1);opacity:1}}
+@keyframes confettiFall{0%{transform:translate(0,-10px) rotate(0deg);opacity:1}100%{transform:translate(var(--drift,0px),100vh) rotate(var(--spin,540deg));opacity:0}}
 `;
 
 // Uses Intl's native currency formatting instead of a hand-maintained symbol map, so any
@@ -108,6 +114,12 @@ const rand = arr => arr[Math.floor(Math.random() * arr.length)];
 // are created in the same millisecond (fast typing+Enter, rapid taps, batch actions) — every
 // edit/delete/toggle keyed on that ID would then silently affect both items at once.
 const uid = () => Date.now() + Math.random();
+// The Vibration API only exists on Android Chrome/Firefox — iOS Safari and every desktop
+// browser have no navigator.vibrate at all, so this is a best-effort tactile enhancement,
+// never something an interaction depends on to make sense. Wrapped in try/catch since some
+// browsers throw (rather than just no-op) calling vibrate() from certain contexts (e.g. an
+// iframe without the right permissions-policy).
+const haptic = pattern => { try { navigator.vibrate?.(pattern); } catch {} };
 const todayISO = () => new Date().toISOString().slice(0, 10);
 const fmtDate = iso => { if (!iso) return ""; const d = new Date(iso + "T00:00:00"); return isNaN(d) ? iso : d.toLocaleDateString("en-US", { month:"short", day:"numeric", year:"numeric" }); };
 // Advances an ISO date string forward by one occurrence of the given repeat cadence. Used to
@@ -366,12 +378,55 @@ const Btn = ({ children, onClick, v="solid", sm, disabled, full, style, "aria-la
   // Icon-only buttons (e.g. a lone "✕" or "✓") get a minimum square footprint so a
   // one-character label doesn't collapse into a hard-to-tap sliver on touch devices.
   const isIconOnly = typeof children === "string" && children.trim().length <= 2;
+  // Every Btn in the app gets a light haptic tap for free — this one shared component is used
+  // hundreds of times across every screen, so it's the highest-leverage place to add tactile
+  // feedback everywhere at once rather than touching each call site individually.
+  const handleClick = e => { if (disabled) return; haptic(8); onClick?.(e); };
   return (
-    <button onClick={onClick} disabled={disabled} aria-label={ariaLabel} style={{ width:full?"100%":"auto", minWidth:sm&&isIconOnly?36:"auto", minHeight:sm?36:44, background:s.bg, border:`1px solid ${s.bc}`, borderRadius:12, padding:sm?"8px 14px":"10px 22px", cursor:disabled?"not-allowed":"pointer", color:s.col, fontWeight:700, fontSize:sm?12:13, fontFamily:"'Space Grotesk',sans-serif", letterSpacing:.3, transition:"all .14s", opacity:disabled?.4:1, display:"inline-flex", alignItems:"center", justifyContent:"center", gap:6, boxSizing:"border-box", ...style }}>
+    <button onClick={handleClick} disabled={disabled} aria-label={ariaLabel} style={{ width:full?"100%":"auto", minWidth:sm&&isIconOnly?36:"auto", minHeight:sm?36:44, background:s.bg, border:`1px solid ${s.bc}`, borderRadius:12, padding:sm?"8px 14px":"10px 22px", cursor:disabled?"not-allowed":"pointer", color:s.col, fontWeight:700, fontSize:sm?12:13, fontFamily:"'Space Grotesk',sans-serif", letterSpacing:.3, transition:"all .18s cubic-bezier(.34,1.56,.64,1)", opacity:disabled?.4:1, display:"inline-flex", alignItems:"center", justifyContent:"center", gap:6, boxSizing:"border-box", ...style }}>
       {children}
     </button>
   );
 };
+
+// Dependency-free celebratory confetti burst — a fixed full-screen overlay of falling pieces
+// that removes itself once its animation finishes. Reserved for genuine milestones (see
+// KroftApp's celebrate()), not everyday interactions, so it stays a real "moment" rather than
+// noise. Pure CSS animation (see @keyframes confettiFall in ANIM), so prefers-reduced-motion
+// already neutralizes it the same way it does every other decorative animation in the app.
+function Confetti({ onDone }) {
+  const pieces = useMemo(() => {
+    const colors = [C.accent, C.positive, C.warning, C.negative, C.white];
+    return Array.from({ length: 40 }, (_, i) => ({
+      id: i,
+      left: Math.random() * 100,
+      delay: Math.random() * 0.25,
+      duration: 1.6 + Math.random() * 1.1,
+      drift: Math.round((Math.random() - 0.5) * 220),
+      spin: Math.round(360 + Math.random() * 360) * (Math.random() < 0.5 ? -1 : 1),
+      color: colors[i % colors.length],
+      w: 6 + Math.random() * 5,
+      h: 10 + Math.random() * 6,
+      round: Math.random() < 0.4,
+    }));
+  }, []);
+  useEffect(() => {
+    const t = setTimeout(onDone, 3000);
+    return () => clearTimeout(t);
+  }, []);
+  return (
+    <div style={{ position:"fixed", inset:0, zIndex:1500, pointerEvents:"none", overflow:"hidden" }} aria-hidden="true">
+      {pieces.map(p => (
+        <div key={p.id} style={{
+          position:"absolute", top:-16, left:`${p.left}%`,
+          width:p.w, height:p.h, background:p.color, borderRadius:p.round?"50%":2,
+          animation:`confettiFall ${p.duration}s ${p.delay}s cubic-bezier(.25,.46,.45,.94) forwards`,
+          "--drift": `${p.drift}px`, "--spin": `${p.spin}deg`,
+        }} />
+      ))}
+    </div>
+  );
+}
 
 // Parses a money input, returning null for anything that shouldn't reach the ledger. A bare
 // type="number" field still accepts a leading minus, so "-500" was storable as income — and a
@@ -1997,6 +2052,10 @@ function KroftApp({ onFullReset } = {}) {
   const [listening, setListening] = useState(false);
   const [transcript, setTranscript] = useState("");
   const [toasts, setToasts] = useState([]);
+  // Confetti is a rare, deliberate "moment" (see celebrate() below) — a single boolean is
+  // enough since it's a fire-and-forget overlay; a second celebration while one is already
+  // playing just keeps the current burst running rather than stacking bursts.
+  const [showConfetti, setShowConfetti] = useState(false);
   const [hungry, setHungry] = useState(false);
   const [showBriefing, setShowBriefing] = useState(false);
   const [uberDest, setUberDest] = useState(null);
@@ -2337,11 +2396,40 @@ function KroftApp({ onFullReset } = {}) {
     // fully cover the header/logo for the several seconds they're all up — not toasts
     // overlapping each other, but the stack overlapping real page content beneath it.
     setToasts(p => [{ id, msg, onUndo }, ...p.slice(0,1)]);
+    haptic(10);
     // Undo gets meaningfully longer than a plain confirmation. Six seconds is fine at a desk,
     // but it's tight on a phone while walking, and a screen reader may still be queuing the
     // announcement when the only chance to reverse a deletion disappears.
     setTimeout(() => setToasts(p => p.filter(t => t.id !== id)), onUndo ? UNDO_MS : 4200);
   }, []);
+
+  // A real "moment" — confetti + a distinct, more festive haptic pattern — reserved for genuine
+  // milestones (see call sites: all tasks cleared, first-ever finance entry, KROFT Plus
+  // activated, wellness hitting 100), not everyday confirmations. Those keep the plain toast().
+  const celebrate = useCallback(() => { setShowConfetti(true); haptic([15, 60, 15, 60, 40]); }, []);
+
+  // Celebrates the first time wellness reaches a perfect 100 after having been lower — the ref
+  // re-arms once it dips back below 100, so climbing back up to 100 later celebrates again
+  // rather than only ever once per session. The initial hydration snapshot is recorded without
+  // celebrating — a returning user whose wellness was already 100 from a previous session
+  // shouldn't get a "you just reached it" moment on every reload.
+  const wellnessCelebratedRef = useRef(false);
+  const wellnessInitializedRef = useRef(false);
+  useEffect(() => {
+    if (!dataLoaded) return;
+    if (!wellnessInitializedRef.current) {
+      wellnessInitializedRef.current = true;
+      wellnessCelebratedRef.current = wellness >= 100;
+      return;
+    }
+    if (wellness >= 100 && !wellnessCelebratedRef.current) {
+      wellnessCelebratedRef.current = true;
+      toast("Wellness at 100 — you're taking great care of yourself.");
+      celebrate();
+    } else if (wellness < 100) {
+      wellnessCelebratedRef.current = false;
+    }
+  }, [wellness, dataLoaded]);
 
   const remind = appt => {
     const msg = `Hey ${user.name||"there"}, reminder: "${appt.title}" at ${appt.time}${appt.date?" on "+appt.date:""}${appt.location?" at "+appt.location:""}.`;
@@ -2406,6 +2494,7 @@ function KroftApp({ onFullReset } = {}) {
   }, [dataLoaded]);
 
   const applyMood = m => {
+    haptic(m==="happy" ? [10, 30, 10] : 12);
     // Entries carry a date as well as a time. Without one, yesterday's 9am and today's 9am were
     // indistinguishable in the log — which didn't show while nothing persisted, but makes the
     // history unreadable now that it does.
@@ -2817,6 +2906,7 @@ function KroftApp({ onFullReset } = {}) {
     if (!billingResult) return;
     if (billingResult === "success") {
       toast("Payment received — welcome to KROFT Plus.");
+      celebrate();
       refreshSubscriptionStatus();
     } else if (billingResult === "cancelled") {
       toast("Checkout cancelled — no charge was made.");
@@ -4347,7 +4437,12 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
     .hbtn:hover{opacity:.75} .tabBtn:hover{background:${C.surface}!important;color:${C.white}!important}
     .row:hover{background:${C.hover}!important}
     input::placeholder,textarea::placeholder{color:${C.muted}}
-    select option{background:${C.surface}} button:active{transform:scale(.96)}
+    select option{background:${C.surface}}
+    /* Punchier, springier press feedback than a flat scale — applies to every button in the
+       app (including raw <button>s that don't set their own inline transition; Btn's own
+       inline transition takes precedence where it's set, same springy curve either way). */
+    button{transition:transform .18s cubic-bezier(.34,1.56,.64,1)}
+    button:active{transform:scale(.92)}
     /* Any input/select/textarea under 16px triggers iOS Safari's auto-zoom-on-focus —
        most fields in this app were set well below that. Force 16px at the type level,
        independent of each component's own (still-smaller) visual font-size. */
@@ -4766,6 +4861,8 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
         ))}
       </div>
 
+      {showConfetti && <Confetti onDone={() => setShowConfetti(false)} />}
+
       {tab!=="workspace" && (
       <header style={{ borderBottom:`1px solid ${C.cardB}`, padding:"11px 16px", display:"flex", alignItems:"center", justifyContent:"space-between", background:C.bg, position:"sticky", top:0, zIndex:200, backdropFilter:"blur(14px)", gap:10 }}>
         <div style={{ display:"flex", alignItems:"center", gap:9, minWidth:0, flexShrink:1 }}>
@@ -4884,7 +4981,10 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
                     const mColor = {calm:C.positive,happy:C.accent,stressed:C.warning,angry:C.negative}[m];
                     const active = mood===m;
                     return (
-                    <button key={m} onClick={() => applyMood(m)} style={{ background:active?mColor+"22":C.surface, border:`1.5px solid ${active?mColor:C.cardB}`, borderRadius:10, padding:"9px 6px", cursor:"pointer", color:active?mColor:C.soft, fontSize:11, fontWeight:700, textAlign:"center", boxShadow:active?`0 0 12px ${mColor}40`:"none", transition:"all .15s" }}>
+                    // Keying on the active transition (not just `m`) forces a fresh DOM node the
+                    // moment a mood is picked, so its pop-in animation replays every tap — even
+                    // tapping the same mood again a moment later, not just the first time.
+                    <button key={active ? `${m}-on` : m} onClick={() => applyMood(m)} style={{ background:active?mColor+"22":C.surface, border:`1.5px solid ${active?mColor:C.cardB}`, borderRadius:10, padding:"9px 6px", cursor:"pointer", color:active?mColor:C.soft, fontSize:11, fontWeight:700, textAlign:"center", boxShadow:active?`0 0 12px ${mColor}40`:"none", transition:"all .15s", animation:active?"bouncePop .4s cubic-bezier(.34,1.56,.64,1)":"none" }}>
                       {m.charAt(0).toUpperCase()+m.slice(1)}
                     </button>
                     );
@@ -5109,6 +5209,7 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
                     if (!newInc.label) return;
                     const amt = parseAmount(newInc.amount);
                     if (amt === null) { toast("Enter an amount greater than zero."); return; }
+                    const isFirstEverEntry = income.length === 0 && expenses.length === 0;
                     {
                       const base = { id:uid(), ...newInc, amount:amt, date:newInc.date||todayISO(), cur:user.currency };
                       // A repeating entry counts as its own first posting, so nextDate starts one
@@ -5117,7 +5218,8 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
                       setIncome(p => [...p, base]);
                     }
                     setNewInc({label:"",amount:"",cat:"Invoice",date:todayISO(),repeat:"none"}); setShowAddInc(false);
-                    toast(`Income added: ${fmtCur(amt,user.currency)}`);
+                    if (isFirstEverEntry) { toast("First entry logged — you're on your way."); celebrate(); }
+                    else toast(`Income added: ${fmtCur(amt,user.currency)}`);
                   }}>Add</Btn>
                 </div>
               </Card>
@@ -5140,6 +5242,7 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
                     if (!newExp.label) return;
                     const amt = parseAmount(newExp.amount);
                     if (amt === null) { toast("Enter an amount greater than zero."); return; }
+                    const isFirstEverEntry = income.length === 0 && expenses.length === 0;
                     {
                       const base = { id:uid(), ...newExp, amount:amt, date:newExp.date||todayISO(), cur:user.currency };
                       // A repeating entry counts as its own first posting, so nextDate starts one
@@ -5148,7 +5251,8 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
                       setExpenses(p => [...p, base]);
                     }
                     setNewExp({label:"",amount:"",cat:"Operations",date:todayISO(),repeat:"none"}); setShowAddExp(false);
-                    toast(`Expense added: ${fmtCur(amt,user.currency)}`);
+                    if (isFirstEverEntry) { toast("First entry logged — you're on your way."); celebrate(); }
+                    else toast(`Expense added: ${fmtCur(amt,user.currency)}`);
                   }}>Add</Btn>
                 </div>
               </Card>
@@ -5639,18 +5743,28 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
               ) : (
               <Card key={t.id} {...longPress(() => setActionSheet(holdActions({ title:t.title, subtitle:t.done ? "Completed" : t.priority, onEdit:() => setEditingTask({...t}), list:tasks, setList:setTasks, id:t.id, deletedLabel:"Task deleted." })))} style={{ marginBottom:9, opacity:t.done?.55:1, WebkitTouchCallout:"none", WebkitUserSelect:"none", userSelect:"none", }}>
                 <div style={{ display:"flex", alignItems:"center", gap:12 }}>
-                  <button onClick={() => setTasks(p => {
-                    const target = p.find(x => x.id === t.id);
-                    const completing = target && !target.done;
-                    const toggled = p.map(x => x.id===t.id ? {...x,done:!x.done} : x);
-                    // Tasks have no due-date field to advance the way appointments do, so a
-                    // repeating task's "next occurrence" is a fresh unchecked copy spawned the
-                    // moment the current one is completed — the completed one stays as a record.
-                    if (completing && target.repeat !== "none") {
-                      return [{ id:uid(), title:target.title, priority:target.priority, repeat:target.repeat, contactId:target.contactId, done:false }, ...toggled];
+                  <button key={`${t.id}-cb-${t.done}`} onClick={() => {
+                    const completingThis = !t.done;
+                    haptic(completingThis ? [12, 40, 12] : 10);
+                    setTasks(p => {
+                      const target = p.find(x => x.id === t.id);
+                      const completing = target && !target.done;
+                      const toggled = p.map(x => x.id===t.id ? {...x,done:!x.done} : x);
+                      // Tasks have no due-date field to advance the way appointments do, so a
+                      // repeating task's "next occurrence" is a fresh unchecked copy spawned the
+                      // moment the current one is completed — the completed one stays as a record.
+                      if (completing && target.repeat !== "none") {
+                        return [{ id:uid(), title:target.title, priority:target.priority, repeat:target.repeat, contactId:target.contactId, done:false }, ...toggled];
+                      }
+                      return toggled;
+                    });
+                    // A genuine "clear the list" moment — every other task was already done and
+                    // this was the last one standing, not just any single completion.
+                    if (completingThis && tasks.every(x => x.id===t.id || x.done)) {
+                      toast("All tasks done — nice work.");
+                      celebrate();
                     }
-                    return toggled;
-                  })} style={{ width:20, height:20, borderRadius:6, border:`1.5px solid ${t.done?C.white:C.soft}`, background:t.done?C.white:"transparent", cursor:"pointer", flexShrink:0, display:"flex", alignItems:"center", justifyContent:"center", color:C.black, fontSize:12, fontWeight:900 }}>
+                  }} style={{ width:20, height:20, borderRadius:6, border:`1.5px solid ${t.done?C.white:C.soft}`, background:t.done?C.white:"transparent", cursor:"pointer", flexShrink:0, display:"flex", alignItems:"center", justifyContent:"center", color:C.black, fontSize:12, fontWeight:900, animation:t.done?"checkPop .4s cubic-bezier(.34,1.56,.64,1)":"none" }}>
                     {t.done ? "✓" : ""}
                   </button>
                   <div style={{ flex:1, minWidth:0, cursor:"pointer" }} onClick={() => setEditingTask({...t})}>
@@ -6722,7 +6836,7 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
           {NAV_TABS.map(t => {
             const active = tab === t.id;
             return (
-              <button key={t.id} onClick={() => { setTab(t.id); if (t.id==="workspace") setWorkspaceSection(null); }} title={t.label} aria-current={active?"page":undefined}
+              <button key={t.id} onClick={() => { haptic(12); setTab(t.id); if (t.id==="workspace") setWorkspaceSection(null); }} title={t.label} aria-current={active?"page":undefined}
                 style={{
                   width:64, height:52, borderRadius:18, border:"none", cursor:"pointer",
                   display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:4,
@@ -6732,7 +6846,11 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
                   background: active ? C.text : "transparent",
                   transition:"background .18s",
                 }}>
-                <NavIcon id={t.id} size={20} color={active ? C.card : C.muted} />
+                {/* Keyed on the active transition so the icon pops in fresh every time this
+                    becomes the selected tab, not just background-fades like before. */}
+                <span key={active ? `${t.id}-on` : t.id} style={{ display:"inline-flex", animation: active ? "tabPop .3s cubic-bezier(.34,1.56,.64,1)" : "none" }}>
+                  <NavIcon id={t.id} size={20} color={active ? C.card : C.muted} />
+                </span>
                 <span style={{ fontSize:9, fontWeight:700, color: active ? C.card : C.muted, letterSpacing:.3, fontFamily:"'Space Grotesk',sans-serif" }}>{t.label}</span>
               </button>
             );
