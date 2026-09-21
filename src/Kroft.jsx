@@ -1469,19 +1469,19 @@ function ProfileSection({ user, onEditPreferences, onSignOut, theme, onToggleThe
           </Mono>
           {!subscribed && <Btn sm disabled={billingLoading} onClick={onUpgrade}>{billingLoading ? <Spinner size={14} color={C.black} thickness={2} /> : "Upgrade"}</Btn>}
         </ProfileRow>
-        <ProfileRow label="Billing" sub={subscribed ? "Managed by Flutterwave" : "No payment method on file"} expanded={openRow==="billing"} onToggle={()=>toggle("billing")}>
+        <ProfileRow label="Billing" sub={subscribed ? "Active" : "No payment method on file"} expanded={openRow==="billing"} onToggle={()=>toggle("billing")}>
           <Mono style={{ display:"block", color:C.soft, lineHeight:1.7, marginBottom:subscribed?10:0 }}>
             {subscribed
-              ? "Your subscription and card are held by Flutterwave, not KROFT. There's no self-serve billing portal — cancel here any time, or contact support for a receipt."
-              : "Upgrading opens Flutterwave's secure checkout — KROFT never sees or stores your card details directly."}
+              ? "Your subscription and card are held by our secure payment partner, not KROFT. There's no self-serve billing portal — cancel here any time, or contact support for a receipt."
+              : "Upgrading opens a secure checkout — KROFT never sees or stores your card details directly."}
           </Mono>
           {subscribed && <Btn sm v="outline" disabled={billingLoading} onClick={onManageBilling}>{billingLoading ? <Spinner size={14} color={C.soft} thickness={2} /> : "Cancel plan"}</Btn>}
         </ProfileRow>
-        <ProfileRow label="Payment Methods" sub={subscribed ? "Held by Flutterwave" : "None on file"} expanded={openRow==="paymethods"} onToggle={()=>toggle("paymethods")}>
+        <ProfileRow label="Payment Methods" sub={subscribed ? "On file with our payment partner" : "None on file"} expanded={openRow==="paymethods"} onToggle={()=>toggle("paymethods")}>
           <Mono style={{ display:"block", color:C.soft, lineHeight:1.7, marginBottom:subscribed?10:0 }}>
             {subscribed
-              ? "Card details live with Flutterwave, not KROFT. There's no self-serve way to swap the card on an active plan — cancel here, then re-subscribe with the new card."
-              : "Card entry happens through Flutterwave once you upgrade to KROFT Plus."}
+              ? "Card details live with our payment partner, not KROFT. There's no self-serve way to swap the card on an active plan — cancel here, then re-subscribe with the new card."
+              : "Card entry happens through our secure payment partner once you upgrade to KROFT Plus."}
           </Mono>
           {subscribed && <Btn sm v="outline" disabled={billingLoading} onClick={onManageBilling}>{billingLoading ? <Spinner size={14} color={C.soft} thickness={2} /> : "Cancel plan"}</Btn>}
         </ProfileRow>
@@ -1508,7 +1508,7 @@ function ProfileSection({ user, onEditPreferences, onSignOut, theme, onToggleThe
         <ProfileRow label="Manage Subscription" sub={subscribed ? "Change or cancel plan" : "You're on the free plan"} expanded={openRow==="managesub"} onToggle={()=>toggle("managesub")}>
           {subscribed ? (
             <>
-              <Mono style={{ display:"block", color:C.soft, lineHeight:1.7, marginBottom:10 }}>You're on KROFT Plus. Cancel any time — Flutterwave has no self-serve portal, so this cancels directly through KROFT.</Mono>
+              <Mono style={{ display:"block", color:C.soft, lineHeight:1.7, marginBottom:10 }}>You're on KROFT Plus. Cancel any time, right here — there's no separate billing site to visit.</Mono>
               <Btn sm v="outline" disabled={billingLoading} onClick={onManageBilling}>{billingLoading ? <Spinner size={14} color={C.soft} thickness={2} /> : "Cancel plan"}</Btn>
             </>
           ) : (
