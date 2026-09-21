@@ -643,6 +643,27 @@ const NavIcon = ({ id, size=20, color="currentColor" }) => {
       return <svg viewBox="0 0 24 24" style={s}><rect x="9" y="3" width="6" height="11" rx="3" {...p} /><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0" {...p} /><path d="M12 18v3" {...p} /></svg>;
     case "send":
       return <svg viewBox="0 0 24 24" style={s}><path d="M4.5 12h14" {...p} /><path d="M12.5 5.5 19 12l-6.5 6.5" {...p} /></svg>;
+    // ---- Workspace tool icons (the hub's ToolCard grid) ----
+    case "calendar":
+      return <svg viewBox="0 0 24 24" style={s}><rect x="4" y="5.5" width="16" height="14" rx="2" {...p} /><path d="M4 10h16" {...p} /><path d="M8 3.5v3M16 3.5v3" {...p} /></svg>;
+    case "email":
+      return <svg viewBox="0 0 24 24" style={s}><rect x="3.5" y="6" width="17" height="12" rx="2" {...p} /><path d="M4 7l8 6 8-6" {...p} /></svg>;
+    case "tasks":
+      return <svg viewBox="0 0 24 24" style={s}><rect x="4.5" y="4.5" width="15" height="15" rx="2.5" {...p} /><path d="M8.5 12.5l2.3 2.3 4.7-5" {...p} /></svg>;
+    case "reminders":
+      return <svg viewBox="0 0 24 24" style={s}><path d="M6 17v-5a6 6 0 0 1 12 0v5" {...p} /><path d="M4.5 17h15" {...p} /><path d="M10 20a2 2 0 0 0 4 0" {...p} /></svg>;
+    case "projects":
+      return <svg viewBox="0 0 24 24" style={s}><path d="M6 3.5v17" {...p} /><path d="M6 4.5h11l-2.5 3 2.5 3H6" {...p} /></svg>;
+    case "notes":
+      return <svg viewBox="0 0 24 24" style={s}><rect x="5.5" y="3.5" width="13" height="17" rx="1.5" {...p} /><path d="M8.5 8.5h7M8.5 12h7M8.5 15.5h4.5" {...p} /></svg>;
+    case "documents":
+      return <svg viewBox="0 0 24 24" style={s}><path d="M7 3.5h7l4 4v13a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1v-16a1 1 0 0 1 1-1z" {...p} /><path d="M14 3.5v4h4" {...p} /></svg>;
+    case "files":
+      return <svg viewBox="0 0 24 24" style={s}><path d="M4 7.5a1.5 1.5 0 0 1 1.5-1.5h4l2 2h7a1.5 1.5 0 0 1 1.5 1.5v8a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 17.5z" {...p} /></svg>;
+    case "memos":
+      return <svg viewBox="0 0 24 24" style={s}><path d="M5 12v.01M8.5 8v8M12 5v14M15.5 8v8M19 12v.01" {...p} /></svg>;
+    case "contacts":
+      return <svg viewBox="0 0 24 24" style={s}><circle cx="9" cy="8.5" r="2.6" {...p} /><path d="M4 19c0-2.8 2.2-5 5-5s5 2.2 5 5" {...p} /><circle cx="17" cy="9" r="2.2" {...p} /><path d="M14.5 19c.2-2.3 1.8-4 3.5-4 1.9 0 3.5 1.8 3.7 4" {...p} /></svg>;
     default:
       return null;
   }
@@ -1837,7 +1858,6 @@ function KroftApp({ onFullReset } = {}) {
   const [homeSection, setHomeSection] = useState("overview");
   const [workspaceSection, setWorkspaceSection] = useState(null); // null = hub screen
   const [workspaceSearch, setWorkspaceSearch] = useState("");
-  const [showAllTools, setShowAllTools] = useState(false);
   const [income, setIncome] = useState([]);
   const [expenses, setExpenses] = useState([]);
   const [incomeCats, setIncomeCats] = useState(["Invoice","Sales","Consulting","Freelance","Other"]);
@@ -5281,12 +5301,15 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
             { k:"reminders", l:"Reminders", count:smartReminders.length, sub:"reminders", tone: smartReminders.some(r=>r.aiSuggested) ? "accent" : undefined },
             { k:"contacts", l:"Contacts", count:contacts.length, sub:"saved" },
           ];
-          const QUICK = ["calendar","notes","email","tasks"];
           const q = workspaceSearch.trim().toLowerCase();
           const searching = q.length > 0;
           const matches = searching ? TOOLS.filter(t => t.l.toLowerCase().includes(q)) : [];
-          const visible = searching ? matches : TOOLS.filter(t => QUICK.includes(t.k));
-          const rest = TOOLS.filter(t => !QUICK.includes(t.k));
+          // Tools carrying a tone (unread mail, active tasks, in-progress projects, an
+          // AI-suggested reminder) surface first as "Needs attention" — real signals worth
+          // acting on, not just an arbitrary "quick access" shortlist. Everything else follows
+          // in one full grid; nothing is hidden behind a "show more" click anymore.
+          const attention = !searching ? TOOLS.filter(t => t.tone) : [];
+          const rest = !searching ? TOOLS.filter(t => !t.tone) : [];
           const toneColors = { positive:C.positive, negative:C.negative, warning:C.warning, accent:C.accent };
           const toneBgs = { positive:C.positiveBg, negative:C.negativeBg, warning:C.warningBg, accent:C.accentBg };
 
@@ -5311,7 +5334,9 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
           const ToolCard = ({ t }) => (
             <Card key={t.k} onClick={() => { setWorkspaceSection(t.k); setWorkspaceSearch(""); }} style={{ cursor:"pointer", minWidth:0 }}>
               <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:8 }}>
-                <div style={{ width:34, height:34, borderRadius:12, background:t.tone?toneBgs[t.tone]:C.surface, border:`1px solid ${t.tone?toneColors[t.tone]+"55":C.cardB}`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:14, fontWeight:800, color:t.tone?toneColors[t.tone]:C.white, marginBottom:10, flexShrink:0 }}>{t.l[0]}</div>
+                <div style={{ width:36, height:36, borderRadius:12, background:t.tone?toneBgs[t.tone]:C.surface, border:`1px solid ${t.tone?toneColors[t.tone]+"55":C.cardB}`, display:"flex", alignItems:"center", justifyContent:"center", marginBottom:10, flexShrink:0 }}>
+                  <NavIcon id={t.k} size={17} color={t.tone?toneColors[t.tone]:C.white} />
+                </div>
                 {t.count>0 && <Tag tone={t.tone} style={{ whiteSpace:"normal", textAlign:"right", maxWidth:"70%", boxSizing:"border-box", lineHeight:1.4 }}>{t.count} {t.sub}</Tag>}
               </div>
               <div style={{ fontSize:14, fontWeight:700, color:C.white, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{t.l}</div>
@@ -5322,21 +5347,15 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
           return (
             <div style={{ animation:"fadeUp .35s ease" }}>
               <Inp placeholder="Search your workspace…" value={workspaceSearch} onChange={e=>setWorkspaceSearch(e.target.value)} style={{ marginBottom:18, width:"100%", boxSizing:"border-box" }} />
-              {!searching && <div style={{ fontSize:12, fontWeight:600, color:C.muted, marginBottom:11 }}>Quick access</div>}
               {searching && matches.length===0 && contentHits.length===0 && (
                 <Card level="inset" style={{ textAlign:"center", padding:26, borderStyle:"dashed" }}>
                   <div style={{ fontSize:15, fontWeight:600, color:C.white, marginBottom:6 }}>Nothing matches "{workspaceSearch}"</div>
                   <Mono style={{ display:"block", color:C.soft }}>Try a different word, or open a tool below to add something.</Mono>
                 </Card>
               )}
-              {matches.length > 0 && (
+              {searching && matches.length > 0 && (
                 <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:11, marginBottom:contentHits.length?18:0 }}>
-                  {visible.map(t => <ToolCard key={t.k} t={t} />)}
-                </div>
-              )}
-              {!searching && (
-                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:11, marginBottom:8 }}>
-                  {visible.map(t => <ToolCard key={t.k} t={t} />)}
+                  {matches.map(t => <ToolCard key={t.k} t={t} />)}
                 </div>
               )}
               {contentHits.length > 0 && (
@@ -5357,16 +5376,22 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
                   </div>
                 </>
               )}
+              {!searching && attention.length > 0 && (
+                <>
+                  <div style={{ fontSize:12, fontWeight:600, color:C.muted, marginBottom:11 }}>Needs attention</div>
+                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:11, marginBottom:22 }}>
+                    {attention.map(t => <ToolCard key={t.k} t={t} />)}
+                  </div>
+                </>
+              )}
               {!searching && (
                 <>
-                  <button onClick={() => setShowAllTools(v=>!v)} style={{ background:"none", border:"none", color:C.soft, cursor:"pointer", fontSize:12, fontFamily:"'Space Mono',monospace", padding:"14px 0", textDecoration:"underline" }}>
-                    {showAllTools ? "Show fewer tools" : `Show all ${TOOLS.length} tools`}
-                  </button>
-                  {showAllTools && (
-                    <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:11, animation:"fadeUp .3s ease" }}>
-                      {rest.map(t => <ToolCard key={t.k} t={t} />)}
-                    </div>
-                  )}
+                  <div style={{ fontSize:12, fontWeight:600, color:C.muted, marginBottom:11 }}>
+                    {attention.length > 0 ? "All tools" : "Your tools"}
+                  </div>
+                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:11 }}>
+                    {rest.map(t => <ToolCard key={t.k} t={t} />)}
+                  </div>
                 </>
               )}
             </div>
