@@ -1,10 +1,9 @@
-import { getAuthedUser, getValidGoogleAccessToken, supabaseAdmin, jsonResponse } from "../_lib/google.js";
-import { toBase64Url } from "../_lib/gmailMime.js";
+import { getAuthedUser, getValidGoogleAccessToken, supabaseAdmin, jsonResponse, sendGmailMessage } from "../_lib/google.js";
 
-// Sends a real email via the Gmail API on behalf of the signed-in user — wired to Kroft.jsx's
-// existing ComposeModal (AI-drafted replies and manual composes both flow through the same
-// onSend handler), which previously only simulated sending with a toast and a scripted fake
-// reply.
+// Gmail-only send, kept as its own route for direct testing/debugging. The frontend calls the
+// merged api/mail/send.js instead, which picks Gmail or Outlook depending on which is
+// connected (or which the message being replied to came from) — the actual send logic lives
+// in api/_lib/google.js's sendGmailMessage so both routes share one implementation.
 export const config = { runtime: "edge" };
 
 export default async function handler(req) {
@@ -24,25 +23,11 @@ export default async function handler(req) {
     return jsonResponse({ error: "to, subject and body are required" }, 400);
   }
 
-  const admin = supabaseAdmin();
-  const accessToken = await getValidGoogleAccessToken(admin, user.id);
+  const accessToken = await getValidGoogleAccessToken(supabaseAdmin(), user.id);
   if (!accessToken) return jsonResponse({ error: "Gmail is not connected" }, 409);
 
-  // Gmail's send endpoint takes a full RFC 2822 message, base64url-encoded as a single "raw"
-  // field — there's no simpler structured "to/subject/body" request shape on their API.
-  const mimeMessage = [`To: ${to}`, `Subject: ${subject}`, "Content-Type: text/plain; charset=utf-8", "", body].join(
-    "\r\n"
-  );
-
-  const sendRes = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/messages/send", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ raw: toBase64Url(mimeMessage) }),
-  });
-  if (!sendRes.ok) {
-    const detail = await sendRes.text().catch(() => "");
-    return jsonResponse({ error: "Gmail rejected the message", detail }, sendRes.status);
-  }
+  const result = await sendGmailMessage(accessToken, { to, subject, body });
+  if (!result.ok) return jsonResponse({ error: "Gmail rejected the message", detail: result.detail }, 502);
 
   return jsonResponse({ ok: true });
 }

@@ -930,23 +930,34 @@ function VoiceMode({ state, transcript, reply, error, onStart, onStop, onClose, 
   );
 }
 
-function UberModal({ dest, onClose, onBook }) {
+// Uber's ride-booking API (real fare estimates, in-app booking) requires their business
+// partner program — a business/legal agreement, not something any amount of code can obtain.
+// Faking a price table and an "requested" toast instead, as this used to, means a real user
+// would get a confirmation for a ride that was never actually booked — worse than not having
+// the feature at all. Uber does, however, publish a public, keyless "Ride Request Deeplink"
+// (https://developer.uber.com/docs/riders/ride-requests/tutorials/deep-links/introduction)
+// specifically for third-party apps to hand off to Uber's own app or m.uber.com with a
+// destination pre-filled — no API key, no partnership, no approval process. That's what this
+// does: real pricing and real booking happen on Uber's side, honestly.
+function buildUberDeepLink(address) {
+  const url = new URL("https://m.uber.com/ul/");
+  url.searchParams.set("action", "setPickup");
+  url.searchParams.set("pickup", "my_location");
+  if (address) url.searchParams.set("dropoff[formatted_address]", address);
+  return url.toString();
+}
+
+function UberModal({ dest, onClose }) {
+  const address = dest.location || dest.name || "";
   return (
     <div style={{ position:"fixed", inset:0, zIndex:950, background:"rgba(0,0,0,.93)", display:"flex", alignItems:"center", justifyContent:"center", padding:24 }} onClick={onClose}>
       <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:18, padding:28, maxWidth:380, width:"100%", animation:"pop .3s ease" }} onClick={e => e.stopPropagation()}>
-        <div style={{ fontSize:12, fontWeight:600, color:C.muted, marginBottom:6 }}>Ride estimate</div>
-        <div style={{ fontSize:19, fontWeight:700, color:C.white, marginBottom:3 }}>To: {dest.location || dest.name}</div>
-        <Mono style={{ display:"block", color:C.soft, marginBottom:22 }}>{dest.time ? `${dest.time} · ${dest.date}` : dest.dist ? `${dest.dist} away` : "Nearby"}</Mono>
-        {[{type:"UberX",eta:"4 min",price:"$8–11"},{type:"Comfort",eta:"6 min",price:"$12–15"},{type:"UberXL",eta:"8 min",price:"$16–20"}].map(r => (
-          <div key={r.type} onClick={() => onBook(r.type, dest.location || dest.name)} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"13px 8px", borderBottom:`1px solid ${C.div}`, cursor:"pointer", borderRadius:8, transition:"background .14s" }} onMouseEnter={e => e.currentTarget.style.background=C.hover} onMouseLeave={e => e.currentTarget.style.background="transparent"}>
-            <div>
-              <div style={{ fontWeight:700, fontSize:14, color:C.white }}>{r.type}</div>
-              <Mono style={{ color:C.muted }}>{r.eta}</Mono>
-            </div>
-            <Mono style={{ color:C.white, fontWeight:700, fontSize:13 }}>{r.price}</Mono>
-          </div>
-        ))}
-        <Btn v="outline" full onClick={onClose} style={{ marginTop:18 }}>Cancel</Btn>
+        <div style={{ fontSize:12, fontWeight:600, color:C.muted, marginBottom:6 }}>Get a ride</div>
+        <div style={{ fontSize:19, fontWeight:700, color:C.white, marginBottom:3 }}>To: {address || "your destination"}</div>
+        <Mono style={{ display:"block", color:C.soft, marginBottom:18 }}>{dest.time ? `${dest.time} · ${dest.date}` : dest.dist ? `${dest.dist} away` : "Nearby"}</Mono>
+        <Mono style={{ display:"block", color:C.muted, marginBottom:22, lineHeight:1.6 }}>Opens Uber with your pickup location and this destination filled in. Real pricing, ETA and booking happen there — KROFT doesn't have its own ride pricing or booking.</Mono>
+        <Btn full onClick={() => { window.open(buildUberDeepLink(address), "_blank", "noopener,noreferrer"); onClose(); }}>Continue to Uber</Btn>
+        <Btn v="outline" full onClick={onClose} style={{ marginTop:10 }}>Cancel</Btn>
       </div>
     </div>
   );
@@ -1205,7 +1216,7 @@ function ProfileSwitch({ value, onChange }) {
   );
 }
 
-function ProfileSection({ user, onEditPreferences, onSignOut, theme, onToggleTheme, toast, subscribed, onSetSubscribed, dailyMessageCount, freeLimit, usageStats, voiceReplies, onSetVoiceReplies, proactiveInsights, onSetProactiveInsights, onSetupBiometric, onRemoveBiometric, onExportData, onImportData, notifPermission, notifPrefs, onEnableNotifications, onSetNotifPref, onTestNotification, aiExtrasCount, extrasLimit, monthlyReportCount, reportLimit, reportsLeftThisMonth, onUpgradeFromNotifs, voiceTurnsCount, voiceLimit }) {
+function ProfileSection({ user, onEditPreferences, onSignOut, theme, onToggleTheme, toast, subscribed, billingLoading, onUpgrade, onManageBilling, dailyMessageCount, freeLimit, usageStats, voiceReplies, onSetVoiceReplies, proactiveInsights, onSetProactiveInsights, onSetupBiometric, onRemoveBiometric, onExportData, onImportData, notifPermission, notifPrefs, onEnableNotifications, onSetNotifPref, onTestNotification, aiExtrasCount, extrasLimit, monthlyReportCount, reportLimit, reportsLeftThisMonth, voiceTurnsCount, voiceLimit }) {
   // null = main hub. Otherwise one of: "ai" | "productivity" | "privacy" | "subscription" | "support"
   const [screen, setScreen] = useState(null);
   const [openRow, setOpenRow] = useState(null);
@@ -1310,7 +1321,7 @@ function ProfileSection({ user, onEditPreferences, onSignOut, theme, onToggleThe
                 </div>
                 {subscribed
                   ? <ProfileSwitch value={!!notifPrefs.dailyBrief} onChange={v => onSetNotifPref("dailyBrief", v)} />
-                  : <Btn sm v="outline" onClick={onUpgradeFromNotifs}>Upgrade</Btn>}
+                  : <Btn sm v="outline" disabled={billingLoading} onClick={onUpgrade}>{billingLoading ? <Spinner size={14} color={C.soft} thickness={2} /> : "Upgrade"}</Btn>}
               </div>
               <Btn sm v="outline" onClick={onTestNotification} style={{ marginTop:4 }}>Send a test</Btn>
               {/* Stated plainly rather than letting people assume background delivery works. */}
@@ -1330,14 +1341,14 @@ function ProfileSection({ user, onEditPreferences, onSignOut, theme, onToggleThe
     <div style={{ animation:"fadeUp .25s ease" }}>
       <ProfileScreenHeader title="Productivity" onBack={goBack} />
       <Card style={{ padding:"2px 16px" }}>
-        <ProfileRow label="Calendar Connections" sub={user.connected.calendar ? "Google Calendar linked" : "Not linked"} expanded={openRow==="cal"} onToggle={()=>toggle("cal")}>
+        <ProfileRow label="Calendar Connections" sub={[user.connected.calendar&&"Google Calendar",user.connected.outlookCalendar&&"Outlook Calendar"].filter(Boolean).join(" + ")||"Not linked"} expanded={openRow==="cal"} onToggle={()=>toggle("cal")}>
           <Btn sm v="outline" onClick={onEditPreferences}>Manage connections</Btn>
         </ProfileRow>
-        <ProfileRow label="Email Accounts" sub={user.connected.gmail ? "Gmail linked" : "Not linked"} expanded={openRow==="mail"} onToggle={()=>toggle("mail")}>
+        <ProfileRow label="Email Accounts" sub={[user.connected.gmail&&"Gmail",user.connected.outlookMail&&"Outlook"].filter(Boolean).join(" + ")||"Not linked"} expanded={openRow==="mail"} onToggle={()=>toggle("mail")}>
           <Btn sm v="outline" onClick={onEditPreferences}>Manage connections</Btn>
         </ProfileRow>
         <ProfileRow label="Linked Apps" sub={`${Object.values(user.connected).filter(Boolean).length} connected`} expanded={openRow==="apps"} onToggle={()=>toggle("apps")}>
-          <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>Gmail, Google Calendar and Uber can be linked from Preferences.</Mono>
+          <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>Gmail, Google Calendar, Outlook Mail and Outlook Calendar can each be linked from Preferences. Uber works automatically — no linking needed.</Mono>
         </ProfileRow>
         <ProfileRow label="Smart Automations" sub="Reminders, briefings, insights" expanded={openRow==="auto"} onToggle={()=>toggle("auto")}
           right={<ProfileSwitch value={proactiveInsights} onChange={onSetProactiveInsights} />}>
@@ -1423,8 +1434,8 @@ function ProfileSection({ user, onEditPreferences, onSignOut, theme, onToggleThe
           <Mono style={{ display:"block", color:C.soft, marginBottom:14 }}>Unlimited chat, voice, drafts and reports.</Mono>
         )}
         {subscribed
-          ? <Btn sm v="outline" onClick={() => { onSetSubscribed(false); toast("Downgraded to the free plan."); }}>Cancel KROFT Plus</Btn>
-          : <Btn sm onClick={() => { onSetSubscribed(true); toast("KROFT Plus enabled — no charge, this build has no payment set up."); }}>Upgrade to KROFT Plus</Btn>}
+          ? <Btn sm v="outline" disabled={billingLoading} onClick={onManageBilling}>{billingLoading ? <Spinner size={14} color={C.soft} thickness={2} /> : "Manage billing"}</Btn>
+          : <Btn sm disabled={billingLoading} onClick={onUpgrade}>{billingLoading ? <Spinner size={14} color={C.black} thickness={2} /> : "Upgrade to KROFT Plus"}</Btn>}
       </Card>
 
       <Card style={{ padding:"2px 16px" }}>
@@ -1456,15 +1467,23 @@ function ProfileSection({ user, onEditPreferences, onSignOut, theme, onToggleThe
           <Mono style={{ display:"block", color:C.muted, lineHeight:1.6, marginBottom:12, paddingTop:10, borderTop:`1px solid ${C.div}` }}>
             Finances, budgets, contacts, notes, tasks, recurring transactions and notifications are complete on the free plan and always will be — Plus is only about the AI calls above.
           </Mono>
-          {!subscribed && <Btn sm onClick={() => { onSetSubscribed(true); toast("KROFT Plus enabled — no charge, this build has no payment set up."); }}>Upgrade</Btn>}
+          {!subscribed && <Btn sm disabled={billingLoading} onClick={onUpgrade}>{billingLoading ? <Spinner size={14} color={C.black} thickness={2} /> : "Upgrade"}</Btn>}
         </ProfileRow>
-        <ProfileRow label="Billing" sub={subscribed ? "No charge — this build has no payment processor connected" : "No payment method on file"} expanded={openRow==="billing"} onToggle={()=>toggle("billing")}>
-          <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>
-            KROFT Plus is currently free to toggle in this build since no payment provider (Stripe, App Store, Play Billing) is connected yet. Nothing is charged.
+        <ProfileRow label="Billing" sub={subscribed ? "Managed by Stripe" : "No payment method on file"} expanded={openRow==="billing"} onToggle={()=>toggle("billing")}>
+          <Mono style={{ display:"block", color:C.soft, lineHeight:1.7, marginBottom:subscribed?10:0 }}>
+            {subscribed
+              ? "Your subscription, payment method and receipts are all managed by Stripe. Open Manage billing to update your card, view invoices, or cancel."
+              : "Upgrading opens Stripe's secure checkout — KROFT never sees or stores your card details directly."}
           </Mono>
+          {subscribed && <Btn sm v="outline" disabled={billingLoading} onClick={onManageBilling}>{billingLoading ? <Spinner size={14} color={C.soft} thickness={2} /> : "Manage billing"}</Btn>}
         </ProfileRow>
-        <ProfileRow label="Payment Methods" sub="None on file" expanded={openRow==="paymethods"} onToggle={()=>toggle("paymethods")}>
-          <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>Card management will appear here once a real payment provider is integrated.</Mono>
+        <ProfileRow label="Payment Methods" sub={subscribed ? "Managed via Stripe" : "None on file"} expanded={openRow==="paymethods"} onToggle={()=>toggle("paymethods")}>
+          <Mono style={{ display:"block", color:C.soft, lineHeight:1.7, marginBottom:subscribed?10:0 }}>
+            {subscribed
+              ? "Card details live with Stripe, not KROFT. Manage billing opens Stripe's own portal to add, remove or update a card."
+              : "Card management opens through Stripe once you upgrade to KROFT Plus."}
+          </Mono>
+          {subscribed && <Btn sm v="outline" disabled={billingLoading} onClick={onManageBilling}>{billingLoading ? <Spinner size={14} color={C.soft} thickness={2} /> : "Manage billing"}</Btn>}
         </ProfileRow>
         <ProfileRow label="Usage Statistics" sub="Real activity from this session" expanded={openRow==="usage"} onToggle={()=>toggle("usage")}>
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:9 }}>
@@ -1489,13 +1508,13 @@ function ProfileSection({ user, onEditPreferences, onSignOut, theme, onToggleThe
         <ProfileRow label="Manage Subscription" sub={subscribed ? "Change or cancel plan" : "You're on the free plan"} expanded={openRow==="managesub"} onToggle={()=>toggle("managesub")}>
           {subscribed ? (
             <>
-              <Mono style={{ display:"block", color:C.soft, lineHeight:1.7, marginBottom:10 }}>You're on KROFT Plus. Cancel any time — you'll return to the free plan's daily message limit immediately.</Mono>
-              <Btn sm v="outline" onClick={() => { onSetSubscribed(false); toast("Downgraded to the free plan."); }}>Cancel KROFT Plus</Btn>
+              <Mono style={{ display:"block", color:C.soft, lineHeight:1.7, marginBottom:10 }}>You're on KROFT Plus. Manage billing opens Stripe's portal, where you can update your payment method or cancel any time — Stripe's own settings decide whether that takes effect immediately or at the end of your current billing period.</Mono>
+              <Btn sm v="outline" disabled={billingLoading} onClick={onManageBilling}>{billingLoading ? <Spinner size={14} color={C.soft} thickness={2} /> : "Manage billing"}</Btn>
             </>
           ) : (
             <>
               <Mono style={{ display:"block", color:C.soft, lineHeight:1.7, marginBottom:10 }}>Nothing to manage yet — upgrade to KROFT Plus to remove your daily message limit.</Mono>
-              <Btn sm onClick={() => { onSetSubscribed(true); toast("KROFT Plus enabled — no charge, this build has no payment set up."); }}>Upgrade</Btn>
+              <Btn sm disabled={billingLoading} onClick={onUpgrade}>{billingLoading ? <Spinner size={14} color={C.black} thickness={2} /> : "Upgrade"}</Btn>
             </>
           )}
         </ProfileRow>
@@ -1751,7 +1770,7 @@ function KroftApp({ onFullReset } = {}) {
   // True while a signup/login request to Supabase Auth is in flight, so the button can show a
   // spinner and can't be double-submitted by an impatient extra click.
   const [authLoading, setAuthLoading] = useState(false);
-  const [user, setUser] = useState({ name:"", email:"", password:"", phone:"", photo:null, businessName:"", businessType:"", currency:"USD", connected:{gmail:false,calendar:false,uber:false} });
+  const [user, setUser] = useState({ name:"", email:"", password:"", phone:"", photo:null, businessName:"", businessType:"", currency:"USD", connected:{gmail:false,calendar:false,uber:false,outlookMail:false,outlookCalendar:false} });
   // Real Google connection state, as reported by api/google/status.js — the actual source of
   // truth for whether Gmail/Calendar are linked. user.connected.gmail/.calendar (persisted,
   // used for the read-only status text elsewhere in Profile) is kept in sync with this rather
@@ -1760,8 +1779,17 @@ function KroftApp({ onFullReset } = {}) {
   // "Connect accounts" list below for why.
   const [googleStatus, setGoogleStatus] = useState({ gmail:false, calendar:false });
   const [googleLinking, setGoogleLinking] = useState(false);
-  const [syncingGmail, setSyncingGmail] = useState(false);
+  // Microsoft/Outlook, same shape and reasoning as googleStatus/googleLinking above — see
+  // api/microsoft/status.js. Kept as separate state (rather than a generic {provider: {...}}
+  // map) since Gmail/Calendar and Outlook Mail/Calendar are each rendered as their own rows in
+  // Preferences with independent connect/disconnect actions.
+  const [microsoftStatus, setMicrosoftStatus] = useState({ mail:false, calendar:false });
+  const [microsoftLinking, setMicrosoftLinking] = useState(false);
+  const [syncingMail, setSyncingMail] = useState(false);
   const [syncingCalendar, setSyncingCalendar] = useState(false);
+  // True while a checkout/portal redirect is being prepared, so the Upgrade/Manage billing
+  // buttons throughout Profile can't be double-clicked into two Stripe sessions.
+  const [billingLoading, setBillingLoading] = useState(false);
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPw, setLoginPw] = useState("");
   const [showLoginPw, setShowLoginPw] = useState(false);
@@ -2534,88 +2562,220 @@ function KroftApp({ onFullReset } = {}) {
     }
   };
 
-  // Pulls the real inbox from Gmail and replaces the local `emails` list with it — including
-  // the very first pull, which is exactly what should happen to the three seed/mock emails
-  // this app starts with (see the emails useState above): connecting a real inbox should show
-  // that real inbox, not a real inbox appended after fake sample data.
-  const syncGmail = async () => {
-    setSyncingGmail(true);
+  // Microsoft/Outlook — same shape and reasoning as the Google trio above, against
+  // api/microsoft/*. See api/_lib/microsoft.js for why disconnect only deletes KROFT's own
+  // stored copy rather than also revoking with Microsoft (unlike Google, there's no simple
+  // server-side revoke endpoint on their side).
+  const refreshMicrosoftStatus = async () => {
+    if (!isSupabaseConfigured) return;
     try {
-      const res = await authedFetch("/api/gmail/messages");
-      if (!res.ok) { toast(res.status===409 ? "Gmail isn't connected." : "Couldn't load Gmail right now."); return; }
-      const { messages } = await res.json();
-      setEmails(messages);
-      toast(`Loaded ${messages.length} email${messages.length===1?"":"s"} from Gmail.`);
+      const res = await authedFetch("/api/microsoft/status");
+      if (!res.ok) return;
+      const status = await res.json();
+      setMicrosoftStatus({ mail: !!status.mail, calendar: !!status.calendar });
+      // Mirrors into user.connected under distinct keys (not gmail/calendar, which stay
+      // Google-specific) so the read-only status text elsewhere in Profile — which only knows
+      // about user.connected, not googleStatus/microsoftStatus — stays accurate too.
+      setUser(u => ({ ...u, connected: { ...u.connected, outlookMail: !!status.mail, outlookCalendar: !!status.calendar } }));
     } catch {
-      toast("Couldn't load Gmail right now.");
-    } finally {
-      setSyncingGmail(false);
+      // Silent — background status refresh, same reasoning as refreshGoogleStatus.
     }
   };
 
-  // Pulls upcoming events from Google Calendar and merges them into the local `appts` list,
-  // replacing any previously-synced Google events (tagged source:"google") so a re-sync
+  const connectMicrosoft = async () => {
+    setMicrosoftLinking(true);
+    try {
+      const res = await authedFetch("/api/microsoft/start");
+      if (!res.ok) { toast("Couldn't start Microsoft sign-in. Try again."); setMicrosoftLinking(false); return; }
+      const { url } = await res.json();
+      window.location.href = url;
+    } catch {
+      toast("Couldn't start Microsoft sign-in. Try again.");
+      setMicrosoftLinking(false);
+    }
+  };
+
+  const disconnectMicrosoft = async () => {
+    setMicrosoftLinking(true);
+    try {
+      const res = await authedFetch("/api/microsoft/disconnect", { method: "POST" });
+      setMicrosoftLinking(false);
+      if (!res.ok) { toast("Couldn't disconnect Microsoft. Try again."); return; }
+      setMicrosoftStatus({ mail: false, calendar: false });
+      setUser(u => ({ ...u, connected: { ...u.connected, outlookMail: false, outlookCalendar: false } }));
+      toast("Microsoft account disconnected.");
+    } catch {
+      setMicrosoftLinking(false);
+      toast("Couldn't disconnect Microsoft. Try again.");
+    }
+  };
+
+  // Pulls the real inbox from whichever email account(s) are connected (Gmail, Outlook, or
+  // both — api/mail/messages.js merges them) and replaces the local `emails` list with it —
+  // including the very first pull, which is exactly what should happen to the three seed/mock
+  // emails this app starts with (see the emails useState above): connecting a real inbox
+  // should show that real inbox, not a real inbox appended after fake sample data.
+  const syncMail = async () => {
+    setSyncingMail(true);
+    try {
+      const res = await authedFetch("/api/mail/messages");
+      if (!res.ok) { toast(res.status===409 ? "No email account is connected." : "Couldn't load your inbox right now."); return; }
+      const { messages } = await res.json();
+      setEmails(messages);
+      toast(`Loaded ${messages.length} email${messages.length===1?"":"s"}.`);
+    } catch {
+      toast("Couldn't load your inbox right now.");
+    } finally {
+      setSyncingMail(false);
+    }
+  };
+
+  // Pulls upcoming events from whichever calendar(s) are connected (Google, Outlook, or both —
+  // api/calendar/events.js merges them) and merges them into the local `appts` list, replacing
+  // any previously-synced remote events (tagged source:"google"|"outlook") so a re-sync
   // doesn't pile up duplicates, while leaving purely local appointments (added directly in
-  // Kroft, never sent to Google) untouched.
-  const syncGoogleCalendar = async () => {
+  // Kroft, never sent to a connected calendar) untouched.
+  const syncCalendar = async () => {
     setSyncingCalendar(true);
     try {
       const res = await authedFetch("/api/calendar/events");
-      if (!res.ok) { toast(res.status===409 ? "Google Calendar isn't connected." : "Couldn't load Calendar right now."); return; }
-      const { appts: googleAppts } = await res.json();
-      setAppts(p => [...p.filter(a => a.source !== "google"), ...googleAppts]);
-      toast(`Loaded ${googleAppts.length} event${googleAppts.length===1?"":"s"} from Google Calendar.`);
+      if (!res.ok) { toast(res.status===409 ? "No calendar is connected." : "Couldn't load your calendar right now."); return; }
+      const { appts: remoteAppts } = await res.json();
+      setAppts(p => [...p.filter(a => a.source !== "google" && a.source !== "outlook"), ...remoteAppts]);
+      toast(`Loaded ${remoteAppts.length} event${remoteAppts.length===1?"":"s"}.`);
     } catch {
-      toast("Couldn't load Calendar right now.");
+      toast("Couldn't load your calendar right now.");
     } finally {
       setSyncingCalendar(false);
     }
   };
 
-  // Mirrors a locally-added appointment onto the user's real Google Calendar when it's
-  // connected. Deliberately fire-and-forget: the appointment already exists in Kroft's own
-  // local `appts` (the app's source of truth for what it displays) the instant it's added,
-  // regardless of whether this call succeeds, is slow, or Calendar isn't connected at all —
-  // nothing about adding an appointment should block on, or fail because of, a third-party API.
-  const mirrorAppointmentToGoogleCalendar = (appt) => {
-    if (!googleStatus.calendar) return;
+  // Mirrors a locally-added appointment onto every connected real calendar (api/calendar/
+  // events.js's POST creates it on Google and/or Outlook, whichever are connected).
+  // Deliberately fire-and-forget: the appointment already exists in Kroft's own local `appts`
+  // (the app's source of truth for what it displays) the instant it's added, regardless of
+  // whether this call succeeds, is slow, or no calendar is connected at all — nothing about
+  // adding an appointment should block on, or fail because of, a third-party API.
+  const mirrorAppointmentToCalendars = (appt) => {
+    if (!googleStatus.calendar && !microsoftStatus.calendar) return;
     authedFetch("/api/calendar/events", {
       method: "POST",
       body: JSON.stringify({ title: appt.title, date: appt.date, time: appt.time, location: appt.location, notes: appt.notes }),
     }).catch(() => {}); // best-effort — see comment above
   };
 
-  // Consumes the oauth=success/error query params Google's consent flow lands back on the app
-  // with (see api/google/callback.js's redirectTo) — shows the right toast once, then strips
-  // them from the URL so a manual refresh doesn't re-show a stale result. Runs once on mount;
-  // this is independent of the main hydration effect since it reflects what just happened in
-  // the browser's address bar, not persisted account data.
+  // The real source of truth for KROFT Plus — reads the subscriptions row Stripe's webhook
+  // (api/billing/webhook.js) keeps in sync, never something set directly by a client action.
+  // "active" and "trialing" both count as subscribed; everything else (inactive, past_due,
+  // canceled, or no row at all for a user who's never subscribed) doesn't.
+  const refreshSubscriptionStatus = async () => {
+    if (!isSupabaseConfigured) return;
+    try {
+      const { data: { user } = {} } = await supabase.auth.getUser();
+      if (!user) return;
+      const { data, error } = await supabase.from("subscriptions").select("status").eq("user_id", user.id).maybeSingle();
+      if (error) return;
+      setSubscribed(data?.status === "active" || data?.status === "trialing");
+    } catch {
+      // Silent — a background status refresh, not a user-initiated action.
+    }
+  };
+
+  // Redirects to Stripe's hosted Checkout for a new subscription. Nothing here can make
+  // `subscribed` true directly — that only ever happens once Stripe's webhook confirms a real
+  // payment and refreshSubscriptionStatus picks it up after the redirect back (see the
+  // billing=success handling below).
+  const startCheckout = async () => {
+    if (!isSupabaseConfigured) { toast("Sign in with a real account to upgrade."); return; }
+    setBillingLoading(true);
+    try {
+      const res = await authedFetch("/api/billing/checkout", { method: "POST" });
+      if (!res.ok) { toast("Couldn't start checkout. Try again."); setBillingLoading(false); return; }
+      const { url } = await res.json();
+      window.location.href = url; // full navigation — Stripe Checkout won't render in a fetch response
+    } catch {
+      toast("Couldn't start checkout. Try again.");
+      setBillingLoading(false);
+    }
+  };
+
+  // Redirects to Stripe's hosted Customer Portal — the real place to update a payment method,
+  // view invoices, or cancel. KROFT never handles card details or cancellation logic itself.
+  const openBillingPortal = async () => {
+    setBillingLoading(true);
+    try {
+      const res = await authedFetch("/api/billing/portal", { method: "POST" });
+      if (!res.ok) {
+        setBillingLoading(false);
+        toast(res.status === 409 ? "Upgrade to KROFT Plus first." : "Couldn't open billing. Try again.");
+        return;
+      }
+      const { url } = await res.json();
+      window.location.href = url;
+    } catch {
+      setBillingLoading(false);
+      toast("Couldn't open billing. Try again.");
+    }
+  };
+
+  // Consumes the billing=success/cancelled query params Stripe Checkout/Portal land back on
+  // the app with (see api/billing/checkout.js and portal.js's success_url/return_url) — same
+  // pattern as the oauth=success/error handling below, kept separate since they're unrelated
+  // redirects that can each arrive independently.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const billingResult = params.get("billing");
+    if (!billingResult) return;
+    if (billingResult === "success") {
+      toast("Payment received — welcome to KROFT Plus.");
+      refreshSubscriptionStatus();
+    } else if (billingResult === "cancelled") {
+      toast("Checkout cancelled — no charge was made.");
+    } else if (billingResult === "portal_return") {
+      // Covers both a cancellation and a payment-method update — refresh either way rather
+      // than trying to guess which happened from the redirect alone.
+      refreshSubscriptionStatus();
+    }
+    params.delete("billing");
+    const cleanUrl = window.location.pathname + (params.toString() ? `?${params}` : "") + window.location.hash;
+    window.history.replaceState({}, "", cleanUrl);
+  }, []);
+
+  // Consumes the oauth=success/error query params Google's or Microsoft's consent flow lands
+  // back on the app with (see api/google/callback.js and api/microsoft/callback.js's
+  // redirectTo — oauth_provider distinguishes which one) — shows the right toast once, then
+  // strips them from the URL so a manual refresh doesn't re-show a stale result. Runs once on
+  // mount; this is independent of the main hydration effect since it reflects what just
+  // happened in the browser's address bar, not persisted account data.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const oauthResult = params.get("oauth");
     if (!oauthResult) return;
+    const provider = params.get("oauth_provider") === "microsoft" ? "Microsoft" : "Google";
     if (oauthResult === "success") {
-      toast("Google account connected.");
+      toast(`${provider} account connected.`);
       refreshGoogleStatus();
+      refreshMicrosoftStatus();
       // Best-effort first pull so the newly-connected inbox/calendar aren't still showing
       // stale mock data or an empty list the moment the user lands back on the dashboard —
       // each call is a no-op (a handled 409) if that particular scope wasn't actually granted.
-      syncGmail();
-      syncGoogleCalendar();
+      syncMail();
+      syncCalendar();
     } else if (oauthResult === "error") {
       const reason = params.get("oauth_error") || "unknown_error";
-      toast(reason === "access_denied" ? "Google sign-in was cancelled." : "Couldn't connect Google. Try again.");
+      toast(reason === "access_denied" ? `${provider} sign-in was cancelled.` : `Couldn't connect ${provider}. Try again.`);
     }
     params.delete("oauth"); params.delete("oauth_provider"); params.delete("oauth_error");
     const cleanUrl = window.location.pathname + (params.toString() ? `?${params}` : "") + window.location.hash;
     window.history.replaceState({}, "", cleanUrl);
   }, []);
 
-  // Keeps the connected badges accurate whenever the dashboard is (re)entered — covers a
-  // fresh login, a returning already-signed-in session, and finishing onboarding via "Enter
-  // KROFT", without needing each of those call sites to remember to trigger it themselves.
+  // Keeps the connected badges and subscription status accurate whenever the dashboard is
+  // (re)entered — covers a fresh login, a returning already-signed-in session, and finishing
+  // onboarding via "Enter KROFT", without needing each of those call sites to remember to
+  // trigger it themselves.
   useEffect(() => {
-    if (step === "dashboard") refreshGoogleStatus();
+    if (step === "dashboard") { refreshGoogleStatus(); refreshMicrosoftStatus(); refreshSubscriptionStatus(); }
   }, [step]);
 
   const doSignup = async () => {
@@ -3191,7 +3351,7 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
         const title = str(action.title); if (!title) return null;
         const item = { id:uid(), title, date:validDate(action.date)?action.date:todayISO(), time:str(action.time)||"09:00", location:str(action.location), notes:"", urgent:false, repeat:"none", contactId:null };
         setAppts(p => [...p, item]);
-        mirrorAppointmentToGoogleCalendar(item);
+        mirrorAppointmentToCalendars(item);
         return { label:`Appointment added: ${title}`, undo:() => setAppts(p => p.filter(x => x.id !== item.id)) };
       }
       case "add_note": {
@@ -3844,7 +4004,10 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
       const data = await res.json();
       const body = data.content?.map(b=>b.text||"").join("").trim();
       if (!res.ok || !body) { toast("Draft failed — try again."); return; }
-      setComposeDraft({ to:email.from, subject:"Re: "+email.subject, body });
+      // Carries the original email's provider through so the reply sends from the same
+      // account it arrived on (see api/mail/send.js's provider field), rather than defaulting
+      // to whichever account the send endpoint picks first.
+      setComposeDraft({ to:email.from, subject:"Re: "+email.subject, body, provider:email.source });
     } catch { toast("Draft failed."); }
   };
 
@@ -4331,32 +4494,33 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
           <div style={{ marginBottom:22 }}>
             <Mono style={{ display:"block", color:C.soft, marginBottom:11 }}>Connect accounts</Mono>
             {!isSupabaseConfigured && (
-              <Mono style={{ display:"block", color:C.muted, fontSize:10, marginBottom:9 }}>Sign in with a real account (Supabase isn't configured) to connect Gmail or Calendar.</Mono>
+              <Mono style={{ display:"block", color:C.muted, fontSize:10, marginBottom:9 }}>Sign in with a real account (Supabase isn't configured) to connect an email or calendar provider.</Mono>
             )}
             <div style={{ display:"flex", flexDirection:"column", gap:9 }}>
-              {/* Gmail and Calendar go through one real Google OAuth grant (both scopes are
-                  requested together in api/google/start.js), so linking or unlinking either
-                  row acts on the whole Google connection, not just that one feature. Uber has
-                  no real integration (see api/_lib/google.js's neighbors — there's no
-                  api/uber/* at all, deliberately: Uber's ride-booking API requires their
-                  business partner program, not a self-serve OAuth app), so it keeps the
-                  original local-only toggle rather than pretending to connect to anything. */}
-              {[{k:"gmail",n:"Gmail",d:"Read & send real emails",google:true},{k:"calendar",n:"Google Calendar",d:"Sync appointments",google:true},{k:"uber",n:"Uber",d:"Book rides to meetings",google:false}].map(a => {
-                const linked = a.google ? googleStatus[a.k] : user.connected[a.k];
-                return (
-                  <div key={a.k} style={{ background:linked?C.fillStrong:C.card, border:`1px solid ${linked?C.soft:C.cardB}`, borderRadius:10, padding:"11px 14px", display:"flex", alignItems:"center", gap:12 }}>
-                    <div style={{ flex:1 }}><div style={{ fontWeight:700, fontSize:13, color:C.white, marginBottom:1 }}>{a.n}</div><Mono style={{ color:C.muted, fontSize:10 }}>{a.d}</Mono></div>
-                    {a.google ? (
-                      <Btn sm v={linked?"solid":"outline"} disabled={!isSupabaseConfigured||googleLinking}
-                        onClick={() => linked ? disconnectGoogle() : connectGoogle()}>
-                        {googleLinking ? <Spinner size={14} color={linked?C.black:C.soft} thickness={2} /> : linked ? "Unlink" : "Link"}
-                      </Btn>
-                    ) : (
-                      <Btn sm v={linked?"solid":"outline"} onClick={() => setUser(u => ({...u,connected:{...u.connected,[a.k]:!u.connected[a.k]}}))}>{linked?"Linked":"Link"}</Btn>
-                    )}
-                  </div>
-                );
-              })}
+              {/* Gmail+Calendar share one Google OAuth grant, and Outlook Mail+Calendar share
+                  one Microsoft grant (both scopes requested together in api/google/start.js
+                  and api/microsoft/start.js respectively) — so linking or unlinking either row
+                  within a provider acts on that whole connection, not just one feature. Both
+                  providers can be connected at once: api/mail/messages.js and
+                  api/calendar/events.js merge data from whichever are connected into one
+                  inbox/calendar rather than needing separate views per provider. Uber isn't
+                  listed here at all: its ride-request deep link (see UberModal/
+                  buildUberDeepLink above) needs no account connection or API key — it works
+                  the same for every user the moment they tap "Uber" anywhere in the app. */}
+              {[
+                { k:"gmail", n:"Gmail", d:"Read & send real emails", linked:googleStatus.gmail, linking:googleLinking, connect:connectGoogle, disconnect:disconnectGoogle },
+                { k:"googleCalendar", n:"Google Calendar", d:"Sync appointments", linked:googleStatus.calendar, linking:googleLinking, connect:connectGoogle, disconnect:disconnectGoogle },
+                { k:"outlookMail", n:"Outlook Mail", d:"Read & send real emails", linked:microsoftStatus.mail, linking:microsoftLinking, connect:connectMicrosoft, disconnect:disconnectMicrosoft },
+                { k:"outlookCalendar", n:"Outlook Calendar", d:"Sync appointments", linked:microsoftStatus.calendar, linking:microsoftLinking, connect:connectMicrosoft, disconnect:disconnectMicrosoft },
+              ].map(a => (
+                <div key={a.k} style={{ background:a.linked?C.fillStrong:C.card, border:`1px solid ${a.linked?C.soft:C.cardB}`, borderRadius:10, padding:"11px 14px", display:"flex", alignItems:"center", gap:12 }}>
+                  <div style={{ flex:1 }}><div style={{ fontWeight:700, fontSize:13, color:C.white, marginBottom:1 }}>{a.n}</div><Mono style={{ color:C.muted, fontSize:10 }}>{a.d}</Mono></div>
+                  <Btn sm v={a.linked?"solid":"outline"} disabled={!isSupabaseConfigured||a.linking}
+                    onClick={() => a.linked ? a.disconnect() : a.connect()}>
+                    {a.linking ? <Spinner size={14} color={a.linked?C.black:C.soft} thickness={2} /> : a.linked ? "Unlink" : "Link"}
+                  </Btn>
+                </div>
+              ))}
             </div>
           </div>
           <div style={{ display:"flex", gap:10 }}><Btn v="outline" onClick={() => setStep("business")} style={{ flex:1 }}>Back</Btn><Btn onClick={() => setStep("done")} style={{ flex:2 }}>Almost done</Btn></div>
@@ -4401,15 +4565,18 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
     <div key={themeTick} style={{ fontFamily:"'Space Grotesk',sans-serif", background:C.bg, minHeight:"100vh", color:C.text, overflowX:"hidden", maxWidth:"100vw", touchAction:"pan-y" }}>
       <style>{G}</style>
       {showBriefing && <Briefing user={user} income={totalIncome} expenses={totalExpenses} emails={emails} appts={appts} onClose={() => setShowBriefing(false)} />}
-      {uberDest && <UberModal dest={uberDest} onClose={() => setUberDest(null)} onBook={(type,loc) => { toast(`${type} requested to ${loc}`); setUberDest(null); }} />}
+      {uberDest && <UberModal dest={uberDest} onClose={() => setUberDest(null)} />}
       {composeDraft && <ComposeModal draft={composeDraft} onChange={setComposeDraft} onSend={async d => {
-        // Real send when Gmail is actually connected — otherwise fall back to the original
-        // simulated send (a toast plus a scripted fake reply a few seconds later), so the
-        // compose flow still demos sensibly for anyone who hasn't linked a real account.
-        if (googleStatus.gmail) {
+        // Real send when a real email account is connected — otherwise fall back to the
+        // original simulated send (a toast plus a scripted fake reply a few seconds later), so
+        // the compose flow still demos sensibly for anyone who hasn't linked a real account.
+        // d.provider (set on Reply/AI Draft from the original message's source) sends the
+        // reply from the same account it arrived on; a fresh compose omits it and
+        // api/mail/send.js picks whichever connected account comes first.
+        if (googleStatus.gmail || microsoftStatus.mail) {
           try {
-            const res = await authedFetch("/api/gmail/send", { method:"POST", body:JSON.stringify({ to:d.to, subject:d.subject, body:d.body }) });
-            if (!res.ok) { toast("Couldn't send — Gmail rejected the message."); return; }
+            const res = await authedFetch("/api/mail/send", { method:"POST", body:JSON.stringify({ to:d.to, subject:d.subject, body:d.body, provider:d.provider }) });
+            if (!res.ok) { toast("Couldn't send — the email provider rejected the message."); return; }
             toast(`Email sent to ${d.to}`);
             setComposeDraft(null);
           } catch {
@@ -5129,7 +5296,7 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:18 }}>
               <h2 style={{ fontSize:22, fontWeight:700, color:C.white, letterSpacing:-1 }}>Calendar</h2>
               <div style={{ display:"flex", alignItems:"center", gap:9 }}>
-                {googleStatus.calendar && <Btn sm v="outline" disabled={syncingCalendar} onClick={syncGoogleCalendar}>{syncingCalendar ? <Spinner size={14} color={C.soft} thickness={2} /> : "Refresh"}</Btn>}
+                {(googleStatus.calendar || microsoftStatus.calendar) && <Btn sm v="outline" disabled={syncingCalendar} onClick={syncCalendar}>{syncingCalendar ? <Spinner size={14} color={C.soft} thickness={2} /> : "Refresh"}</Btn>}
                 <Btn sm onClick={() => setShowAddAppt(v=>!v)}>Add Appointment</Btn>
               </div>
             </div>
@@ -5144,7 +5311,7 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
                     <label style={{ display:"flex", alignItems:"center", gap:6, cursor:"pointer" }}><input type="checkbox" checked={newAppt.urgent} onChange={e=>setNewAppt(v=>({...v,urgent:e.target.checked}))} style={{ accentColor:C.white, width:14, height:14 }} /><Mono style={{ color:C.soft }}>Urgent</Mono></label>
                     <select value={newAppt.repeat} onChange={e=>setNewAppt(v=>({...v,repeat:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:8, padding:"7px 11px", color:C.text, fontSize:11, fontFamily:"'Space Mono',monospace", outline:"none" }}>{["none","daily","weekly","monthly"].map(r=><option key={r}>{r}</option>)}</select>
                     {contacts.length > 0 && <ContactSelect value={newAppt.contactId} onChange={id=>setNewAppt(v=>({...v,contactId:id}))} contacts={contacts} />}
-                    <Btn sm onClick={() => { if (!newAppt.title||!newAppt.date) return; const item = {...newAppt,id:uid()}; setAppts(p=>[...p,item]); mirrorAppointmentToGoogleCalendar(item); setNewAppt({title:"",time:"",date:todayISO(),location:"",notes:"",urgent:false,repeat:"none",contactId:null}); setShowAddAppt(false); toast(`Appointment added: ${newAppt.title}`); }}>Add</Btn>
+                    <Btn sm onClick={() => { if (!newAppt.title||!newAppt.date) return; const item = {...newAppt,id:uid()}; setAppts(p=>[...p,item]); mirrorAppointmentToCalendars(item); setNewAppt({title:"",time:"",date:todayISO(),location:"",notes:"",urgent:false,repeat:"none",contactId:null}); setShowAddAppt(false); toast(`Appointment added: ${newAppt.title}`); }}>Add</Btn>
                   </div>
                 </div>
               </Card>
@@ -5209,19 +5376,23 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:18 }}>
               <h2 style={{ fontSize:22, fontWeight:700, color:C.white, letterSpacing:-1 }}>Email</h2>
               <div style={{ display:"flex", alignItems:"center", gap:9 }}>
-                <Tag tone={user.connected.gmail?"positive":undefined}>{user.connected.gmail?"Gmail connected":"Gmail not linked"}</Tag>
-                {googleStatus.gmail && <Btn sm v="outline" disabled={syncingGmail} onClick={syncGmail}>{syncingGmail ? <Spinner size={14} color={C.soft} thickness={2} /> : "Refresh"}</Btn>}
+                {(() => {
+                  const mailConnected = googleStatus.gmail || microsoftStatus.mail;
+                  const label = googleStatus.gmail && microsoftStatus.mail ? "Gmail + Outlook connected" : googleStatus.gmail ? "Gmail connected" : microsoftStatus.mail ? "Outlook connected" : "No email connected";
+                  return <Tag tone={mailConnected?"positive":undefined}>{label}</Tag>;
+                })()}
+                {(googleStatus.gmail || microsoftStatus.mail) && <Btn sm v="outline" disabled={syncingMail} onClick={syncMail}>{syncingMail ? <Spinner size={14} color={C.soft} thickness={2} /> : "Refresh"}</Btn>}
                 {contacts.some(c => c.email) && <Btn sm v="outline" onClick={() => setContactPicker({ mode:"email" })}>From Contacts</Btn>}
                 <Btn sm onClick={() => setComposeDraft({to:"",subject:"",body:""})}>Compose</Btn>
               </div>
             </div>
             {emails.length===0 && (
               <Card level="inset" style={{ textAlign:"center", padding:26, borderStyle:"dashed" }}>
-                <div style={{ fontSize:15, fontWeight:600, color:C.white, marginBottom:6 }}>{user.connected.gmail ? "Inbox is empty" : "No email connected"}</div>
-                <Mono style={{ display:"block", color:C.soft, marginBottom:18 }}>{user.connected.gmail ? "Nothing here right now — compose a new email to get started." : "Connect Gmail or Outlook to let KROFT organize your inbox."}</Mono>
+                <div style={{ fontSize:15, fontWeight:600, color:C.white, marginBottom:6 }}>{(googleStatus.gmail || microsoftStatus.mail) ? "Inbox is empty" : "No email connected"}</div>
+                <Mono style={{ display:"block", color:C.soft, marginBottom:18 }}>{(googleStatus.gmail || microsoftStatus.mail) ? "Nothing here right now — compose a new email to get started." : "Connect Gmail or Outlook to let KROFT organize your inbox."}</Mono>
                 <div style={{ display:"flex", gap:9, justifyContent:"center" }}>
                   <Btn sm onClick={() => setComposeDraft({to:"",subject:"",body:""})}>Compose Email</Btn>
-                  {!user.connected.gmail && <Btn sm v="outline" onClick={() => setStep("prefs")}>Connect Email</Btn>}
+                  {!(googleStatus.gmail || microsoftStatus.mail) && <Btn sm v="outline" onClick={() => setStep("prefs")}>Connect Email</Btn>}
                 </div>
               </Card>
             )}
@@ -5240,7 +5411,7 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
                   </div>
                   <div style={{ display:"flex", flexDirection:"column", gap:6, flexShrink:0 }}>
                     <Btn sm onClick={ev=>{ev.stopPropagation();speak(e.body);toast("Reading aloud…")}}>Read</Btn>
-                    <Btn sm v="outline" onClick={ev=>{ev.stopPropagation();setComposeDraft({to:e.from,subject:"Re: "+e.subject,body:""})}}>Reply</Btn>
+                    <Btn sm v="outline" onClick={ev=>{ev.stopPropagation();setComposeDraft({to:e.from,subject:"Re: "+e.subject,body:"",provider:e.source})}}>Reply</Btn>
                     <Btn sm v="outline" onClick={ev=>{ev.stopPropagation();aiDraftReply(e)}}>AI Draft</Btn>
                   </div>
                 </div>
@@ -6396,7 +6567,6 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
               reportsLeftThisMonth={reportsLeftThisMonth()}
               voiceTurnsCount={voiceTurnsCount}
               voiceLimit={FREE_DAILY_VOICE_LIMIT}
-              onUpgradeFromNotifs={() => { setSubscribed(true); toast("KROFT Plus enabled — no charge, this build has no payment set up."); }}
               onSignOut={async () => {
                 // Signing out previously only flipped `step` back to the login screen — every
                 // bit of data stayed live in memory, so returning to the dashboard showed the
@@ -6416,7 +6586,9 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
               onToggleTheme={setTheme}
               toast={toast}
               subscribed={subscribed}
-              onSetSubscribed={setSubscribed}
+              billingLoading={billingLoading}
+              onUpgrade={startCheckout}
+              onManageBilling={openBillingPortal}
               dailyMessageCount={dailyMessageCount}
               freeLimit={FREE_DAILY_MESSAGE_LIMIT}
               voiceReplies={voiceReplies}

@@ -18,7 +18,9 @@ function decodeBase64Url(data) {
   }
 }
 
-function stripHtml(html) {
+// Exported since Outlook's Graph API also returns HTML-typed bodies (body.contentType==="html")
+// needing the same plain-text fallback, without any of Gmail's base64/MIME-part complexity.
+export function stripHtml(html) {
   return html
     .replace(/<style[\s\S]*?<\/style>/gi, " ")
     .replace(/<script[\s\S]*?<\/script>/gi, " ")

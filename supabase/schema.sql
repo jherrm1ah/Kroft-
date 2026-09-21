@@ -98,3 +98,41 @@ create trigger oauth_tokens_set_updated_at
   before update on public.oauth_tokens
   for each row
   execute function public.oauth_tokens_set_updated_at();
+
+-- Tracks KROFT Plus subscription status per user, kept in sync exclusively by Stripe's webhook
+-- (api/billing/webhook.js) via the service_role key. A user can read their own row (this is
+-- just a status string and dates, not sensitive the way an OAuth token is), but has no
+-- insert/update/delete access at all — "subscribed" can only ever become true because Stripe
+-- confirmed a real payment, never because a client set a flag.
+create table if not exists public.subscriptions (
+  user_id               uuid primary key references auth.users(id) on delete cascade,
+  stripe_customer_id    text,
+  stripe_subscription_id text,
+  status                text not null default 'inactive',
+  current_period_end    timestamptz,
+  updated_at            timestamptz not null default now()
+);
+
+comment on table public.subscriptions is
+  'KROFT Plus subscription status per user. Written only by api/billing/webhook.js via service_role — never by the client. Readable by the owning user (status/dates only, no payment details).';
+
+alter table public.subscriptions enable row level security;
+
+create policy "subscriptions_select_own" on public.subscriptions
+  for select using (auth.uid() = user_id);
+
+create or replace function public.subscriptions_set_updated_at()
+returns trigger
+language plpgsql
+set search_path = pg_catalog, public
+as $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$;
+
+create trigger subscriptions_set_updated_at
+  before update on public.subscriptions
+  for each row
+  execute function public.subscriptions_set_updated_at();
