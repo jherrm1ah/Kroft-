@@ -788,9 +788,9 @@ const NavIcon = ({ id, size=20, color="currentColor" }) => {
 const OSTEPS = ["login","signup","photo","business","prefs","done"];
 const OSTEP_LABELS = ["Photo","Business","Prefs","Ready"];
 
-function OShell({ step, children }) {
+function OShell({ step, children, hideProgress }) {
   const idx = OSTEPS.indexOf(step);
-  const showBar = !["login","signup","reset-password"].includes(step);
+  const showBar = !hideProgress && !["login","signup","reset-password"].includes(step);
   const barIdx = Math.max(0, idx - 2);
   const pct = showBar ? Math.round((barIdx / (OSTEP_LABELS.length - 1)) * 100) : 0;
   return (
@@ -1991,6 +1991,15 @@ function KroftApp({ onFullReset } = {}) {
   // configured (local-only mode), it instead switches to login once a saved local account is
   // found, matching this app's original device-local behavior.
   const [step, setStep] = useState("signup");
+  // True only while "business" or "prefs" is showing because Profile's Edit Details /
+  // Preferences opened it on an already-signed-in account — as opposed to the same two screens
+  // showing as part of first-time onboarding, reached by signing up. Both cases render the same
+  // step and the same form, but they need different Back/Save destinations: onboarding chains
+  // photo -> business -> prefs -> done -> dashboard, while an edit from Profile should return
+  // straight to the dashboard, never forward into onboarding's later screens or back through
+  // "photo" into "signup" — landing back on the signup screen while editing your own account
+  // details was exactly the bug this flag exists to prevent.
+  const [editingFromProfile, setEditingFromProfile] = useState(false);
   // True while a signup/login request to Supabase Auth is in flight, so the button can show a
   // spinner and can't be double-submitted by an impatient extra click.
   const [authLoading, setAuthLoading] = useState(false);
@@ -3197,6 +3206,7 @@ function KroftApp({ onFullReset } = {}) {
       // to onboarding without touching another profile field would have their name/email
       // sitting only in the pre-auth localStorage fallback, not yet under their new account.
       saveProfileNow().catch(()=>{});
+      setEditingFromProfile(false);
       setStep("photo");
       return;
     }
@@ -3208,7 +3218,7 @@ function KroftApp({ onFullReset } = {}) {
     const passwordHash = await hashPassword(signupPw, salt);
     setUser(u => { const { password, ...rest } = u; return { ...rest, passwordSalt:salt, passwordHash }; });
     setSignupPw(""); setConfirmPw("");
-    setSignupError(""); setStep("photo");
+    setSignupError(""); setEditingFromProfile(false); setStep("photo");
   };
 
   const openCamera = async () => {
@@ -4937,7 +4947,7 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
       )}
 
       {step === "business" && (
-        <OShell step="business">
+        <OShell step="business" hideProgress={editingFromProfile}>
           <h2 style={{ fontSize:26, fontWeight:800, color:C.white, letterSpacing:-1, marginBottom:4 }}>Your Business</h2>
           <Mono style={{ display:"block", color:C.muted, marginBottom:22 }}>So KROFT can tailor your finance dashboard.</Mono>
           <div style={{ display:"flex", flexDirection:"column", gap:13, marginBottom:22 }}>
@@ -4979,12 +4989,16 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
               )}
             </div>
           </div>
-          <div style={{ display:"flex", gap:10 }}><Btn v="outline" onClick={() => setStep("photo")} style={{ flex:1 }}>Back</Btn><Btn onClick={() => setStep("prefs")} style={{ flex:2 }}>Next</Btn></div>
+          {editingFromProfile ? (
+            <div style={{ display:"flex", gap:10 }}><Btn v="outline" onClick={() => setStep("dashboard")} style={{ flex:1 }}>Cancel</Btn><Btn onClick={() => { saveProfileNow().catch(()=>{}); setStep("dashboard"); toast("Business details saved."); }} style={{ flex:2 }}>Save</Btn></div>
+          ) : (
+            <div style={{ display:"flex", gap:10 }}><Btn v="outline" onClick={() => setStep("photo")} style={{ flex:1 }}>Back</Btn><Btn onClick={() => setStep("prefs")} style={{ flex:2 }}>Next</Btn></div>
+          )}
         </OShell>
       )}
 
       {step === "prefs" && (
-        <OShell step="prefs">
+        <OShell step="prefs" hideProgress={editingFromProfile}>
           <h2 style={{ fontSize:26, fontWeight:800, color:C.white, letterSpacing:-1, marginBottom:4 }}>Preferences</h2>
           <Mono style={{ display:"block", color:C.muted, marginBottom:22 }}>Connect the accounts KROFT should work with.</Mono>
           <div style={{ marginBottom:22 }}>
@@ -5019,7 +5033,11 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
               ))}
             </div>
           </div>
-          <div style={{ display:"flex", gap:10 }}><Btn v="outline" onClick={() => setStep("business")} style={{ flex:1 }}>Back</Btn><Btn onClick={() => setStep("done")} style={{ flex:2 }}>Almost done</Btn></div>
+          {editingFromProfile ? (
+            <div style={{ display:"flex", gap:10 }}><Btn v="outline" onClick={() => setStep("dashboard")} style={{ flex:1 }}>Cancel</Btn><Btn onClick={() => { saveProfileNow().catch(()=>{}); setStep("dashboard"); toast("Preferences saved."); }} style={{ flex:2 }}>Save</Btn></div>
+          ) : (
+            <div style={{ display:"flex", gap:10 }}><Btn v="outline" onClick={() => setStep("business")} style={{ flex:1 }}>Back</Btn><Btn onClick={() => setStep("done")} style={{ flex:2 }}>Almost done</Btn></div>
+          )}
         </OShell>
       )}
 
@@ -5902,7 +5920,7 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
                 <Mono style={{ display:"block", color:C.soft, marginBottom:18 }}>{(googleStatus.gmail || microsoftStatus.mail) ? "Nothing here right now — compose a new email to get started." : "Connect Gmail or Outlook to let KROFT organize your inbox."}</Mono>
                 <div style={{ display:"flex", gap:9, justifyContent:"center" }}>
                   <Btn sm onClick={() => setComposeDraft({to:"",subject:"",body:""})}>Compose Email</Btn>
-                  {!(googleStatus.gmail || microsoftStatus.mail) && <Btn sm v="outline" onClick={() => setStep("prefs")}>Connect Email</Btn>}
+                  {!(googleStatus.gmail || microsoftStatus.mail) && <Btn sm v="outline" onClick={() => { setEditingFromProfile(true); setStep("prefs"); }}>Connect Email</Btn>}
                 </div>
               </Card>
             )}
@@ -7072,8 +7090,8 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
               // prop meant "Edit details" silently opened account-linking and edited none of
               // what it promised. Split into two so each button reaches the fields it actually
               // claims to edit.
-              onEditPreferences={() => setStep("prefs")}
-              onEditBusinessDetails={() => setStep("business")}
+              onEditPreferences={() => { setEditingFromProfile(true); setStep("prefs"); }}
+              onEditBusinessDetails={() => { setEditingFromProfile(true); setStep("business"); }}
               onExportData={exportData}
               onImportData={importData}
               notifPermission={notifPermission}
