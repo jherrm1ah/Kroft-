@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo, Component } from "react";
-import { BarChart, Bar, Cell, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
+import { BarChart, ComposedChart, Bar, Line, PieChart, Pie, Cell, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend } from "recharts";
 import { supabase, isSupabaseConfigured } from "./supabaseClient.js";
 
 // Theme-aware palette — black, white and off-white only, no grey scale.
@@ -2100,6 +2100,11 @@ function KroftApp({ onFullReset } = {}) {
   const [expenses, setExpenses] = useState([]);
   const [incomeCats, setIncomeCats] = useState(["Invoice","Sales","Consulting","Freelance","Other"]);
   const [expenseCats, setExpenseCats] = useState(["Operations","Tech","Marketing","Travel","Rent","Other"]);
+  // Filters for the income/expense lists — local UI state only, never persisted, since a filter
+  // left on from a prior session would silently hide entries on the next visit.
+  const [txnQuery, setTxnQuery] = useState("");
+  const [txnFrom, setTxnFrom] = useState("");
+  const [txnTo, setTxnTo] = useState("");
   // Monthly spending limits per category, as { [category]: amount }. Tracking spend without ever
   // warning about it means the app only tells you about a problem after the month is over.
   const [budgets, setBudgets] = useState({});
@@ -2114,6 +2119,9 @@ function KroftApp({ onFullReset } = {}) {
   // The last month rollover was processed for, so it runs exactly once per month rather than
   // every time the heartbeat ticks.
   const [budgetRolloverMonth, setBudgetRolloverMonth] = useState(() => todayISO().slice(0, 7));
+  // Percent of this month's net profit to flag as reserved for taxes — 0 means the feature is
+  // off. Purely a display calculation; nothing is actually moved or withheld anywhere.
+  const [taxSetAsidePct, setTaxSetAsidePct] = useState(0);
   // Notification settings, lifted out of ProfileSection where they were local state that nothing
   // read and nothing persisted. Each maps to a real trigger below.
   const [notifPrefs, setNotifPrefs] = useState({ appointments:true, reminders:true, budgets:true, dailyBrief:true });
@@ -2376,6 +2384,7 @@ function KroftApp({ onFullReset } = {}) {
       // means a brief flash of "Free plan" until that fetch resolves, not a lasting gap.
       if (typeof p.dailyMessageCount === "number") setDailyMessageCount(p.dailyMessageCount);
       if (p.messageCountDate) setMessageCountDate(p.messageCountDate);
+      if (typeof p.taxSetAsidePct === "number") setTaxSetAsidePct(p.taxSetAsidePct);
       if (Array.isArray(p.incomeCats)) setIncomeCats(p.incomeCats);
       if (Array.isArray(p.expenseCats)) setExpenseCats(p.expenseCats);
     }
@@ -2463,13 +2472,13 @@ function KroftApp({ onFullReset } = {}) {
   // subscribed is deliberately excluded — see hydrateAllGroups's comment on why it's never
   // restored from this same blob; persisting it here would just re-create the value this app
   // must never trust from client storage in the first place.
-  const saveProfileNow = () => window.storage.set(STORAGE_KEYS.profile, JSON.stringify({ user, theme, voiceReplies, proactiveInsights, voicePref, dailyMessageCount, messageCountDate, incomeCats, expenseCats, notifPrefs, aiExtrasCount, aiExtrasDate, monthlyReportCount, monthlyReportMonth, dailyBriefSentDate, voiceTurnsCount, voiceTurnsDate }), false);
+  const saveProfileNow = () => window.storage.set(STORAGE_KEYS.profile, JSON.stringify({ user, theme, voiceReplies, proactiveInsights, voicePref, dailyMessageCount, messageCountDate, incomeCats, expenseCats, notifPrefs, aiExtrasCount, aiExtrasDate, monthlyReportCount, monthlyReportMonth, dailyBriefSentDate, voiceTurnsCount, voiceTurnsDate, taxSetAsidePct }), false);
 
   useEffect(() => {
     if (!dataLoaded) return;
     const t = setTimeout(() => { saveProfileNow().catch(()=>{}); }, 900);
     return () => clearTimeout(t);
-  }, [dataLoaded, user, theme, voiceReplies, proactiveInsights, voicePref, dailyMessageCount, messageCountDate, incomeCats, expenseCats, notifPrefs, aiExtrasCount, aiExtrasDate, monthlyReportCount, monthlyReportMonth, dailyBriefSentDate, voiceTurnsCount, voiceTurnsDate]);
+  }, [dataLoaded, user, theme, voiceReplies, proactiveInsights, voicePref, dailyMessageCount, messageCountDate, incomeCats, expenseCats, notifPrefs, aiExtrasCount, aiExtrasDate, monthlyReportCount, monthlyReportMonth, dailyBriefSentDate, voiceTurnsCount, voiceTurnsDate, taxSetAsidePct]);
 
   useEffect(() => {
     if (!dataLoaded) return;
@@ -2558,6 +2567,69 @@ function KroftApp({ onFullReset } = {}) {
   const totalIncome = income.reduce((s,r) => s+r.amount, 0);
   const totalExpenses = expenses.reduce((s,r) => s+r.amount, 0);
   const netProfit = totalIncome - totalExpenses;
+
+  // Last 6 calendar months (oldest first, ending this month), each with income/expenses/net
+  // actually posted in it — the Overview chart used to just show lifetime totals as three bars,
+  // which can't show a trend at all. Built from calendar months rather than a rolling 180-day
+  // window so it lines up with how budgets and the monthly report already think about "a month".
+  const monthlyTrend = useMemo(() => {
+    const now = new Date();
+    const months = Array.from({ length:6 }, (_, i) => {
+      const d = new Date(now.getFullYear(), now.getMonth() - (5 - i), 1);
+      return { ym: d.toISOString().slice(0,7), label: d.toLocaleDateString("en-US", { month:"short" }) };
+    });
+    return months.map(({ ym, label }) => {
+      const inc = income.filter(r => (r.date||"").slice(0,7) === ym).reduce((s,r) => s+r.amount, 0);
+      const exp = expenses.filter(r => (r.date||"").slice(0,7) === ym).reduce((s,r) => s+r.amount, 0);
+      return { ym, label, income:inc, expenses:exp, net: inc - exp };
+    });
+  }, [income, expenses]);
+
+  // This calendar month's own totals, computed live (unlike monthlyReport, which needs an
+  // explicit Generate tap and — on the free tier — a limited quota) so other widgets (tax
+  // set-aside, cash flow) always have a current figure to work from.
+  const thisMonthNet = useMemo(() => {
+    const ym = todayISO().slice(0, 7);
+    const inc = income.filter(r => (r.date||"").slice(0,7) === ym).reduce((s,r) => s+r.amount, 0);
+    const exp = expenses.filter(r => (r.date||"").slice(0,7) === ym).reduce((s,r) => s+r.amount, 0);
+    return { income:inc, expenses:exp, net: inc - exp };
+  }, [income, expenses]);
+
+  // This month's expenses grouped by category, for the "Spending by category" donut — largest
+  // slice first so both the chart and its legend read in the same order.
+  const categoryBreakdown = useMemo(() => {
+    const ym = todayISO().slice(0, 7);
+    const byCat = {};
+    expenses.filter(e => (e.date||"").slice(0,7) === ym).forEach(e => { byCat[e.cat] = (byCat[e.cat]||0) + e.amount; });
+    const total = Object.values(byCat).reduce((s,v) => s+v, 0);
+    return Object.entries(byCat).sort((a,b) => b[1]-a[1]).map(([cat, amt]) => ({ cat, amt, pct: total ? amt/total : 0 }));
+  }, [expenses]);
+
+  // Every future occurrence (not just each template's single next one) of every recurring income
+  // or expense due in the next 30 days, simulated forward from nextDate without actually posting
+  // anything — the posting engine only ever tracks one occurrence ahead per template, which isn't
+  // enough to forecast a weekly bill 4 times over.
+  const upcomingCashFlow = useMemo(() => {
+    const today = todayISO();
+    const horizon = new Date(); horizon.setDate(horizon.getDate() + 30);
+    const horizonISO = horizon.toISOString().slice(0, 10);
+    const collect = (list, sign) => {
+      const out = [];
+      list.forEach(e => {
+        if (!e.repeat || e.repeat === "none" || !e.nextDate) return;
+        let cursor = e.nextDate, guard = 0;
+        while (cursor <= horizonISO && guard++ < 60) {
+          if (cursor >= today) out.push({ id:`${e.id}:${cursor}`, label:e.label, cat:e.cat, date:cursor, amount:e.amount, sign });
+          cursor = advanceRepeatDate(cursor, e.repeat);
+        }
+      });
+      return out;
+    };
+    const items = [...collect(income, "+"), ...collect(expenses, "-")].sort((a,b) => a.date.localeCompare(b.date));
+    const projected = items.reduce((s,e) => s + (e.sign === "+" ? e.amount : -e.amount), 0);
+    return { items, projected };
+  }, [income, expenses]);
+
   const pw = signupPw;
   const pwChecks = { length:pw.length>=8, upper:/[A-Z]/.test(pw), lower:/[a-z]/.test(pw), number:/[0-9]/.test(pw), special:/[^A-Za-z0-9]/.test(pw) };
   const pwScore = Object.values(pwChecks).filter(Boolean).length;
@@ -4680,6 +4752,37 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
     URL.revokeObjectURL(url);
   };
+
+  // Shared by the income and expenses lists — a description/category text match plus an
+  // inclusive date range, all optional. Applied client-side since these lists are already fully
+  // loaded in memory; nothing here needs a round trip.
+  const matchesTxnFilter = e => {
+    if (txnQuery.trim() && !`${e.label} ${e.cat}`.toLowerCase().includes(txnQuery.trim().toLowerCase())) return false;
+    if (txnFrom && (e.date || "") < txnFrom) return false;
+    if (txnTo && (e.date || "") > txnTo) return false;
+    return true;
+  };
+  const txnFilterActive = !!(txnQuery.trim() || txnFrom || txnTo);
+
+  // A field containing a comma, quote or newline has to be quoted, with any internal quote
+  // doubled — otherwise a description like `Lunch, client meeting` would silently split into two
+  // spreadsheet columns on open.
+  const csvField = v => {
+    const s = String(v ?? "");
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const exportFinanceCsv = () => {
+    if (income.length === 0 && expenses.length === 0) { toast("Nothing to export yet."); return; }
+    const rows = [
+      ["Date","Type","Description","Category","Amount","Currency","Repeats"],
+      ...[...income.map(r => ({ ...r, type:"Income" })), ...expenses.map(r => ({ ...r, type:"Expense" }))]
+        .sort((a,b) => (a.date||"").localeCompare(b.date||""))
+        .map(r => [r.date||"", r.type, r.label, r.cat, r.amount, r.cur||user.currency, (r.repeat&&r.repeat!=="none")?r.repeat:""]),
+    ];
+    const csv = rows.map(row => row.map(csvField).join(",")).join("\r\n");
+    downloadText(`kroft-finance-${todayISO()}.csv`, csv);
+    toast("CSV downloaded.");
+  };
   // Frees a blob: URL's browser memory after a deleted item's Undo window has fully closed —
   // NOT immediately on delete, since the "Undo" toast can restore the item, and an object URL
   // revoked too early would leave the restored file/memo's Open/playback link permanently
@@ -5434,20 +5537,18 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
               </Card>
             ) : (
               <Card style={{ marginBottom:16 }}>
-                <Mono style={{ display:"block", color:C.muted, marginBottom:12, letterSpacing:.8 }}>Income vs expenses</Mono>
-                <ResponsiveContainer width="100%" height={150}>
-                  <BarChart data={[{l:"Income",v:totalIncome},{l:"Expenses",v:totalExpenses},{l:"Profit",v:Math.max(0,netProfit)}]}>
+                <Mono style={{ display:"block", color:C.muted, marginBottom:12, letterSpacing:.8 }}>Income vs expenses · last 6 months</Mono>
+                <ResponsiveContainer width="100%" height={190}>
+                  <ComposedChart data={monthlyTrend}>
                     <CartesianGrid strokeDasharray="3 3" stroke={C.cardB} vertical={false} />
-                    <XAxis dataKey="l" tick={{ fill:C.muted, fontSize:10 }} axisLine={false} tickLine={false} />
-                    {/* Hardcoded "$" used to show on every user's chart regardless of their actual
-                        currency (NGN, EUR, whatever they picked at signup) — everywhere else in
-                        the app already goes through fmtCur, this was the one spot that didn't. */}
+                    <XAxis dataKey="label" tick={{ fill:C.muted, fontSize:10 }} axisLine={false} tickLine={false} />
                     <YAxis tick={{ fill:C.muted, fontSize:10 }} axisLine={false} tickLine={false} tickFormatter={v=>fmtCur(0,user.currency).replace(/0\.00/,"").trim()+v} />
                     <Tooltip formatter={v=>fmtCur(v,user.currency)} contentStyle={{ background:C.card, border:`1px solid ${C.cardB}`, borderRadius:12, fontSize:11, color:C.white }} />
-                    <Bar dataKey="v" radius={[4,4,0,0]} opacity={.9}>
-                      {[C.positive,C.negative,C.accent].map((clr,i) => <Cell key={i} fill={clr} />)}
-                    </Bar>
-                  </BarChart>
+                    <Legend wrapperStyle={{ fontSize:10, color:C.muted }} formatter={v=>({income:"Income",expenses:"Expenses",net:"Net"}[v]||v)} />
+                    <Bar dataKey="income" fill={C.positive} radius={[4,4,0,0]} opacity={.9} />
+                    <Bar dataKey="expenses" fill={C.negative} radius={[4,4,0,0]} opacity={.9} />
+                    <Line type="monotone" dataKey="net" stroke={C.accent} strokeWidth={2} dot={{ r:3, fill:C.accent }} />
+                  </ComposedChart>
                 </ResponsiveContainer>
               </Card>
             )}
@@ -5496,9 +5597,10 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
           <div style={{ animation:"fadeUp .4s ease" }}>
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:18 }}>
               <h2 style={{ fontSize:22, fontWeight:700, color:C.white, letterSpacing:-1 }}>Finance</h2>
-              <div style={{ display:"flex", gap:8 }}>
+              <div style={{ display:"flex", gap:8, flexWrap:"wrap", justifyContent:"flex-end" }}>
                 <Btn sm onClick={() => { setShowAddInc(v=>!v); setShowAddExp(false); }}>Add Income</Btn>
                 <Btn sm v="outline" onClick={() => { setShowAddExp(v=>!v); setShowAddInc(false); }}>Add Expense</Btn>
+                <Btn sm v="outline" onClick={exportFinanceCsv}>Export</Btn>
               </div>
             </div>
             {!dataLoaded && <><SkeletonCard lines={2} /><SkeletonCard lines={4} /></>}
@@ -5669,6 +5771,105 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
                 </Card>
               );
             })()}
+            {/* Spending by category. The monthly report already surfaces a top-3 list, but only
+                once someone taps Generate and only within the AI text — this is always visible
+                and covers every category, not just the three biggest. */}
+            {categoryBreakdown.length > 0 && (() => {
+              const pieColors = [C.accent, C.positive, C.warning, C.negative, C.soft, C.muted];
+              return (
+                <Card level="raised" style={{ marginBottom:14 }}>
+                  <Mono style={{ display:"block", color:C.muted, marginBottom:12, letterSpacing:.8 }}>Spending by category · this month</Mono>
+                  <div style={{ display:"flex", alignItems:"center", gap:16, flexWrap:"wrap" }}>
+                    <ResponsiveContainer width={140} height={140} style={{ flexShrink:0 }}>
+                      <PieChart>
+                        <Pie data={categoryBreakdown} dataKey="amt" nameKey="cat" innerRadius={38} outerRadius={62} paddingAngle={2} stroke="none">
+                          {categoryBreakdown.map((c, i) => <Cell key={c.cat} fill={pieColors[i % pieColors.length]} />)}
+                        </Pie>
+                        <Tooltip formatter={(v, n) => [fmtCur(v, user.currency), n]} contentStyle={{ background:C.card, border:`1px solid ${C.cardB}`, borderRadius:12, fontSize:11, color:C.white }} />
+                      </PieChart>
+                    </ResponsiveContainer>
+                    <div style={{ flex:1, minWidth:140, display:"flex", flexDirection:"column", gap:7 }}>
+                      {categoryBreakdown.slice(0, 6).map((c, i) => (
+                        <div key={c.cat} style={{ display:"flex", alignItems:"center", gap:7 }}>
+                          <div style={{ width:8, height:8, borderRadius:99, background:pieColors[i % pieColors.length], flexShrink:0 }} />
+                          <Mono style={{ color:C.text, flex:1, minWidth:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{c.cat}</Mono>
+                          <Mono style={{ color:C.muted, flexShrink:0 }}>{fmtCur(c.amt, user.currency)} · {Math.round(c.pct*100)}%</Mono>
+                        </div>
+                      ))}
+                      {categoryBreakdown.length > 6 && <Mono style={{ color:C.muted }}>+{categoryBreakdown.length - 6} more</Mono>}
+                    </div>
+                  </div>
+                </Card>
+              );
+            })()}
+            {/* Cash flow forecast. Recurring entries already exist, but nothing surfaced what's
+                actually coming due — someone only found out rent posted by seeing it in the list
+                after the fact. This looks ahead instead, simulating every future occurrence in
+                the window rather than just each template's single next date. */}
+            {(income.length>0||expenses.length>0) && (
+            <Card level="raised" style={{ marginBottom:14 }}>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"baseline", marginBottom:upcomingCashFlow.items.length?12:6 }}>
+                <Mono style={{ color:C.muted, letterSpacing:.8 }}>Upcoming · next 30 days</Mono>
+                {upcomingCashFlow.items.length > 0 && (
+                  <Mono style={{ color:upcomingCashFlow.projected>=0?C.positive:C.negative, flexShrink:0 }}>
+                    {upcomingCashFlow.projected>=0?"+":""}{fmtCur(upcomingCashFlow.projected, user.currency)} projected
+                  </Mono>
+                )}
+              </div>
+              {upcomingCashFlow.items.length === 0 ? (
+                <Mono style={{ display:"block", color:C.muted, lineHeight:1.6 }}>
+                  Nothing recurring is due in the next 30 days. Set an income or expense entry to repeat and it'll show up here ahead of time.
+                </Mono>
+              ) : (
+                <div style={{ display:"flex", flexDirection:"column", gap:7 }}>
+                  {upcomingCashFlow.items.slice(0, 6).map(e => (
+                    <div key={e.id} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:8 }}>
+                      <div style={{ minWidth:0 }}>
+                        <div style={{ fontSize:12, fontWeight:600, color:C.text, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{e.label}</div>
+                        <Mono style={{ color:C.muted }}>{fmtDate(e.date)} · {e.cat}</Mono>
+                      </div>
+                      <Mono style={{ color:e.sign==="+"?C.positive:C.negative, fontWeight:700, flexShrink:0 }}>{e.sign}{fmtCur(e.amount, user.currency)}</Mono>
+                    </div>
+                  ))}
+                  {upcomingCashFlow.items.length > 6 && <Mono style={{ color:C.muted, marginTop:2 }}>+{upcomingCashFlow.items.length - 6} more</Mono>}
+                </div>
+              )}
+            </Card>
+            )}
+            {/* Tax set-aside. Purely a display split of this month's live net profit — nothing is
+                actually withheld or moved anywhere; it exists so "profit" doesn't quietly read as
+                fully spendable when a chunk of it isn't really the user's to spend. */}
+            {(income.length>0||expenses.length>0) && (
+              <Card level="raised" style={{ marginBottom:14 }}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
+                  <Mono style={{ color:C.muted, letterSpacing:.8 }}>Tax set-aside</Mono>
+                  <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                    <Inp type="number" inputMode="decimal" min="0" max="100" step="1" value={taxSetAsidePct||""} placeholder="0"
+                      onChange={e => {
+                        const n = parseFloat(e.target.value);
+                        setTaxSetAsidePct(Number.isFinite(n) ? Math.min(100, Math.max(0, n)) : 0);
+                      }}
+                      style={{ width:64, padding:"7px 9px", fontSize:12, textAlign:"right" }} />
+                    <Mono style={{ color:C.muted }}>% of profit</Mono>
+                  </div>
+                </div>
+                {taxSetAsidePct > 0 ? (
+                  thisMonthNet.net > 0 ? (
+                    <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:8 }}>
+                      <div><Mono style={{ color:C.muted, fontSize:9, display:"block" }}>This month's net</Mono><Mono style={{ color:C.white, fontWeight:700, fontSize:13 }}>{fmtCur(thisMonthNet.net,user.currency)}</Mono></div>
+                      <div><Mono style={{ color:C.muted, fontSize:9, display:"block" }}>Reserved</Mono><Mono style={{ color:C.warning, fontWeight:700, fontSize:13 }}>{fmtCur(thisMonthNet.net*taxSetAsidePct/100,user.currency)}</Mono></div>
+                      <div><Mono style={{ color:C.muted, fontSize:9, display:"block" }}>Spendable</Mono><Mono style={{ color:C.positive, fontWeight:700, fontSize:13 }}>{fmtCur(thisMonthNet.net*(1-taxSetAsidePct/100),user.currency)}</Mono></div>
+                    </div>
+                  ) : (
+                    <Mono style={{ display:"block", color:C.muted, lineHeight:1.6 }}>No profit yet this month to reserve against.</Mono>
+                  )
+                ) : (
+                  <Mono style={{ display:"block", color:C.muted, lineHeight:1.6 }}>
+                    Set a percentage and this month's profit splits into what's reserved for taxes and what's actually spendable. Not tax advice — just a running estimate from your own numbers.
+                  </Mono>
+                )}
+              </Card>
+            )}
             {showAddInc && (
               <Card style={{ marginBottom:13, border:`1px solid ${C.border}` }}>
                 <Mono style={{ display:"block", color:C.white, marginBottom:11, letterSpacing:.8 }}>New income entry</Mono>
@@ -5744,11 +5945,27 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
             )}
             {(income.length>0||expenses.length>0) && (
               <>
+                {/* Filters both lists below by description/category text and/or an inclusive date
+                    range. Purely a view filter — deleting or undoing an entry still operates on
+                    the full underlying list (see holdActions), never on this filtered subset. */}
+                <Card level="inset" style={{ marginBottom:12 }}>
+                  <div style={{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center" }}>
+                    <Inp placeholder="Search description or category…" value={txnQuery} onChange={e=>setTxnQuery(e.target.value)} style={{ flex:2, minWidth:160 }} />
+                    <input type="date" value={txnFrom} max={txnTo||undefined} onChange={e=>setTxnFrom(e.target.value)} style={{ flex:1, minWidth:130, background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"10px 12px", color:C.text, fontSize:12, fontFamily:"'Space Grotesk',sans-serif", outline:"none", colorScheme:theme }} />
+                    <input type="date" value={txnTo} min={txnFrom||undefined} max={todayISO()} onChange={e=>setTxnTo(e.target.value)} style={{ flex:1, minWidth:130, background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"10px 12px", color:C.text, fontSize:12, fontFamily:"'Space Grotesk',sans-serif", outline:"none", colorScheme:theme }} />
+                    {txnFilterActive && <Btn sm v="outline" onClick={() => { setTxnQuery(""); setTxnFrom(""); setTxnTo(""); }}>Clear</Btn>}
+                  </div>
+                </Card>
                 <div style={{ display:"flex", flexDirection:"column", gap:12, marginBottom:12 }}>
-                  {[{title:"INCOME",kind:"income",data:income,sign:"+",set:setIncome,cats:incomeCats,setCats:setIncomeCats},{title:"EXPENSES",kind:"expenses",data:expenses,sign:"-",set:setExpenses,cats:expenseCats,setCats:setExpenseCats}].map(({title,kind,data,sign,set,cats,setCats}) => (
+                  {[{title:"INCOME",kind:"income",data:income,sign:"+",set:setIncome,cats:incomeCats,setCats:setIncomeCats},{title:"EXPENSES",kind:"expenses",data:expenses,sign:"-",set:setExpenses,cats:expenseCats,setCats:setExpenseCats}].map(({title,kind,data,sign,set,cats,setCats}) => {
+                    const filtered = txnFilterActive ? data.filter(matchesTxnFilter) : data;
+                    return (
                     <Card key={title} style={{ minWidth:0 }}>
-                      <Mono style={{ display:"block", color:C.muted, marginBottom:11, letterSpacing:.8 }}>{title}</Mono>
-                      {data.length===0 ? <Mono style={{ color:C.soft, display:"block", padding:"8px 0" }}>None yet.</Mono> : [...data].sort((a,b)=>(b.date||"").localeCompare(a.date||"")).map(r => (
+                      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"baseline", marginBottom:11 }}>
+                        <Mono style={{ color:C.muted, letterSpacing:.8 }}>{title}</Mono>
+                        {txnFilterActive && <Mono style={{ color:C.muted }}>{filtered.length} of {data.length}</Mono>}
+                      </div>
+                      {filtered.length===0 ? <Mono style={{ color:C.soft, display:"block", padding:"8px 0" }}>{txnFilterActive?"No matches.":"None yet."}</Mono> : [...filtered].sort((a,b)=>(b.date||"").localeCompare(a.date||"")).map(r => (
                         editingEntry && editingEntry.kind===kind && editingEntry.id===r.id ? (
                           <div key={r.id} style={{ background:C.surface, border:`1px solid ${C.soft}`, borderRadius:12, padding:"10px 11px", marginBottom:7 }}>
                             <div style={{ display:"flex", flexDirection:"column", gap:7 }}>
@@ -5800,12 +6017,13 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
                         )
                       ))}
                       <div style={{ display:"flex", justifyContent:"space-between", marginTop:6 }}>
-                        <Mono style={{ color:C.muted }}>Total</Mono>
-                        <Mono style={{ color:C.white, fontWeight:700 }}>{fmtCur(data.reduce((s,r)=>s+r.amount,0),user.currency)}</Mono>
+                        <Mono style={{ color:C.muted }}>{txnFilterActive?"Filtered total":"Total"}</Mono>
+                        <Mono style={{ color:C.white, fontWeight:700 }}>{fmtCur(filtered.reduce((s,r)=>s+r.amount,0),user.currency)}</Mono>
                       </div>
 
                     </Card>
-                  ))}
+                    );
+                  })}
                 </div>
                 <Card hi style={{ border:`1px solid ${C.soft}`, marginBottom:12 }}>
                   <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:10 }}>
