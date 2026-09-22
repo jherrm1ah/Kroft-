@@ -3446,7 +3446,18 @@ function KroftApp({ onFullReset } = {}) {
     };
     r.onend = () => { listeningRef.current = false; setVoiceState(s => (s === "listening" ? "idle" : s)); };
     voiceRecRef.current = r;
-    try { r.start(); startMeter(); } catch { listeningRef.current = false; }
+    try {
+      r.start(); startMeter();
+    } catch {
+      // r.start() throwing (e.g. a recognizer instance the browser considers still active from
+      // a moment ago) used to fail completely silently here — listeningRef reset, but voiceState
+      // never left "idle" and no error ever appeared. From the outside that looks exactly like
+      // tapping the orb did nothing at all, with no way to tell "it's broken" from "it's about
+      // to start." Surfacing it lets the person retry instead of staring at a frozen orb.
+      listeningRef.current = false;
+      setVoiceState("idle");
+      setVoiceError("Couldn't start listening. Tap the orb to try again.");
+    }
   };
 
   const voiceAnswer = async question => {
