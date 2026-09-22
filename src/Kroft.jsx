@@ -746,7 +746,7 @@ const OSTEP_LABELS = ["Photo","Business","Prefs","Ready"];
 
 function OShell({ step, children }) {
   const idx = OSTEPS.indexOf(step);
-  const showBar = !["login","signup"].includes(step);
+  const showBar = !["login","signup","reset-password"].includes(step);
   const barIdx = Math.max(0, idx - 2);
   const pct = showBar ? Math.round((barIdx / (OSTEP_LABELS.length - 1)) * 100) : 0;
   return (
@@ -1847,6 +1847,11 @@ const STORAGE_KEYS = {
   chatData: "kroft:chat",
   wellnessData: "kroft:wellness",
   emailData: "kroft:emails",
+  // Kept separate from `productivity` rather than folded in: voice memo audio (now a data: URL,
+  // see toggleVoiceMemo) can run to hundreds of KB per recording, and productivity's save effect
+  // fires on every small task/note edit — bundling memos in would mean re-writing all that audio
+  // on every unrelated edit instead of only when a memo itself actually changes.
+  voiceMemosData: "kroft:voicememos",
 };
 
 function KroftApp({ onFullReset } = {}) {
@@ -1948,6 +1953,20 @@ function KroftApp({ onFullReset } = {}) {
   const [loginPw, setLoginPw] = useState("");
   const [showLoginPw, setShowLoginPw] = useState(false);
   const [loginError, setLoginError] = useState("");
+  // Forgot-password mini-flow, inline on the login screen — only meaningful with a real
+  // Supabase account (it emails a reset link through Supabase Auth); local-only mode's
+  // password is just a local hash with no email service behind it to reset through.
+  const [forgotOpen, setForgotOpen] = useState(false);
+  const [forgotEmail, setForgotEmail] = useState("");
+  const [forgotLoading, setForgotLoading] = useState(false);
+  const [forgotSent, setForgotSent] = useState(false);
+  const [forgotError, setForgotError] = useState("");
+  // Set-new-password screen, reached only via the link Supabase emails from the request above
+  // (see the recovery-redirect effect near the other query-param handlers below).
+  const [newPw, setNewPw] = useState("");
+  const [confirmNewPw, setConfirmNewPw] = useState("");
+  const [resetPwLoading, setResetPwLoading] = useState(false);
+  const [resetPwError, setResetPwError] = useState("");
   const [loginAttempts, setLoginAttempts] = useState(0);
   const [locked, setLocked] = useState(false);
   const [lockTimer, setLockTimer] = useState(0);
@@ -2272,6 +2291,7 @@ function KroftApp({ onFullReset } = {}) {
     if (data.calendarData) { setAppts(data.calendarData.appts||[]); if (data.calendarData.remindersFired) setRemindersFired(data.calendarData.remindersFired); }
     if (data.contactsData) setContacts(data.contactsData.contacts||[]);
     if (data.projectsData) { setProjects(data.projectsData.projects||[]); setDocuments(data.projectsData.documents||[]); }
+    if (data.voiceMemosData) setVoiceMemos(data.voiceMemosData.voiceMemos||[]);
     // Strip transient flags on restore. A reply interrupted mid-stream (tab closed, app
     // backgrounded) would otherwise come back with streaming:true and sit there showing a
     // blinking caret for a response that will never finish arriving.
@@ -2373,6 +2393,16 @@ function KroftApp({ onFullReset } = {}) {
     const t = setTimeout(() => { window.storage.set(STORAGE_KEYS.projectsData, JSON.stringify({ projects, documents }), false).catch(()=>{}); }, 900);
     return () => clearTimeout(t);
   }, [dataLoaded, projects, documents]);
+
+  useEffect(() => {
+    if (!dataLoaded) return;
+    // Capped to the most recent 20 — each memo's audio is now stored inline as a data: URL
+    // (see toggleVoiceMemo), so unlike every other list here this one can genuinely be large;
+    // an unbounded list would grow storage without limit the more someone actually uses the
+    // feature. 20 recent memos is a generous working set without that risk.
+    const t = setTimeout(() => { window.storage.set(STORAGE_KEYS.voiceMemosData, JSON.stringify({ voiceMemos: voiceMemos.slice(0, 20) }), false).catch(()=>{}); }, 900);
+    return () => clearTimeout(t);
+  }, [dataLoaded, voiceMemos]);
 
   useEffect(() => {
     if (!dataLoaded) return;
@@ -2635,6 +2665,35 @@ function KroftApp({ onFullReset } = {}) {
     setLoginError(""); setLoginAttempts(0); setLoginPw("");
     setStep("dashboard");
     toast(`Welcome back, ${user.name||"there"}.`);
+  };
+
+  const doForgotPassword = async () => {
+    if (!forgotEmail.trim()) { setForgotError("Enter your email address."); return; }
+    setForgotLoading(true); setForgotError("");
+    // redirectTo lands back on this same origin with a recovery token in the URL — the
+    // recovery-redirect effect below (near the other query-param handlers) picks that up.
+    const { error } = await supabase.auth.resetPasswordForEmail(forgotEmail.trim(), { redirectTo: window.location.origin });
+    setForgotLoading(false);
+    // Supabase intentionally doesn't reveal whether the address has an account (that itself
+    // would leak which emails are registered) — so this shows the same success state either
+    // way, matching Supabase's own privacy-preserving behavior rather than second-guessing it.
+    if (error) { setForgotError(error.message || "Couldn't send the reset link. Try again."); return; }
+    setForgotSent(true);
+  };
+
+  const doResetPassword = async () => {
+    if (!newPw || newPw.length < 8) { setResetPwError("Password must be at least 8 characters."); return; }
+    if (newPw !== confirmNewPw) { setResetPwError("Passwords do not match."); return; }
+    setResetPwLoading(true); setResetPwError("");
+    // setSession (from the recovery-redirect effect) already established an authenticated
+    // session scoped to this reset — updateUser applies to whoever that session belongs to.
+    const { error } = await supabase.auth.updateUser({ password: newPw });
+    setResetPwLoading(false);
+    if (error) { setResetPwError(error.message || "Couldn't update your password. Try again."); return; }
+    setNewPw(""); setConfirmNewPw("");
+    await hydrateAllGroups();
+    setStep("dashboard");
+    toast("Password updated — you're signed in.");
   };
 
   const doFingerprint = async () => {
@@ -3011,6 +3070,28 @@ function KroftApp({ onFullReset } = {}) {
     params.delete("oauth"); params.delete("oauth_provider"); params.delete("oauth_error");
     const cleanUrl = window.location.pathname + (params.toString() ? `?${params}` : "") + window.location.hash;
     window.history.replaceState({}, "", cleanUrl);
+  }, []);
+
+  // Catches Supabase's password-recovery redirect. resetPasswordForEmail's link lands back here
+  // with the session tokens in the URL *hash* (never the query string) as
+  // "#access_token=...&refresh_token=...&type=recovery" — and since supabaseClient.js sets
+  // detectSessionInUrl: false, Supabase won't auto-consume it, so this does that by hand: parse
+  // the hash, establish the session it describes, then send the user to the set-new-password
+  // screen. Runs once on mount, same as the query-param effects above.
+  useEffect(() => {
+    if (!isSupabaseConfigured) return;
+    const hash = window.location.hash.startsWith("#") ? window.location.hash.slice(1) : window.location.hash;
+    const hashParams = new URLSearchParams(hash);
+    if (hashParams.get("type") !== "recovery") return;
+    const access_token = hashParams.get("access_token");
+    const refresh_token = hashParams.get("refresh_token");
+    if (!access_token || !refresh_token) return;
+    (async () => {
+      const { error } = await supabase.auth.setSession({ access_token, refresh_token });
+      window.history.replaceState({}, "", window.location.pathname + window.location.search);
+      if (error) { toast("That reset link has expired. Request a new one."); return; }
+      setStep("reset-password");
+    })();
   }, []);
 
   // Keeps the connected badges and subscription status accurate whenever the dashboard is
@@ -3445,12 +3526,24 @@ function KroftApp({ onFullReset } = {}) {
       const startedAt = Date.now();
       mr.onstop = () => {
         const blob = new Blob(memoChunksRef.current, { type:"audio/webm" });
-        const url = URL.createObjectURL(blob);
         const duration = Math.max(1, Math.round((Date.now() - startedAt) / 1000));
-        setVoiceMemos(p => [{ id:uid(), title:"", url, transcript: liveTranscript || "No speech detected.", date: dateStr(), time: timeStr(), duration }, ...p]);
         stream.getTracks().forEach(t => t.stop());
         sr?.stop();
-        toast("Voice memo saved.");
+        // A data: URL (not URL.createObjectURL's blob: URL) — that's the whole fix for memos
+        // vanishing on reload/logout. blob: URLs only ever live in this tab's memory and are
+        // never valid again after any reload, so even though voiceMemos itself is now
+        // persisted (see the save effect below), the audio each entry pointed to was gone the
+        // moment the page reloaded regardless. A data: URL is just a string, so it round-trips
+        // through JSON/kv_store like every other field and plays back identically as an
+        // <audio src>.
+        const reader = new FileReader();
+        reader.onload = () => {
+          const url = reader.result;
+          setVoiceMemos(p => [{ id:uid(), title:"", url, transcript: liveTranscript || "No speech detected.", date: dateStr(), time: timeStr(), duration }, ...p]);
+          toast("Voice memo saved.");
+        };
+        reader.onerror = () => toast("Couldn't save that recording.");
+        reader.readAsDataURL(blob);
       };
       memoRecRef.current = mr;
       mr.start();
@@ -4550,6 +4643,31 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
             <h1 style={{ fontSize:30, fontWeight:800, color:C.white, letterSpacing:-1.5, marginBottom:4 }}>Welcome back</h1>
             <Mono style={{ color:C.muted }}>Sign in to KROFT by Virt Technologies</Mono>
           </div>
+          {forgotOpen ? (
+            <div style={{ marginBottom:16 }}>
+              {forgotSent ? (
+                <div style={{ background:C.fill, border:`1px solid ${C.border}`, borderRadius:10, padding:"14px", marginBottom:14, textAlign:"center" }}>
+                  <div style={{ fontSize:13, fontWeight:700, color:C.white, marginBottom:3 }}>Check your email</div>
+                  <Mono style={{ color:C.soft, lineHeight:1.5 }}>If an account exists for {forgotEmail.trim()}, a reset link is on its way.</Mono>
+                </div>
+              ) : (
+                <>
+                  <Mono style={{ display:"block", color:C.soft, marginBottom:6, letterSpacing:1 }}>Email</Mono>
+                  <Inp placeholder="your@email.com" value={forgotEmail} type="email" onChange={e => { setForgotEmail(e.target.value); setForgotError(""); }} onKeyDown={e => e.key==="Enter"&&doForgotPassword()} />
+                  {forgotError && (
+                    <div style={{ background:C.fill, border:`1px solid ${C.border}`, borderRadius:8, padding:"9px 13px", marginTop:10 }}>
+                      <Mono style={{ color:C.soft, lineHeight:1.5 }}>{forgotError}</Mono>
+                    </div>
+                  )}
+                  <Btn full onClick={doForgotPassword} disabled={forgotLoading} style={{ padding:"13px", fontSize:14, marginTop:12 }}>{forgotLoading?(<><Spinner size={16} color={C.black} thickness={2} />Sending…</>):"Send reset link"}</Btn>
+                </>
+              )}
+              <div style={{ textAlign:"center", marginTop:14 }}>
+                <Mono style={{ color:C.muted, cursor:"pointer", textDecoration:"underline" }} onClick={() => { setForgotOpen(false); setForgotSent(false); setForgotError(""); setForgotEmail(""); }}>Back to log in</Mono>
+              </div>
+            </div>
+          ) : (
+          <>
           {loginAttempts>0&&!locked && (
             <div style={{ background:C.fill, border:`1px solid ${C.muted}`, borderRadius:8, padding:"8px 13px", marginBottom:13, display:"flex", alignItems:"center", gap:8 }}>
               <div style={{ display:"flex", gap:4 }}>{[...Array(5)].map((_,i) => <div key={i} style={{ width:8, height:8, borderRadius:2, background:i<loginAttempts?C.white:C.border }} />)}</div>
@@ -4568,7 +4686,10 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
               <Inp placeholder="your@email.com" value={loginEmail} type="email" onChange={e => { setLoginEmail(e.target.value); setLoginError(""); }} onKeyDown={e => e.key==="Enter"&&document.getElementById("lpw")?.focus()} />
             </div>
             <div>
-              <Mono style={{ display:"block", color:C.soft, marginBottom:6, letterSpacing:1 }}>Password</Mono>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6 }}>
+                <Mono style={{ color:C.soft, letterSpacing:1 }}>Password</Mono>
+                <Mono style={{ color:C.muted, cursor:"pointer", textDecoration:"underline", fontSize:11 }} onClick={() => { if (!isSupabaseConfigured) { toast("Sign in with a real account to reset your password."); return; } setForgotEmail(loginEmail); setForgotError(""); setForgotOpen(true); }}>Forgot password?</Mono>
+              </div>
               <div style={{ position:"relative" }}>
                 <input id="lpw" type={showLoginPw?"text":"password"} placeholder="••••••••" value={loginPw} onChange={e => { setLoginPw(e.target.value); setLoginError(""); }} onKeyDown={e => e.key==="Enter"&&doLogin()} style={{ width:"100%", background:C.surface, border:`1px solid ${loginError&&!locked?C.soft:C.cardB}`, borderRadius:12, padding:"11px 44px 11px 14px", color:C.text, fontSize:13, fontFamily:"'Space Grotesk',sans-serif", outline:"none", boxSizing:"border-box" }} onFocus={e => { e.target.style.borderColor=C.accent; e.target.style.boxShadow=`0 0 0 3px ${C.accentBg}`; }} onBlur={e => { e.target.style.borderColor=C.cardB; e.target.style.boxShadow="none"; }} />
                 <button onClick={() => setShowLoginPw(v => !v)} style={{ position:"absolute", right:12, top:"50%", transform:"translateY(-50%)", background:"none", border:"none", cursor:"pointer", color:C.soft, fontSize:10, fontFamily:"'Space Mono',monospace", letterSpacing:.5 }}>{showLoginPw?"HIDE":"SHOW"}</button>
@@ -4589,6 +4710,10 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
           <div style={{ textAlign:"center", marginBottom:16 }}>
             <Mono style={{ color:C.muted }}>Don't have an account?{" "}<span onClick={() => { setLoginError(""); setStep("signup"); }} style={{ color:C.white, cursor:"pointer", textDecoration:"underline", fontWeight:600 }}>Sign up</span></Mono>
           </div>
+          </>
+          )}
+          {!forgotOpen && (
+          <>
           <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:12 }}>
             <div style={{ flex:1, height:1, background:C.border }} /><Mono style={{ color:C.muted }}>or</Mono><div style={{ flex:1, height:1, background:C.border }} />
           </div>
@@ -4599,6 +4724,36 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
               </button>
             ))}
           </div>
+          </>
+          )}
+        </OShell>
+      )}
+
+      {step === "reset-password" && (
+        <OShell step="reset-password">
+          <div style={{ textAlign:"center", marginBottom:28 }}>
+            <div style={{ margin:"0 auto 18px", width:64, height:64, borderRadius:18, background:C.white, display:"flex", alignItems:"center", justifyContent:"center", boxShadow:`0 0 0 8px ${C.fillStrong}` }}>
+              <span style={{ fontSize:28, fontWeight:900, color:C.black }}>K</span>
+            </div>
+            <h1 style={{ fontSize:30, fontWeight:800, color:C.white, letterSpacing:-1.5, marginBottom:4 }}>Set a new password</h1>
+            <Mono style={{ color:C.muted }}>Choose a new password for your account</Mono>
+          </div>
+          <div style={{ display:"flex", flexDirection:"column", gap:13, marginBottom:12 }}>
+            <div>
+              <Mono style={{ display:"block", color:C.soft, marginBottom:6, letterSpacing:1 }}>New password</Mono>
+              <input type="password" placeholder="At least 8 characters" value={newPw} onChange={e => { setNewPw(e.target.value); setResetPwError(""); }} style={{ width:"100%", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 14px", color:C.text, fontSize:13, fontFamily:"'Space Grotesk',sans-serif", outline:"none", boxSizing:"border-box" }} onFocus={e => { e.target.style.borderColor=C.accent; e.target.style.boxShadow=`0 0 0 3px ${C.accentBg}`; }} onBlur={e => { e.target.style.borderColor=C.cardB; e.target.style.boxShadow="none"; }} />
+            </div>
+            <div>
+              <Mono style={{ display:"block", color:C.soft, marginBottom:6, letterSpacing:1 }}>Confirm password</Mono>
+              <input type="password" placeholder="Re-enter your new password" value={confirmNewPw} onChange={e => { setConfirmNewPw(e.target.value); setResetPwError(""); }} onKeyDown={e => e.key==="Enter"&&doResetPassword()} style={{ width:"100%", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 14px", color:C.text, fontSize:13, fontFamily:"'Space Grotesk',sans-serif", outline:"none", boxSizing:"border-box" }} onFocus={e => { e.target.style.borderColor=C.accent; e.target.style.boxShadow=`0 0 0 3px ${C.accentBg}`; }} onBlur={e => { e.target.style.borderColor=C.cardB; e.target.style.boxShadow="none"; }} />
+            </div>
+          </div>
+          {resetPwError && (
+            <div style={{ background:C.fill, border:`1px solid ${C.border}`, borderRadius:8, padding:"9px 13px", marginBottom:12 }}>
+              <Mono style={{ color:C.soft, lineHeight:1.5 }}>{resetPwError}</Mono>
+            </div>
+          )}
+          <Btn full onClick={doResetPassword} disabled={resetPwLoading} style={{ padding:"13px", fontSize:14 }}>{resetPwLoading?(<><Spinner size={16} color={C.black} thickness={2} />Updating…</>):"Update password"}</Btn>
         </OShell>
       )}
 
