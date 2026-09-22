@@ -227,7 +227,15 @@ function speak(raw) {
   if (!text) return;
   window.speechSynthesis.cancel();
   const chunks = speechChunks(text);
+  // Both the voiceschanged listener and the timeout below can fire — guarding on
+  // speechSynthesis.speaking (as this used to) is racy: a short utterance can finish speaking
+  // before the 250ms timeout even runs, so `speaking` reads false again and the fallback
+  // re-triggers the WHOLE sequence a second time, reading it twice. `started` makes run()
+  // idempotent regardless of which trigger fires first, or in what order.
+  let started = false;
   const run = () => {
+    if (started) return;
+    started = true;
     const voice = pickVoice();
     let i = 0;
     const next = () => {
@@ -244,7 +252,7 @@ function speak(raw) {
   if (!window.speechSynthesis.getVoices().length) {
     // Wait one tick for voices to arrive rather than speaking with none selected.
     window.speechSynthesis.addEventListener("voiceschanged", run, { once:true });
-    setTimeout(() => { if (!window.speechSynthesis.speaking) run(); }, 250);
+    setTimeout(run, 250);
   } else run();
 }
 const stopSpeaking = () => { if ("speechSynthesis" in window) window.speechSynthesis.cancel(); };
@@ -309,7 +317,14 @@ function speakSequence(lines, { onLine, onDone } = {}) {
   if (!("speechSynthesis" in window)) { lines.forEach((_, i) => onLine?.(i)); onDone?.(); return () => {}; }
   window.speechSynthesis.cancel();
   let cancelled = false;
+  // See speak()'s comment — guarding solely on speechSynthesis.speaking is racy, since a short
+  // first line can finish before the 250ms fallback even runs, making the fallback re-trigger
+  // the whole sequence (reading every line again from the start). `started` makes this
+  // idempotent regardless of which of the two triggers below fires first.
+  let started = false;
   const start = () => {
+    if (started || cancelled) return;
+    started = true;
     const voice = pickVoice();
     let li = 0;
     const speakLine = () => {
@@ -335,7 +350,7 @@ function speakSequence(lines, { onLine, onDone } = {}) {
   };
   if (!window.speechSynthesis.getVoices().length) {
     window.speechSynthesis.addEventListener("voiceschanged", start, { once:true });
-    setTimeout(() => { if (!cancelled && !window.speechSynthesis.speaking) start(); }, 250);
+    setTimeout(start, 250);
   } else start();
   return () => { cancelled = true; window.speechSynthesis.cancel(); };
 }
@@ -1209,7 +1224,17 @@ function Briefing({ user, income, expenses, emails, appts, onClose }) {
         onLine: i => setIdx(i),
         onDone: () => { setIdx(lines.length - 1); setDone(true); },
       });
-      const failsafe = setTimeout(() => { if (!window.speechSynthesis.speaking) { setIdx(lines.length - 1); setDone(true); } }, 1500);
+      // Guards against speech being genuinely blocked/unavailable (e.g. autoplay-policy
+      // restrictions before any user gesture) — NOT a generous margin for normal
+      // voice-loading delay, which this used to mistake for "broken". 1.5s was too tight: on a
+      // slower device, getVoices() can legitimately still be empty at that point, so this fired
+      // while speech was still about to start rather than actually stuck. Firing here marked
+      // the whole briefing "done" on screen while speakSequence kept talking in the background,
+      // completely out of sync with a UI that already looked finished — the audio would then
+      // run for however long the real briefing takes, well after the screen said it was over.
+      // Bumped to a real margin AND now actually cancels the dangling speech attempt, so the
+      // on-screen state and the audio can never diverge like that again.
+      const failsafe = setTimeout(() => { if (!window.speechSynthesis.speaking) { stop(); setIdx(lines.length - 1); setDone(true); } }, 4000);
       return () => { clearTimeout(failsafe); stop(); };
     }
     const t = setInterval(() => setIdx(i => { if (i >= lines.length-1) { setDone(true); clearInterval(t); return i; } return i+1; }), 3200);
