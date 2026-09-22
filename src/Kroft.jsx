@@ -249,6 +249,20 @@ function categorizeVoices(vs) {
 let preferredVoiceKey = null;
 const setPreferredVoiceKey = key => { preferredVoiceKey = key; };
 
+// Assigning an incompatible value to utterance.voice throws synchronously — a real browser
+// behavior (reproduced directly: SpeechSynthesisUtterance.voice's setter validates its argument
+// and rejects one it doesn't recognize as a genuine SpeechSynthesisVoice from this engine).
+// Uncaught inside a speechSynthesis callback or a React effect, that silently kills the entire
+// read-aloud attempt — no visible error, just dead air where the briefing or a wellness tip
+// should have played. Every speak call site funnels through here so a voice picked by
+// categorizeVoices/pickVoice, however it was obtained, can never take down speech entirely — it
+// falls back to the platform's own default voice for the language instead.
+const applyVoice = (u, voice) => {
+  u.lang = voice?.lang || "en-US";
+  if (!voice) return;
+  try { u.voice = voice; } catch { /* falls back to lang-only selection above */ }
+};
+
 // getVoices() returns an empty list on the first call in Chrome until the engine finishes
 // loading them and fires voiceschanged — so picking a voice synchronously silently failed on
 // the very first read-aloud of a session, falling back to the default robotic voice.
@@ -285,8 +299,7 @@ function speak(raw) {
     const next = () => {
       if (i >= chunks.length) return;
       const u = new SpeechSynthesisUtterance(chunks[i++]);
-      u.rate = 0.95; u.pitch = 1.0; u.lang = voice?.lang || "en-US";
-      if (voice) u.voice = voice;
+      u.rate = 0.95; u.pitch = 1.0; applyVoice(u, voice);
       u.onend = next;
       u.onerror = next;
       window.speechSynthesis.speak(u);
@@ -324,8 +337,7 @@ function createSpeechQueue({ onStart, onDone } = {}) {
     if (!started) { started = true; onStart?.(); }
     if (!voice) voice = pickVoice();
     const u = new SpeechSynthesisUtterance(queue.shift());
-    u.rate = 0.95; u.pitch = 1.0; u.lang = voice?.lang || "en-US";
-    if (voice) u.voice = voice;
+    u.rate = 0.95; u.pitch = 1.0; applyVoice(u, voice);
     const next = () => { speaking = false; drain(); };
     u.onend = next; u.onerror = next;
     window.speechSynthesis.speak(u);
@@ -382,8 +394,7 @@ function speakSequence(lines, { onLine, onDone } = {}) {
         if (cancelled) return;
         if (ci >= chunks.length) { li++; speakLine(); return; }
         const u = new SpeechSynthesisUtterance(chunks[ci++]);
-        u.rate = 0.95; u.pitch = 1.0; u.lang = voice?.lang || "en-US";
-        if (voice) u.voice = voice;
+        u.rate = 0.95; u.pitch = 1.0; applyVoice(u, voice);
         u.onend = nextChunk;
         u.onerror = nextChunk;
         window.speechSynthesis.speak(u);
