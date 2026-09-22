@@ -145,6 +145,10 @@ const advanceRepeatDate = (iso, repeat) => {
   return d.toISOString().slice(0, 10);
 };
 const monthLabel = iso => { if (!iso) return ""; const d = new Date(iso + "T00:00:00"); return isNaN(d) ? "" : d.toLocaleDateString("en-US", { month:"long", year:"numeric" }); };
+// Lower rank = more urgent = sorts first. The task list used to only ever group by done/not-done —
+// priority was fully editable and stored but never actually affected ordering, so an "Urgent" task
+// added after a "Low" one just sat below it.
+const PRIORITY_RANK = { Urgent:0, High:1, Normal:2, Low:3 };
 
 // Turns written text into something that reads aloud cleanly. AI replies come back with
 // markdown, and a speech engine reads it literally — "star star Net profit star star",
@@ -2151,6 +2155,12 @@ function KroftApp({ onFullReset } = {}) {
   const [appts, setAppts] = useState([]);
   const [newAppt, setNewAppt] = useState({ title:"", time:"", date:todayISO(), location:"", notes:"", urgent:false, repeat:"none", contactId:null });
   const [showAddAppt, setShowAddAppt] = useState(false);
+  // Calendar had only ever been a flat chronological list — no grid, so there was no way to see
+  // at a glance which days of a month actually have something on them. "list" keeps the original
+  // view exactly as it was; "grid" is purely additive.
+  const [calendarView, setCalendarView] = useState("list");
+  const [calendarMonth, setCalendarMonth] = useState(() => todayISO().slice(0, 7));
+  const [calendarSelectedDate, setCalendarSelectedDate] = useState(null);
   const [openAppt, setOpenAppt] = useState(null);
   const [editingAppt, setEditingAppt] = useState(null);
 
@@ -2163,7 +2173,7 @@ function KroftApp({ onFullReset } = {}) {
 
   // Workspace — Tasks
   const [tasks, setTasks] = useState([]);
-  const [newTask, setNewTask] = useState({ title:"", priority:"Normal", repeat:"none", contactId:null });
+  const [newTask, setNewTask] = useState({ title:"", priority:"Normal", repeat:"none", contactId:null, dueDate:"" });
   const [showAddTask, setShowAddTask] = useState(false);
   const [editingTask, setEditingTask] = useState(null);
 
@@ -2237,6 +2247,10 @@ function KroftApp({ onFullReset } = {}) {
   // and a new day starts fresh (see the rollover effect below).
   const [wellness, setWellness] = useState(75);
   const [wellnessDate, setWellnessDate] = useState(() => todayISO());
+  // One entry per day the rollover effect has actually processed — the score only ever existed
+  // as "today's number," so there was no way to see whether this week was actually better or
+  // worse than last, only whatever single day happened to be showing. Capped like moodLog.
+  const [wellnessHistory, setWellnessHistory] = useState([]);
   // Counts today's self-care taps so they can't be farmed to 100.
   const [selfCare, setSelfCare] = useState({ breaks:0, water:0 });
   const SELF_CARE_CAP = { breaks:4, water:6 };
@@ -2415,6 +2429,7 @@ function KroftApp({ onFullReset } = {}) {
       const w = data.wellnessData;
       if (typeof w.wellness === "number") setWellness(w.wellness);
       if (w.wellnessDate) setWellnessDate(w.wellnessDate);
+      if (Array.isArray(w.wellnessHistory)) setWellnessHistory(w.wellnessHistory);
       if (w.selfCare) setSelfCare(w.selfCare);
       if (w.mood) setMood(w.mood);
       // Backfill ids on entries saved before they carried one, so every row has a stable
@@ -2541,9 +2556,9 @@ function KroftApp({ onFullReset } = {}) {
     if (!dataLoaded) return;
     // Mood entries are capped so the log can't grow without bound; 120 covers a couple of months
     // of normal use.
-    const t = setTimeout(() => { window.storage.set(STORAGE_KEYS.wellnessData, JSON.stringify({ wellness, wellnessDate, selfCare, mood, moodLog: moodLog.slice(-120) }), false).catch(()=>{}); }, 900);
+    const t = setTimeout(() => { window.storage.set(STORAGE_KEYS.wellnessData, JSON.stringify({ wellness, wellnessDate, wellnessHistory: wellnessHistory.slice(-90), selfCare, mood, moodLog: moodLog.slice(-120) }), false).catch(()=>{}); }, 900);
     return () => clearTimeout(t);
-  }, [dataLoaded, wellness, wellnessDate, selfCare, mood, moodLog]);
+  }, [dataLoaded, wellness, wellnessDate, wellnessHistory, selfCare, mood, moodLog]);
 
   useEffect(() => {
     if (!dataLoaded) return;
@@ -2629,6 +2644,48 @@ function KroftApp({ onFullReset } = {}) {
     const projected = items.reduce((s,e) => s + (e.sign === "+" ? e.amount : -e.amount), 0);
     return { items, projected };
   }, [income, expenses]);
+
+  // Last 14 days of wellness score — history plus today's live (not-yet-rolled-over) value as the
+  // most recent point, so the chart always ends on "right now" rather than stopping at yesterday.
+  const wellnessTrend = useMemo(() => {
+    const today = todayISO();
+    return [...wellnessHistory.filter(e => e.date !== today), { date: today, score: wellness }]
+      .sort((a, b) => a.date.localeCompare(b.date))
+      .slice(-14)
+      .map(e => ({ ...e, label: e.date === today ? "Today" : new Date(e.date + "T00:00:00").toLocaleDateString("en-US", { month:"short", day:"numeric" }) }));
+  }, [wellnessHistory, wellness]);
+
+  // Weeks of the visible month for the calendar grid, Sunday-first, padded with the trailing days
+  // of the previous/next month so every week row is a full 7 cells — those padding cells are
+  // rendered dimmed and not clickable, they exist purely so the grid lines up.
+  const calendarWeeks = useMemo(() => {
+    const [y, m] = calendarMonth.split("-").map(Number);
+    const first = new Date(y, m - 1, 1);
+    const startOffset = first.getDay();
+    const daysInMonth = new Date(y, m, 0).getDate();
+    const cells = [];
+    for (let i = 0; i < startOffset; i++) {
+      const d = new Date(y, m - 1, 1 - (startOffset - i));
+      cells.push({ date: d.toISOString().slice(0,10), day: d.getDate(), inMonth: false });
+    }
+    for (let d = 1; d <= daysInMonth; d++) {
+      cells.push({ date: `${calendarMonth}-${String(d).padStart(2,"0")}`, day: d, inMonth: true });
+    }
+    while (cells.length % 7 !== 0) {
+      const last = new Date(cells[cells.length-1].date + "T00:00:00");
+      last.setDate(last.getDate() + 1);
+      cells.push({ date: last.toISOString().slice(0,10), day: last.getDate(), inMonth: false });
+    }
+    const weeks = [];
+    for (let i = 0; i < cells.length; i += 7) weeks.push(cells.slice(i, i+7));
+    return weeks;
+  }, [calendarMonth]);
+
+  const apptsByDate = useMemo(() => {
+    const map = {};
+    appts.forEach(a => { if (a.date) (map[a.date] = map[a.date] || []).push(a); });
+    return map;
+  }, [appts]);
 
   const pw = signupPw;
   const pwChecks = { length:pw.length>=8, upper:/[A-Z]/.test(pw), lower:/[a-z]/.test(pw), number:/[0-9]/.test(pw), special:/[^A-Za-z0-9]/.test(pw) };
@@ -2920,7 +2977,26 @@ function KroftApp({ onFullReset } = {}) {
         },
       });
       if (!assertion) throw new Error("No assertion returned");
+      // WebAuthn only proves this is the same device/person that registered biometrics — it
+      // doesn't and can't restore a Supabase session by itself; there's no server-side piece
+      // here that verifies the assertion and mints one. Skipping straight to the dashboard
+      // without this check used to mean: if the real session had actually expired, someone
+      // would land on whatever this browser's local fallback storage (see storageShim.js) still
+      // had cached, believing they were signed in, while every later read/write silently missed
+      // the server entirely instead of reaching their real account.
+      if (isSupabaseConfigured) {
+        const { data: { session } = {} } = await supabase.auth.getSession();
+        if (!session) {
+          setFpLoading(false);
+          setLoginError("Your session has expired — log in with your password to continue.");
+          return;
+        }
+      }
       setFpSuccess(true);
+      // Matches every other successful sign-in path (doLogin, doResetPassword) — biometric
+      // unlock had been the one that skipped straight to dashboard on whatever was already in
+      // memory, rather than pulling the real, current account data.
+      await hydrateAllGroups();
       setFpLoading(false);
       setTimeout(() => { setLoginError(""); setLoginAttempts(0); setStep("dashboard"); toast("Fingerprint verified."); }, 500);
     } catch {
@@ -4510,7 +4586,15 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
     const rollover = () => {
       const today = todayISO();
       if (wellnessDate === today) return;
-      setWellness(prev => Math.round(75 + (prev - 75) * 0.35));
+      // Reads the outgoing day's score from the updater's own `prev`, not the closure-captured
+      // `wellness` variable — self-care taps ("Took a break"/"Had water") change wellness without
+      // changing wellnessDate, so this closure can otherwise be holding a stale value by the time
+      // a day actually rolls over. Recorded before it decays toward neutral, so history reflects
+      // what the day actually was, not what tomorrow's starting point becomes.
+      setWellness(prev => {
+        setWellnessHistory(h => [...h.filter(e => e.date !== wellnessDate), { date: wellnessDate, score: prev }]);
+        return Math.round(75 + (prev - 75) * 0.35);
+      });
       setWellnessDate(today);
       setSelfCare({ breaks:0, water:0 });
     };
@@ -6202,11 +6286,55 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
           <div style={{ animation:"fadeUp .4s ease" }}>
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:18 }}>
               <h2 style={{ fontSize:22, fontWeight:700, color:C.white, letterSpacing:-1 }}>Calendar</h2>
-              <div style={{ display:"flex", alignItems:"center", gap:9 }}>
+              <div style={{ display:"flex", alignItems:"center", gap:9, flexWrap:"wrap", justifyContent:"flex-end" }}>
                 {(googleStatus.calendar || microsoftStatus.calendar) && <Btn sm v="outline" disabled={syncingCalendar} onClick={syncCalendar}>{syncingCalendar ? <Spinner size={14} color={C.soft} thickness={2} /> : "Refresh"}</Btn>}
                 <Btn sm onClick={() => setShowAddAppt(v=>!v)}>Add Appointment</Btn>
               </div>
             </div>
+            <div style={{ display:"flex", gap:7, marginBottom:16 }}>
+              {[{k:"list",l:"List"},{k:"grid",l:"Month"}].map(v => (
+                <button key={v.k} onClick={() => setCalendarView(v.k)} style={{ background:calendarView===v.k?"rgba(255,255,255,.1)":"transparent", border:`1px solid ${calendarView===v.k?C.border:C.cardB}`, borderRadius:20, padding:"6px 14px", cursor:"pointer", color:calendarView===v.k?C.white:C.muted, fontSize:11, fontWeight:700 }}>
+                  {v.l}
+                </button>
+              ))}
+            </div>
+            {calendarView==="grid" && (
+              <Card style={{ marginBottom:14 }}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
+                  <button onClick={() => { const [y,m] = calendarMonth.split("-").map(Number); const d = new Date(y, m-2, 1); setCalendarMonth(d.toISOString().slice(0,7)); }} style={{ background:"none", border:"none", color:C.muted, cursor:"pointer", fontSize:16, padding:4 }}>‹</button>
+                  <Mono style={{ color:C.white, fontWeight:700, fontSize:12, letterSpacing:.5 }}>{monthLabel(calendarMonth+"-01")}</Mono>
+                  <button onClick={() => { const [y,m] = calendarMonth.split("-").map(Number); const d = new Date(y, m, 1); setCalendarMonth(d.toISOString().slice(0,7)); }} style={{ background:"none", border:"none", color:C.muted, cursor:"pointer", fontSize:16, padding:4 }}>›</button>
+                </div>
+                <div style={{ display:"grid", gridTemplateColumns:"repeat(7,1fr)", gap:4, marginBottom:6 }}>
+                  {["S","M","T","W","T","F","S"].map((d,i) => <Mono key={i} style={{ textAlign:"center", color:C.muted, fontSize:9 }}>{d}</Mono>)}
+                </div>
+                <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
+                  {calendarWeeks.map((week, wi) => (
+                    <div key={wi} style={{ display:"grid", gridTemplateColumns:"repeat(7,1fr)", gap:4 }}>
+                      {week.map(cell => {
+                        const count = (apptsByDate[cell.date]||[]).length;
+                        const isToday = cell.date === todayISO();
+                        const isSelected = cell.date === calendarSelectedDate;
+                        return (
+                          <button key={cell.date} disabled={!cell.inMonth}
+                            onClick={() => setCalendarSelectedDate(prev => prev===cell.date ? null : cell.date)}
+                            style={{ aspectRatio:"1", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:2, borderRadius:9, border:isSelected?`1.5px solid ${C.white}`:isToday?`1px solid ${C.soft}`:"1px solid transparent", background:isSelected?"rgba(255,255,255,.12)":"transparent", cursor:cell.inMonth?"pointer":"default", opacity:cell.inMonth?1:.28 }}>
+                            <Mono style={{ color:isToday?C.white:C.text, fontWeight:isToday?700:400, fontSize:11 }}>{cell.day}</Mono>
+                            {count>0 && <div style={{ width:4, height:4, borderRadius:99, background:C.accent }} />}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ))}
+                </div>
+                {calendarSelectedDate && (
+                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginTop:12, paddingTop:10, borderTop:`1px solid ${C.div}` }}>
+                    <Mono style={{ color:C.muted }}>{fmtDate(calendarSelectedDate)} · {(apptsByDate[calendarSelectedDate]||[]).length} appointment{(apptsByDate[calendarSelectedDate]||[]).length!==1?"s":""}</Mono>
+                    <Mono style={{ color:C.muted, cursor:"pointer", textDecoration:"underline" }} onClick={() => setCalendarSelectedDate(null)}>Show all</Mono>
+                  </div>
+                )}
+              </Card>
+            )}
             {showAddAppt && (
               <Card style={{ marginBottom:14, border:`1px solid ${C.border}` }}>
                 <div style={{ fontSize:13, fontWeight:700, color:C.text, marginBottom:12 }}>New appointment</div>
@@ -6230,7 +6358,15 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
                 <Btn sm onClick={() => setShowAddAppt(true)}>Add First Appointment</Btn>
               </Card>
             )}
-            {[...appts].sort((a,b)=>(a.date||"").localeCompare(b.date||"")||(a.time||"").localeCompare(b.time||"")).map(a => (
+            {appts.length>0 && calendarView==="grid" && calendarSelectedDate && (apptsByDate[calendarSelectedDate]||[]).length===0 && (
+              <Card level="inset" style={{ textAlign:"center", padding:20, borderStyle:"dashed", marginBottom:11 }}>
+                <Mono style={{ color:C.soft }}>Nothing on {fmtDate(calendarSelectedDate)}.</Mono>
+              </Card>
+            )}
+            {/* In grid view, picking a date narrows this same list down to just that day instead
+                of duplicating the row markup in a separate place. */}
+            {(calendarView==="grid" && calendarSelectedDate ? appts.filter(a=>a.date===calendarSelectedDate) : appts)
+              .slice().sort((a,b)=>(a.date||"").localeCompare(b.date||"")||(a.time||"").localeCompare(b.time||"")).map(a => (
               editingAppt && editingAppt.id===a.id ? (
                 <Card key={a.id} style={{ marginBottom:11, border:`1px solid ${C.soft}` }}>
                   <div style={{ fontSize:13, fontWeight:700, color:C.text, marginBottom:11 }}>Edit appointment</div>
@@ -6402,11 +6538,12 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
                   <select value={newTask.priority} onChange={e=>setNewTask(v=>({...v,priority:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 12px", color:C.text, fontSize:12, fontFamily:"'Space Grotesk',sans-serif", outline:"none" }}>
                     {["Low","Normal","High","Urgent"].map(p => <option key={p}>{p}</option>)}
                   </select>
+                  <input type="date" value={newTask.dueDate} onChange={e=>setNewTask(v=>({...v,dueDate:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"10px 12px", color:C.text, fontSize:12, fontFamily:"'Space Grotesk',sans-serif", outline:"none", colorScheme:theme }} />
                   <select value={newTask.repeat} onChange={e=>setNewTask(v=>({...v,repeat:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 12px", color:C.text, fontSize:12, fontFamily:"'Space Grotesk',sans-serif", outline:"none" }}>
                     {["none","daily","weekly","monthly"].map(r => <option key={r}>{r}</option>)}
                   </select>
                   {contacts.length > 0 && <ContactSelect value={newTask.contactId} onChange={id=>setNewTask(v=>({...v,contactId:id}))} contacts={contacts} />}
-                  <Btn onClick={() => { if (!newTask.title.trim()) return; setTasks(p=>[{id:uid(),...newTask,done:false},...p]); setNewTask({title:"",priority:"Normal",repeat:"none",contactId:null}); setShowAddTask(false); toast("Task added."); }}>Add</Btn>
+                  <Btn onClick={() => { if (!newTask.title.trim()) return; setTasks(p=>[{id:uid(),...newTask,done:false},...p]); setNewTask({title:"",priority:"Normal",repeat:"none",contactId:null,dueDate:""}); setShowAddTask(false); toast("Task added."); }}>Add</Btn>
                 </div>
               </Card>
             )}
@@ -6417,7 +6554,21 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
                 <Btn sm onClick={() => setShowAddTask(true)}>+ Add Task</Btn>
               </Card>
             )}
-            {[...tasks].sort((a,b)=>(a.done===b.done)?0:a.done?1:-1).map(t => (
+            {/* Done tasks sink to the bottom regardless of anything else. Among undone tasks: an
+                overdue due date outranks priority (a "Low" task that's late is more urgent right
+                now than an "Urgent" one that isn't due yet), then priority, then soonest due date
+                first — undated tasks sort last within their priority tier. */}
+            {[...tasks].sort((a,b) => {
+              if (a.done !== b.done) return a.done ? 1 : -1;
+              const today = todayISO();
+              const aOverdue = a.dueDate && a.dueDate < today && !a.done;
+              const bOverdue = b.dueDate && b.dueDate < today && !b.done;
+              if (aOverdue !== bOverdue) return aOverdue ? -1 : 1;
+              const pd = (PRIORITY_RANK[a.priority] ?? 2) - (PRIORITY_RANK[b.priority] ?? 2);
+              if (pd !== 0) return pd;
+              if (a.dueDate && b.dueDate) return a.dueDate.localeCompare(b.dueDate);
+              return a.dueDate ? -1 : b.dueDate ? 1 : 0;
+            }).map(t => (
               editingTask && editingTask.id===t.id ? (
                 <Card key={t.id} style={{ marginBottom:9, border:`1px solid ${C.soft}` }}>
                   <div style={{ fontSize:13, fontWeight:700, color:C.text, marginBottom:11 }}>Edit task</div>
@@ -6426,6 +6577,7 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
                     <select value={editingTask.priority} onChange={e=>setEditingTask(v=>({...v,priority:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 12px", color:C.text, fontSize:12, fontFamily:"'Space Grotesk',sans-serif", outline:"none" }}>
                       {["Low","Normal","High","Urgent"].map(p => <option key={p}>{p}</option>)}
                     </select>
+                    <input type="date" value={editingTask.dueDate||""} onChange={e=>setEditingTask(v=>({...v,dueDate:e.target.value}))} style={{ background:C.card, border:`1px solid ${C.cardB}`, borderRadius:8, padding:"8px 9px", color:C.text, fontSize:11, fontFamily:"'Space Grotesk',sans-serif", outline:"none", colorScheme:theme }} />
                     <select value={editingTask.repeat} onChange={e=>setEditingTask(v=>({...v,repeat:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 12px", color:C.text, fontSize:12, fontFamily:"'Space Grotesk',sans-serif", outline:"none" }}>
                       {["none","daily","weekly","monthly"].map(r => <option key={r}>{r}</option>)}
                     </select>
@@ -6446,11 +6598,13 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
                       const target = p.find(x => x.id === t.id);
                       const completing = target && !target.done;
                       const toggled = p.map(x => x.id===t.id ? {...x,done:!x.done} : x);
-                      // Tasks have no due-date field to advance the way appointments do, so a
-                      // repeating task's "next occurrence" is a fresh unchecked copy spawned the
+                      // A repeating task's "next occurrence" is a fresh unchecked copy spawned the
                       // moment the current one is completed — the completed one stays as a record.
+                      // Its due date (if any) advances by the same cadence, same as a recurring
+                      // appointment — otherwise the new copy would already show as overdue the
+                      // instant it's created.
                       if (completing && target.repeat !== "none") {
-                        return [{ id:uid(), title:target.title, priority:target.priority, repeat:target.repeat, contactId:target.contactId, done:false }, ...toggled];
+                        return [{ id:uid(), title:target.title, priority:target.priority, repeat:target.repeat, contactId:target.contactId, dueDate:target.dueDate?advanceRepeatDate(target.dueDate,target.repeat):"", done:false }, ...toggled];
                       }
                       return toggled;
                     });
@@ -6467,6 +6621,8 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
                     <div style={{ fontSize:13, fontWeight:600, color:C.white, textDecoration:t.done?"line-through":"none" }}>{t.title}</div>
                     <div style={{ display:"flex", gap:7, marginTop:3, flexWrap:"wrap" }}>
                       <Tag tone={t.priority==="Urgent"?"negative":t.priority==="High"?"warning":undefined}>{t.priority}</Tag>
+                      {t.dueDate && !t.done && t.dueDate < todayISO() && <Tag tone="negative">Overdue · {fmtDate(t.dueDate)}</Tag>}
+                      {t.dueDate && (t.done || t.dueDate >= todayISO()) && <Tag>Due {fmtDate(t.dueDate)}</Tag>}
                       {t.repeat!=="none" && <Tag>{t.repeat}</Tag>}
                       {t.contactId && contacts.find(c=>c.id===t.contactId) && <Tag tone="accent">{contacts.find(c=>c.id===t.contactId).name}</Tag>}
                     </div>
@@ -7255,6 +7411,23 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
                 </Btn>
               </div>
             </Card>
+            {/* The score only ever existed as a single "today" number — nothing showed whether
+                this week is actually trending up or down, only whatever day happened to be
+                showing. wellnessHistory records each day's score right before it rolls over. */}
+            {wellnessTrend.length > 1 && (
+              <Card style={{ marginBottom:14 }}>
+                <Mono style={{ display:"block", color:C.muted, marginBottom:12, letterSpacing:.8 }}>Score · last {wellnessTrend.length} days</Mono>
+                <ResponsiveContainer width="100%" height={150}>
+                  <ComposedChart data={wellnessTrend}>
+                    <CartesianGrid strokeDasharray="3 3" stroke={C.cardB} vertical={false} />
+                    <XAxis dataKey="label" tick={{ fill:C.muted, fontSize:10 }} axisLine={false} tickLine={false} />
+                    <YAxis domain={[0,100]} tick={{ fill:C.muted, fontSize:10 }} axisLine={false} tickLine={false} width={28} />
+                    <Tooltip formatter={v=>`${v}/100`} contentStyle={{ background:C.card, border:`1px solid ${C.cardB}`, borderRadius:12, fontSize:11, color:C.white }} />
+                    <Line type="monotone" dataKey="score" stroke={wColor} strokeWidth={2} dot={{ r:3, fill:wColor }} />
+                  </ComposedChart>
+                </ResponsiveContainer>
+              </Card>
+            )}
             <Card style={{ marginBottom:14 }}>
               <Mono style={{ display:"block", color:C.muted, letterSpacing:.8, marginBottom:13 }}>Mood log</Mono>
               {moodLog.length===0 ? <Mono style={{ color:C.soft, display:"block", padding:"8px 0" }}>No mood entries yet. Set your mood from the Overview tab.</Mono> : (() => {
