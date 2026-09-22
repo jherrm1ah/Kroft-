@@ -2245,6 +2245,10 @@ function KroftApp({ onFullReset } = {}) {
   const [aiMessages, setAiMessages] = useState([]);
   const [aiInput, setAiInput] = useState("");
   const [aiLoading, setAiLoading] = useState(false);
+  // Drives the floating "scroll to bottom" button — shown only once someone has actually
+  // scrolled up to re-read earlier messages, not on every render.
+  const [chatNearBottom, setChatNearBottom] = useState(true);
+  const aiInputRef = useRef(null);
   // Lets a long reply be cut off mid-stream. Held in a ref so the Stop button can reach the
   // controller for whichever request is currently in flight without re-rendering on every token.
   const aiAbortRef = useRef(null);
@@ -2565,6 +2569,14 @@ function KroftApp({ onFullReset } = {}) {
   // that replies stream, so an unconditional smooth-scroll stacked ~50 animations a second and
   // yanked the view back down whenever someone scrolled up to re-read an earlier message.
   const chatScrollRef = useRef(null);
+  // The chat textarea grows with its content (see the onChange handler where it's rendered),
+  // but sending a message clears aiInput without touching the DOM element's own height, which a
+  // browser never shrinks back down on its own — so a reply typed across three lines would leave
+  // the empty box three lines tall afterward. Whenever aiInput goes back to empty (a send, or the
+  // person clearing it themselves), snap the height back to one line.
+  useEffect(() => {
+    if (aiInput === "" && aiInputRef.current) aiInputRef.current.style.height = "auto";
+  }, [aiInput]);
   useEffect(() => {
     const box = chatScrollRef.current;
     if (!box) { chatEnd.current?.scrollIntoView({ behavior:"smooth" }); return; }
@@ -4502,6 +4514,17 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
     if (out.length === 0) out.push({ text:`Nothing's flagging today. Drink water, move every hour, and finish at a reasonable time.`, why:"a steady day" });
     return out.slice(0, 4);
   };
+
+  // Starts a fresh conversation without losing the old one outright — matches the undo pattern
+  // used for every other destructive action in this app (delete a task, remove a memo, etc.)
+  // rather than a bare confirm() dialog.
+  const startNewChat = () => {
+    const prev = aiMessages;
+    setAiMessages([{ role:"assistant", content:`Hey ${firstNameOf(user.name)||"there"} — new conversation. What can I help with?` }]);
+    toast("Started a new conversation.", () => setAiMessages(prev));
+  };
+
+  const scrollChatToBottom = () => chatEnd.current?.scrollIntoView({ behavior:"smooth" });
 
   const askKroft = async override => {
     const q = override || aiInput; if (!q.trim()) return;
@@ -7059,6 +7082,11 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:4 }}>
               <h2 style={{ fontSize:22, fontWeight:700, color:C.white, letterSpacing:-1 }}>Ask Kroft</h2>
               <div style={{ display:"flex", gap:7 }}>
+                {/* Only worth showing once there's actually a conversation to start over from —
+                    a lone welcome message has nothing to clear. */}
+                {aiMessages.length > 1 && (
+                  <button onClick={startNewChat} className="hbtn" aria-label="Start a new conversation" title="New chat" style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:8, padding:"6px 12px", cursor:"pointer", color:C.soft, fontSize:11, fontWeight:700 }}>New chat</button>
+                )}
                 <button onClick={() => setShowBriefing(true)} className="hbtn" style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:8, padding:"6px 12px", cursor:"pointer", color:C.soft, fontSize:11, fontWeight:700 }}>Brief</button>
                 <button onClick={() => { setVoiceOpen(true); setVoiceState("idle"); setVoiceError(""); }} className="hbtn" style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:8, padding:"6px 12px", cursor:"pointer", display:"flex", alignItems:"center", gap:6, color:C.soft, fontSize:11, fontWeight:700 }}>
                   <NavIcon id="mic" size={13} color={C.soft} />Voice
@@ -7079,8 +7107,11 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
                 )}
               </div>
             )}
-            <Card style={{ marginBottom:13, padding:0, overflow:"hidden", border:`1px solid ${C.border}` }}>
-              <div ref={chatScrollRef} style={{ maxHeight:460, overflowY:"auto", padding:"16px", display:"flex", flexDirection:"column", gap:12 }}>
+            <Card style={{ marginBottom:13, padding:0, overflow:"hidden", border:`1px solid ${C.border}`, position:"relative" }}>
+              <div ref={chatScrollRef} onScroll={e => {
+                const box = e.currentTarget;
+                setChatNearBottom(box.scrollHeight - box.scrollTop - box.clientHeight < 120);
+              }} style={{ maxHeight:460, overflowY:"auto", padding:"16px", display:"flex", flexDirection:"column", gap:12 }}>
                 {aiMessages.map((m,i) => (
                   <div key={m.id || i} style={{ display:"flex", flexDirection:"column", alignItems:m.role==="user"?"flex-end":"flex-start", animation:"fadeUp .3s ease" }}>
                     <div style={{ background:m.role==="user"?C.white:C.surface, border:`1px solid ${m.role==="user"?C.soft:C.cardB}`, borderRadius:m.role==="user"?"14px 14px 3px 14px":"14px 14px 14px 3px", padding:"10px 14px", maxWidth:"80%" }}>
@@ -7131,8 +7162,36 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
                 )}
                 <div ref={chatEnd} />
               </div>
+              {/* Only appears once someone has actually scrolled up to re-read earlier messages
+                  — otherwise it'd sit there uselessly on every normal, already-at-bottom chat. */}
+              {!chatNearBottom && aiMessages.length > 1 && (
+                <button onClick={scrollChatToBottom} aria-label="Scroll to latest message" title="Scroll to latest"
+                  style={{ position:"absolute", right:16, bottom:78, width:34, height:34, borderRadius:"50%", background:C.text, border:"none", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", boxShadow:C.shadowRaised, zIndex:1 }}>
+                  <svg viewBox="0 0 24 24" width={16} height={16} fill="none" stroke={C.card} strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round"><path d="M6 9l6 6 6-6" /></svg>
+                </button>
+              )}
               <div style={{ borderTop:`1px solid ${C.cardB}`, padding:"12px 16px", display:"flex", gap:8, alignItems:"center" }}>
-                <Inp value={aiInput} onChange={e => setAiInput(e.target.value)} onKeyDown={e => e.key==="Enter"&&!e.shiftKey&&askKroft()} placeholder="Message KROFT…" style={{ flex:1, fontSize:13 }} />
+                {/* A plain single-line <Inp> couldn't hold more than one line at all — pasting
+                    or composing anything longer just scrolled the text sideways out of view.
+                    This grows with the content (capped at ~5 lines, then scrolls internally)
+                    and keeps Enter-to-send / Shift+Enter-for-newline, the behavior every chat
+                    app trains people to expect. */}
+                <textarea
+                  ref={aiInputRef}
+                  value={aiInput}
+                  onChange={e => {
+                    setAiInput(e.target.value);
+                    const el = e.target;
+                    el.style.height = "auto";
+                    el.style.height = Math.min(el.scrollHeight, 120) + "px";
+                  }}
+                  onKeyDown={e => { if (e.key==="Enter" && !e.shiftKey) { e.preventDefault(); askKroft(); } }}
+                  placeholder="Message KROFT…"
+                  rows={1}
+                  style={{ flex:1, fontSize:13, fontFamily:"'Space Grotesk',sans-serif", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 14px", color:C.text, outline:"none", resize:"none", maxHeight:120, overflowY:"auto", lineHeight:1.4, boxSizing:"border-box", transition:"border-color .18s" }}
+                  onFocus={e => { e.target.style.borderColor=C.accent; e.target.style.boxShadow=`0 0 0 3px ${C.accentBg}`; }}
+                  onBlur={e => { e.target.style.borderColor=C.cardB; e.target.style.boxShadow="none"; }}
+                />
                 {/* One button in one place: the mic sits there until you start typing, then it
                     becomes Send. Showing both at once meant a permanently greyed-out Send
                     taking up space next to a mic you'd use far more often. */}
