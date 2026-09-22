@@ -58,7 +58,10 @@ const BRIEF = DARK;
 // visible flash on every cold load.
 const C = { ...LIGHT };
 
-const FONT = `@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Space+Mono:wght@400;700&display=swap');`;
+// Space Mono is no longer used anywhere (see the Mono component below — small text switched to
+// this same sans-serif for legibility), so it's dropped from the import rather than fetched and
+// left unused.
+const FONT = `@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&display=swap');`;
 
 const ANIM = `
 @keyframes fadeUp{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:translateY(0)}}
@@ -109,6 +112,12 @@ const ISO_4217_CODES = new Set(["AED","AFN","ALL","AMD","ANG","AOA","ARS","AUD",
 const isValidCurrencyCode = code => /^[A-Za-z]{3}$/.test(code) && ISO_4217_CODES.has(code.toUpperCase());
 const timeStr = () => new Date().toLocaleTimeString("en-US", { hour:"2-digit", minute:"2-digit" });
 const dateStr = () => new Date().toLocaleDateString("en-US", { weekday:"long", month:"long", day:"numeric" });
+// People address each other by first name, not a full legal name — greeting someone "Hey Benjamin
+// Jeremiah" (or having TTS attempt to pronounce a full name aloud) reads as stiff and robotic, the
+// opposite of what every greeting/toast/spoken line here is going for. Used everywhere KROFT
+// addresses the person directly; left alone for the handful of spots that display who they are
+// (a profile header, an AI-context data field) rather than speak to them.
+const firstNameOf = name => (name||"").trim().split(/\s+/)[0] || "";
 const rand = arr => arr[Math.floor(Math.random() * arr.length)];
 // Collision-safe ID generator. Date.now() alone can produce duplicate IDs when two items
 // are created in the same millisecond (fast typing+Enter, rapid taps, batch actions) — every
@@ -636,8 +645,12 @@ const Inp = ({ id, placeholder, value, onChange, type="text", inputMode, style, 
     onFocus={e => { e.target.style.borderColor=C.accent; e.target.style.boxShadow=`0 0 0 3px ${C.accentBg}`; }} onBlur={e => { e.target.style.borderColor=C.cardB; e.target.style.boxShadow="none"; }} />
 );
 
+// Used everywhere for small/secondary text (labels, subtitles, hints) — kept the name Mono from
+// when it used an actual monospace font, but that made easily-confused characters (1/l/I, 0/O)
+// harder to tell apart at 11px, exactly where the extra clarity matters most. Same sans-serif as
+// the rest of the app now, just smaller and softer-colored.
 const Mono = ({ children, style }) => (
-  <span style={{ fontFamily:"'Space Mono',monospace", fontSize:11, color:C.soft, ...style }}>{children}</span>
+  <span style={{ fontFamily:"'Space Grotesk',sans-serif", fontSize:11, color:C.soft, ...style }}>{children}</span>
 );
 
 const CategorySelect = ({ value, onChange, cats, onAddCategory, style }) => {
@@ -646,13 +659,13 @@ const CategorySelect = ({ value, onChange, cats, onAddCategory, style }) => {
   if (adding) {
     return (
       <div style={{ display:"flex", gap:5, ...style }}>
-        <input autoFocus value={draft} onChange={e=>setDraft(e.target.value)} placeholder="New category" onKeyDown={e=>{ if (e.key==="Enter" && draft.trim()) { onAddCategory(draft.trim()); onChange(draft.trim()); setDraft(""); setAdding(false); } if (e.key==="Escape") { setAdding(false); setDraft(""); } }} style={{ width:100, background:C.surface, border:`1px solid ${C.soft}`, borderRadius:12, padding:"11px 10px", color:C.text, fontSize:12, fontFamily:"'Space Mono',monospace", outline:"none" }} />
+        <input autoFocus value={draft} onChange={e=>setDraft(e.target.value)} placeholder="New category" onKeyDown={e=>{ if (e.key==="Enter" && draft.trim()) { onAddCategory(draft.trim()); onChange(draft.trim()); setDraft(""); setAdding(false); } if (e.key==="Escape") { setAdding(false); setDraft(""); } }} style={{ width:100, background:C.surface, border:`1px solid ${C.soft}`, borderRadius:12, padding:"11px 10px", color:C.text, fontSize:12, fontFamily:"'Space Grotesk',sans-serif", outline:"none" }} />
         <button onClick={() => { if (draft.trim()) { onAddCategory(draft.trim()); onChange(draft.trim()); } setDraft(""); setAdding(false); }} style={{ background:C.white, border:"none", borderRadius:12, padding:"0 10px", color:C.black, fontSize:12, fontWeight:700, cursor:"pointer" }}>✓</button>
       </div>
     );
   }
   return (
-    <select value={value} onChange={e => e.target.value==="__add__" ? setAdding(true) : onChange(e.target.value)} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 12px", color:C.text, fontSize:12, fontFamily:"'Space Mono',monospace", outline:"none", ...style }}>
+    <select value={value} onChange={e => e.target.value==="__add__" ? setAdding(true) : onChange(e.target.value)} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 12px", color:C.text, fontSize:12, fontFamily:"'Space Grotesk',sans-serif", outline:"none", ...style }}>
       {cats.map(c => <option key={c}>{c}</option>)}
       <option value="__add__">+ Add category…</option>
     </select>
@@ -667,7 +680,7 @@ const Tag = ({ children, hi, tone, style }) => {
       background: toneColor ? toneBg : (hi?C.text:C.surface),
       color: toneColor || (hi?C.invText:C.soft),
       border: toneColor ? `1px solid ${toneColor}55` : (hi?"none":`1px solid ${C.border}`),
-      borderRadius:7, padding:"2px 8px", fontSize:10, fontWeight:600, letterSpacing:.4, whiteSpace:"nowrap", fontFamily:"'Space Mono',monospace",
+      borderRadius:7, padding:"2px 8px", fontSize:10, fontWeight:600, letterSpacing:.4, whiteSpace:"nowrap", fontFamily:"'Space Grotesk',sans-serif",
       ...style
     }}>
       {children}
@@ -1177,7 +1190,7 @@ const ContactSelect = ({ value, onChange, contacts, style }) => {
   const business = contacts.filter(c => c.category === "business");
   const family = contacts.filter(c => c.category === "family");
   return (
-    <select value={value || ""} onChange={e => onChange(e.target.value ? Number(e.target.value) : null)} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 12px", color:C.text, fontSize:12, fontFamily:"'Space Mono',monospace", outline:"none", ...style }}>
+    <select value={value || ""} onChange={e => onChange(e.target.value ? Number(e.target.value) : null)} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 12px", color:C.text, fontSize:12, fontFamily:"'Space Grotesk',sans-serif", outline:"none", ...style }}>
       <option value="">No contact</option>
       {business.length > 0 && <optgroup label="Business">{business.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</optgroup>}
       {family.length > 0 && <optgroup label="Family">{family.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</optgroup>}
@@ -1260,14 +1273,14 @@ function Briefing({ user, income, expenses, emails, appts, onClose }) {
   const unread = emails.filter(e => !e.read).length;
   const first = emails.find(e => !e.read);
   const lines = [
-    `${greeting()}, ${user.name}. Today is ${dateStr()}.`,
+    `${greeting()}, ${firstNameOf(user.name)}. Today is ${dateStr()}.`,
     appts.length>0 ? `You have ${appts.length} appointment${appts.length!==1?"s":""}. First: ${appts[0].title} at ${appts[0].time}.` : `No appointments today.`,
     unread>0 ? `You have ${unread} unread email${unread!==1?"s":""}. Most recent: ${first?.subject}.` : `Your inbox is clear.`,
     // The briefing plays out loud, often with other people nearby. It says whether the figures
   // are worth a look without announcing the amount — the number is one tap away on screen.
   income>0 ? `Your finances are up to date — the figures are in Finance whenever you want them.` : `No financial data yet.`,
     `Stay hydrated and take short breaks throughout your day.`,
-    `I am with you all day, ${user.name}. Let's make it count.`,
+    `I am with you all day, ${firstNameOf(user.name)}. Let's make it count.`,
   ];
   const [idx, setIdx] = useState(0);
   const [done, setDone] = useState(false);
@@ -1311,7 +1324,7 @@ function Briefing({ user, income, expenses, emails, appts, onClose }) {
           ))}
         </div>
         <div style={{ display:"flex", justifyContent:"center", marginBottom:22 }}><WaveBar active={!done} color={BRIEF.text} /></div>
-        <button onClick={onClose} style={{ minHeight:44, padding:"11px 28px", fontSize:13, fontWeight:700, fontFamily:"'Space Grotesk',sans-serif", letterSpacing:.3, borderRadius:12, cursor:"pointer", background:done?BRIEF.white:"transparent", border:`1px solid ${done?BRIEF.white:BRIEF.muted}`, color:done?BRIEF.black:BRIEF.soft }}>{done?`Let's go, ${user.name}`:"Skip"}</button>
+        <button onClick={onClose} style={{ minHeight:44, padding:"11px 28px", fontSize:13, fontWeight:700, fontFamily:"'Space Grotesk',sans-serif", letterSpacing:.3, borderRadius:12, cursor:"pointer", background:done?BRIEF.white:"transparent", border:`1px solid ${done?BRIEF.white:BRIEF.muted}`, color:done?BRIEF.black:BRIEF.soft }}>{done?`Let's go, ${firstNameOf(user.name)}`:"Skip"}</button>
       </div>
     </div>
   );
@@ -2575,8 +2588,8 @@ function KroftApp({ onFullReset } = {}) {
       // Only seed the welcome message for a genuinely empty conversation — otherwise this
       // fires on every login (and every prefs round-trip) and silently discards whatever
       // history was just restored from persistent storage.
-      setAiMessages(p => p.length > 0 ? p : [{ role:"assistant", content:`Hey ${user.name||"there"} — I'm KROFT, your personal AI assistant by Virt Technologies. Ask me anything — finances, schedule, general knowledge, advice, or just chat. I'm here for all of it.` }]);
-      toast(`Welcome to KROFT, ${user.name||"there"}.`);
+      setAiMessages(p => p.length > 0 ? p : [{ role:"assistant", content:`Hey ${firstNameOf(user.name)||"there"} — I'm KROFT, your personal AI assistant by Virt Technologies. Ask me anything — finances, schedule, general knowledge, advice, or just chat. I'm here for all of it.` }]);
+      toast(`Welcome to KROFT, ${firstNameOf(user.name)||"there"}.`);
     }
   }, [step]);
 
@@ -2624,7 +2637,7 @@ function KroftApp({ onFullReset } = {}) {
   }, [wellness, dataLoaded]);
 
   const remind = appt => {
-    const msg = `Hey ${user.name||"there"}, reminder: "${appt.title}" at ${appt.time}${appt.date?" on "+appt.date:""}${appt.location?" at "+appt.location:""}.`;
+    const msg = `Hey ${firstNameOf(user.name)||"there"}, reminder: "${appt.title}" at ${appt.time}${appt.date?" on "+appt.date:""}${appt.location?" at "+appt.location:""}.`;
     if (voiceReplies) speak(msg);
     toast(`Reminder sent: ${appt.title}`);
   };
@@ -2652,7 +2665,7 @@ function KroftApp({ onFullReset } = {}) {
         return { date:today, slots:[...slots, due] };
       });
       if (dueSlot !== null) {
-        toast(`${user.name||"Hey"} — you haven't logged an income or expense entry today. Add one so KROFT can track your month.`);
+        toast(`${firstNameOf(user.name)||"Hey"} — you haven't logged an income or expense entry today. Add one so KROFT can track your month.`);
       }
     };
     checkReminders();
@@ -2694,7 +2707,7 @@ function KroftApp({ onFullReset } = {}) {
     if (m==="stressed"||m==="angry") {
       setWellness(s => Math.max(10, s-13));
       const tip = rand(["Take 5 slow breaths.","Step away from your screen for 10 minutes.","Drink a full glass of water.","A short walk resets your focus."]);
-      if (voiceReplies) speak(`${user.name||"Hey"}, I'm sensing stress. ${tip}`); toast(tip);
+      if (voiceReplies) speak(`${firstNameOf(user.name)||"Hey"}, I'm sensing stress. ${tip}`); toast(tip);
     } else if (m==="happy") { setWellness(s => Math.min(100, s+7)); toast("Great energy. Wellness score up."); }
     else toast(`Mood: ${m}`);
   };
@@ -2728,7 +2741,7 @@ function KroftApp({ onFullReset } = {}) {
       // this account — load it for real now that we know who's signed in.
       await hydrateAllGroups();
       setStep("dashboard");
-      toast(`Welcome back, ${user.name||"there"}.`);
+      toast(`Welcome back, ${firstNameOf(user.name)||"there"}.`);
       return;
     }
 
@@ -2763,7 +2776,7 @@ function KroftApp({ onFullReset } = {}) {
     }
     setLoginError(""); setLoginAttempts(0); setLoginPw("");
     setStep("dashboard");
-    toast(`Welcome back, ${user.name||"there"}.`);
+    toast(`Welcome back, ${firstNameOf(user.name)||"there"}.`);
   };
 
   const doForgotPassword = async () => {
@@ -3433,7 +3446,18 @@ function KroftApp({ onFullReset } = {}) {
     };
     r.onend = () => { listeningRef.current = false; setVoiceState(s => (s === "listening" ? "idle" : s)); };
     voiceRecRef.current = r;
-    try { r.start(); startMeter(); } catch { listeningRef.current = false; }
+    try {
+      r.start(); startMeter();
+    } catch {
+      // r.start() throwing (e.g. a recognizer instance the browser considers still active from
+      // a moment ago) used to fail completely silently here — listeningRef reset, but voiceState
+      // never left "idle" and no error ever appeared. From the outside that looks exactly like
+      // tapping the orb did nothing at all, with no way to tell "it's broken" from "it's about
+      // to start." Surfacing it lets the person retry instead of staring at a frozen orb.
+      listeningRef.current = false;
+      setVoiceState("idle");
+      setVoiceError("Couldn't start listening. Tap the orb to try again.");
+    }
   };
 
   const voiceAnswer = async question => {
@@ -3604,7 +3628,7 @@ function KroftApp({ onFullReset } = {}) {
     setVoiceOpen(true);
     setVoiceState("speaking");
     setVoiceReply("");
-    const msg = `Hey ${user.name||"there"}, this is your reminder call — ${call.title}.${call.note ? ` ${call.note}` : ""}`;
+    const msg = `Hey ${firstNameOf(user.name)||"there"}, this is your reminder call — ${call.title}.${call.note ? ` ${call.note}` : ""}`;
     voiceStopRef.current = speakSequence([msg], {
       onDone: () => { voiceStopRef.current = null; if (voiceOpenRef.current) voiceListen(); },
     });
@@ -3716,10 +3740,7 @@ function KroftApp({ onFullReset } = {}) {
     const openTasks = tasks.filter(t => !t.done);
     const openReminders = smartReminders.filter(r => !r.done);
     const unread = emails.filter(e => !e.read);
-    // People address each other by first name in conversation, not a full legal name — using
-    // whatever's actually in user.name (which could be "Benjamin Jeremiah" or similar) verbatim
-    // read as stiff and formal, the opposite of the natural tone STYLE below asks for.
-    const firstName = (user.name||"").trim().split(/\s+/)[0] || "";
+    const firstName = firstNameOf(user.name);
 
     return `You are KROFT, a personal AI assistant by Virt Technologies. You can answer any question on any topic, and you also have live access to this user's own data (below). Use it whenever the question touches their money, schedule, work or people — quote real figures and real titles rather than speaking generally. If the data below doesn't cover something, say so plainly instead of guessing. Always reply in the same language the user just wrote or spoke in, not English by default — this app's voice input already recognizes speech in the device's own configured language, not only English.
 
@@ -4123,7 +4144,7 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
       const res = await aiFetch("/api/chat", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ model:"gemini-2.5-flash", max_tokens:80, system:"Write exactly one short sentence greeting the user by name and flagging the single most useful thing about their day from the context — a tight schedule, a budget issue, or an open task count if nothing else stands out. Never state a specific dollar amount, even if one seems implied — this reads out loud on a lock screen others may see. Plain text, no preamble, no quotes, under 22 words.", messages:[{ role:"user", content:context }] }) });
       const data = await res.json();
       const text = data.content?.map(b=>b.text||"").join("").trim();
-      return (res.ok && text) || `Good morning, ${user.name||"there"} — ${openTasks.length} tasks open today.`;
+      return (res.ok && text) || `Good morning, ${firstNameOf(user.name)||"there"} — ${openTasks.length} tasks open today.`;
     } catch {
       return null;
     }
@@ -4839,7 +4860,7 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
               </div>
               <div style={{ position:"relative" }}>
                 <input id="lpw" type={showLoginPw?"text":"password"} placeholder="••••••••" value={loginPw} onChange={e => { setLoginPw(e.target.value); setLoginError(""); }} onKeyDown={e => e.key==="Enter"&&doLogin()} style={{ width:"100%", background:C.surface, border:`1px solid ${loginError&&!locked?C.soft:C.cardB}`, borderRadius:12, padding:"11px 44px 11px 14px", color:C.text, fontSize:13, fontFamily:"'Space Grotesk',sans-serif", outline:"none", boxSizing:"border-box" }} onFocus={e => { e.target.style.borderColor=C.accent; e.target.style.boxShadow=`0 0 0 3px ${C.accentBg}`; }} onBlur={e => { e.target.style.borderColor=C.cardB; e.target.style.boxShadow="none"; }} />
-                <button onClick={() => setShowLoginPw(v => !v)} style={{ position:"absolute", right:12, top:"50%", transform:"translateY(-50%)", background:"none", border:"none", cursor:"pointer", color:C.soft, fontSize:10, fontFamily:"'Space Mono',monospace", letterSpacing:.5 }}>{showLoginPw?"HIDE":"SHOW"}</button>
+                <button onClick={() => setShowLoginPw(v => !v)} style={{ position:"absolute", right:12, top:"50%", transform:"translateY(-50%)", background:"none", border:"none", cursor:"pointer", color:C.soft, fontSize:10, fontFamily:"'Space Grotesk',sans-serif", letterSpacing:.5 }}>{showLoginPw?"HIDE":"SHOW"}</button>
               </div>
             </div>
           </div>
@@ -4919,11 +4940,11 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
             <div>
               <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:5 }}>
                 <Mono style={{ color:C.soft }}>Password *</Mono>
-                <button onClick={() => { const p = generatePassword(); setSignupPw(p); setConfirmPw(p); setShowSignupPw(true); setSignupError(""); toast("Strong password generated."); }} style={{ background:"none", border:"none", cursor:"pointer", fontFamily:"'Space Mono',monospace", fontSize:10, color:C.white, textDecoration:"underline", padding:0 }}>Suggest password</button>
+                <button onClick={() => { const p = generatePassword(); setSignupPw(p); setConfirmPw(p); setShowSignupPw(true); setSignupError(""); toast("Strong password generated."); }} style={{ background:"none", border:"none", cursor:"pointer", fontFamily:"'Space Grotesk',sans-serif", fontSize:10, color:C.white, textDecoration:"underline", padding:0 }}>Suggest password</button>
               </div>
               <div style={{ position:"relative" }}>
                 <input type={showSignupPw?"text":"password"} placeholder="Create a strong password" value={signupPw} onChange={e => { setSignupPw(e.target.value); setSignupError(""); }} style={{ width:"100%", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 54px 11px 14px", color:C.text, fontSize:13, fontFamily:"'Space Grotesk',sans-serif", outline:"none", boxSizing:"border-box" }} onFocus={e => { e.target.style.borderColor=C.accent; e.target.style.boxShadow=`0 0 0 3px ${C.accentBg}`; }} onBlur={e => { e.target.style.borderColor=C.cardB; e.target.style.boxShadow="none"; }} />
-                <button onClick={() => setShowSignupPw(v => !v)} style={{ position:"absolute", right:12, top:"50%", transform:"translateY(-50%)", background:"none", border:"none", cursor:"pointer", color:C.soft, fontSize:10, fontFamily:"'Space Mono',monospace", letterSpacing:.5 }}>{showSignupPw?"HIDE":"SHOW"}</button>
+                <button onClick={() => setShowSignupPw(v => !v)} style={{ position:"absolute", right:12, top:"50%", transform:"translateY(-50%)", background:"none", border:"none", cursor:"pointer", color:C.soft, fontSize:10, fontFamily:"'Space Grotesk',sans-serif", letterSpacing:.5 }}>{showSignupPw?"HIDE":"SHOW"}</button>
               </div>
               {pw.length>0 && (
                 <div style={{ marginTop:7 }}>
@@ -4939,7 +4960,7 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
               <Mono style={{ display:"block", color:C.soft, marginBottom:5 }}>Confirm password *</Mono>
               <div style={{ position:"relative" }}>
                 <input type={showConfirmPw?"text":"password"} placeholder="Repeat your password" value={confirmPw} onChange={e => { setConfirmPw(e.target.value); setSignupError(""); }} style={{ width:"100%", background:C.surface, border:`1px solid ${confirmPw.length>0?(confirmPw===signupPw?C.white:C.border):C.cardB}`, borderRadius:12, padding:"11px 54px 11px 14px", color:C.text, fontSize:13, fontFamily:"'Space Grotesk',sans-serif", outline:"none", boxSizing:"border-box" }} onFocus={e => { e.target.style.borderColor=C.accent; e.target.style.boxShadow=`0 0 0 3px ${C.accentBg}`; }} onBlur={e => { e.target.style.borderColor = confirmPw.length>0 ? (confirmPw===signupPw?C.white:C.border) : C.cardB; e.target.style.boxShadow="none"; }} />
-                <button onClick={() => setShowConfirmPw(v => !v)} style={{ position:"absolute", right:12, top:"50%", transform:"translateY(-50%)", background:"none", border:"none", cursor:"pointer", color:C.soft, fontSize:10, fontFamily:"'Space Mono',monospace", letterSpacing:.5 }}>{showConfirmPw?"HIDE":"SHOW"}</button>
+                <button onClick={() => setShowConfirmPw(v => !v)} style={{ position:"absolute", right:12, top:"50%", transform:"translateY(-50%)", background:"none", border:"none", cursor:"pointer", color:C.soft, fontSize:10, fontFamily:"'Space Grotesk',sans-serif", letterSpacing:.5 }}>{showConfirmPw?"HIDE":"SHOW"}</button>
               </div>
               {confirmPw.length>0&&confirmPw!==signupPw && <Mono style={{ color:C.soft, display:"block", marginTop:4, fontSize:10 }}>Passwords do not match</Mono>}
               {confirmPw.length>0&&confirmPw===signupPw && <Mono style={{ color:C.white, display:"block", marginTop:4, fontSize:10 }}>Passwords match</Mono>}
@@ -4994,7 +5015,7 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
                 ))}
               </div>
               {cameraError && <div style={{ background:C.fill, border:`1px solid ${C.muted}`, borderRadius:12, padding:"10px 13px", marginBottom:11 }}><Mono style={{ color:C.soft, lineHeight:1.6 }}>{cameraError}</Mono></div>}
-              {user.photo && <button onClick={() => { setUser(u => ({...u,photo:null})); setPhotoSource(""); }} style={{ width:"100%", background:"none", border:`1px dashed ${C.border}`, borderRadius:12, padding:"9px", cursor:"pointer", color:C.muted, fontSize:11, fontFamily:"'Space Mono',monospace", marginBottom:11 }}>Remove photo</button>}
+              {user.photo && <button onClick={() => { setUser(u => ({...u,photo:null})); setPhotoSource(""); }} style={{ width:"100%", background:"none", border:`1px dashed ${C.border}`, borderRadius:12, padding:"9px", cursor:"pointer", color:C.muted, fontSize:11, fontFamily:"'Space Grotesk',sans-serif", marginBottom:11 }}>Remove photo</button>}
               {!user.photo && <div style={{ background:C.surface, borderRadius:12, padding:"10px 14px", marginBottom:11, textAlign:"center" }}><Mono style={{ color:C.soft, lineHeight:1.6 }}>No photo? KROFT will show your initials{user.name?" — "+user.name.split(" ").map(n=>n[0]).join("").toUpperCase():""} as your avatar.</Mono></div>}
             </>
           )}
@@ -5225,7 +5246,7 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
           <div key={t.id} style={{ background:C.card, border:`1px solid ${C.accent}44`, borderRadius:14, padding:"9px 14px", animation:"slideIn .3s ease", boxShadow:`0 8px 28px rgba(0,0,0,.7), 0 0 0 1px ${C.accentBg}` }}>
             <div style={{ display:"flex", alignItems:"center", gap:7 }}>
               <Dot color={C.accent} />
-              <div style={{ fontSize:11, color:C.white, lineHeight:1.4, fontFamily:"'Space Mono',monospace", flex:1 }}>{t.msg}</div>
+              <div style={{ fontSize:11, color:C.white, lineHeight:1.4, fontFamily:"'Space Grotesk',sans-serif", flex:1 }}>{t.msg}</div>
               {t.onUndo && (
                 <button onClick={() => { t.onUndo(); setToasts(p => p.filter(x => x.id !== t.id)); }} style={{ background:"none", border:"none", color:C.accent, fontSize:11, fontWeight:700, fontFamily:"'Space Grotesk',sans-serif", cursor:"pointer", padding:"4px 2px", flexShrink:0 }}>Undo</button>
               )}
@@ -5573,7 +5594,7 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
                   <input type="date" value={newInc.date||todayISO()} max={todayISO()} onChange={e => setNewInc(v=>({...v,date:e.target.value}))} style={{ flex:1, minWidth:130, background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"10px 12px", color:C.text, fontSize:12, fontFamily:"'Space Grotesk',sans-serif", outline:"none", colorScheme:theme }} />
                   <CategorySelect value={newInc.cat} onChange={c => setNewInc(v=>({...v,cat:c}))} cats={incomeCats} onAddCategory={c => setIncomeCats(p=>p.includes(c)?p:[...p,c])} />
                   {/* Turns the entry into a template that re-posts itself on this cadence. */}
-                  <select value={newInc.repeat} onChange={e => setNewInc(v=>({...v,repeat:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 12px", color:C.text, fontSize:12, fontFamily:"'Space Mono',monospace", outline:"none" }}>
+                  <select value={newInc.repeat} onChange={e => setNewInc(v=>({...v,repeat:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 12px", color:C.text, fontSize:12, fontFamily:"'Space Grotesk',sans-serif", outline:"none" }}>
                     <option value="none">Does not repeat</option>
                     <option value="weekly">Repeats weekly</option>
                     <option value="monthly">Repeats monthly</option>
@@ -5606,7 +5627,7 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
                   <input type="date" value={newExp.date||todayISO()} max={todayISO()} onChange={e => setNewExp(v=>({...v,date:e.target.value}))} style={{ flex:1, minWidth:130, background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"10px 12px", color:C.text, fontSize:12, fontFamily:"'Space Grotesk',sans-serif", outline:"none", colorScheme:theme }} />
                   <CategorySelect value={newExp.cat} onChange={c => setNewExp(v=>({...v,cat:c}))} cats={expenseCats} onAddCategory={c => setExpenseCats(p=>p.includes(c)?p:[...p,c])} />
                   {/* Turns the entry into a template that re-posts itself on this cadence. */}
-                  <select value={newExp.repeat} onChange={e => setNewExp(v=>({...v,repeat:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 12px", color:C.text, fontSize:12, fontFamily:"'Space Mono',monospace", outline:"none" }}>
+                  <select value={newExp.repeat} onChange={e => setNewExp(v=>({...v,repeat:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 12px", color:C.text, fontSize:12, fontFamily:"'Space Grotesk',sans-serif", outline:"none" }}>
                     <option value="none">Does not repeat</option>
                     <option value="weekly">Repeats weekly</option>
                     <option value="monthly">Repeats monthly</option>
@@ -5893,7 +5914,7 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
                   <Inp placeholder="Notes (optional)" value={newAppt.notes} onChange={e=>setNewAppt(v=>({...v,notes:e.target.value}))} />
                   <div style={{ display:"flex", gap:10, alignItems:"center", flexWrap:"wrap" }}>
                     <label style={{ display:"flex", alignItems:"center", gap:6, cursor:"pointer" }}><input type="checkbox" checked={newAppt.urgent} onChange={e=>setNewAppt(v=>({...v,urgent:e.target.checked}))} style={{ accentColor:C.white, width:14, height:14 }} /><Mono style={{ color:C.soft }}>Urgent</Mono></label>
-                    <select value={newAppt.repeat} onChange={e=>setNewAppt(v=>({...v,repeat:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:8, padding:"7px 11px", color:C.text, fontSize:11, fontFamily:"'Space Mono',monospace", outline:"none" }}>{["none","daily","weekly","monthly"].map(r=><option key={r}>{r}</option>)}</select>
+                    <select value={newAppt.repeat} onChange={e=>setNewAppt(v=>({...v,repeat:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:8, padding:"7px 11px", color:C.text, fontSize:11, fontFamily:"'Space Grotesk',sans-serif", outline:"none" }}>{["none","daily","weekly","monthly"].map(r=><option key={r}>{r}</option>)}</select>
                     {contacts.length > 0 && <ContactSelect value={newAppt.contactId} onChange={id=>setNewAppt(v=>({...v,contactId:id}))} contacts={contacts} />}
                     <Btn sm onClick={() => { if (!newAppt.title||!newAppt.date) return; const item = {...newAppt,id:uid()}; setAppts(p=>[...p,item]); mirrorAppointmentToCalendars(item); setNewAppt({title:"",time:"",date:todayISO(),location:"",notes:"",urgent:false,repeat:"none",contactId:null}); setShowAddAppt(false); toast(`Appointment added: ${newAppt.title}`); }}>Add</Btn>
                   </div>
@@ -5917,7 +5938,7 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
                     <Inp placeholder="Notes (optional)" value={editingAppt.notes} onChange={e=>setEditingAppt(v=>({...v,notes:e.target.value}))} />
                     <div style={{ display:"flex", gap:10, alignItems:"center", flexWrap:"wrap" }}>
                       <label style={{ display:"flex", alignItems:"center", gap:6, cursor:"pointer" }}><input type="checkbox" checked={editingAppt.urgent} onChange={e=>setEditingAppt(v=>({...v,urgent:e.target.checked}))} style={{ accentColor:C.white, width:14, height:14 }} /><Mono style={{ color:C.soft }}>Urgent</Mono></label>
-                      <select value={editingAppt.repeat} onChange={e=>setEditingAppt(v=>({...v,repeat:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:8, padding:"7px 11px", color:C.text, fontSize:11, fontFamily:"'Space Mono',monospace", outline:"none" }}>{["none","daily","weekly","monthly"].map(r=><option key={r}>{r}</option>)}</select>
+                      <select value={editingAppt.repeat} onChange={e=>setEditingAppt(v=>({...v,repeat:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:8, padding:"7px 11px", color:C.text, fontSize:11, fontFamily:"'Space Grotesk',sans-serif", outline:"none" }}>{["none","daily","weekly","monthly"].map(r=><option key={r}>{r}</option>)}</select>
                       {contacts.length > 0 && <ContactSelect value={editingAppt.contactId} onChange={id=>setEditingAppt(v=>({...v,contactId:id}))} contacts={contacts} />}
                     </div>
                     <div style={{ display:"flex", gap:8 }}>
@@ -6076,10 +6097,10 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
                 <div style={{ fontSize:13, fontWeight:700, color:C.text, marginBottom:11 }}>New task</div>
                 <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
                   <Inp placeholder="What needs to get done?" value={newTask.title} onChange={e=>setNewTask(v=>({...v,title:e.target.value}))} style={{ flex:2, minWidth:140 }} />
-                  <select value={newTask.priority} onChange={e=>setNewTask(v=>({...v,priority:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 12px", color:C.text, fontSize:12, fontFamily:"'Space Mono',monospace", outline:"none" }}>
+                  <select value={newTask.priority} onChange={e=>setNewTask(v=>({...v,priority:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 12px", color:C.text, fontSize:12, fontFamily:"'Space Grotesk',sans-serif", outline:"none" }}>
                     {["Low","Normal","High","Urgent"].map(p => <option key={p}>{p}</option>)}
                   </select>
-                  <select value={newTask.repeat} onChange={e=>setNewTask(v=>({...v,repeat:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 12px", color:C.text, fontSize:12, fontFamily:"'Space Mono',monospace", outline:"none" }}>
+                  <select value={newTask.repeat} onChange={e=>setNewTask(v=>({...v,repeat:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 12px", color:C.text, fontSize:12, fontFamily:"'Space Grotesk',sans-serif", outline:"none" }}>
                     {["none","daily","weekly","monthly"].map(r => <option key={r}>{r}</option>)}
                   </select>
                   {contacts.length > 0 && <ContactSelect value={newTask.contactId} onChange={id=>setNewTask(v=>({...v,contactId:id}))} contacts={contacts} />}
@@ -6100,10 +6121,10 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
                   <div style={{ fontSize:13, fontWeight:700, color:C.text, marginBottom:11 }}>Edit task</div>
                   <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
                     <Inp placeholder="What needs to get done?" value={editingTask.title} onChange={e=>setEditingTask(v=>({...v,title:e.target.value}))} style={{ flex:2, minWidth:140 }} />
-                    <select value={editingTask.priority} onChange={e=>setEditingTask(v=>({...v,priority:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 12px", color:C.text, fontSize:12, fontFamily:"'Space Mono',monospace", outline:"none" }}>
+                    <select value={editingTask.priority} onChange={e=>setEditingTask(v=>({...v,priority:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 12px", color:C.text, fontSize:12, fontFamily:"'Space Grotesk',sans-serif", outline:"none" }}>
                       {["Low","Normal","High","Urgent"].map(p => <option key={p}>{p}</option>)}
                     </select>
-                    <select value={editingTask.repeat} onChange={e=>setEditingTask(v=>({...v,repeat:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 12px", color:C.text, fontSize:12, fontFamily:"'Space Mono',monospace", outline:"none" }}>
+                    <select value={editingTask.repeat} onChange={e=>setEditingTask(v=>({...v,repeat:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 12px", color:C.text, fontSize:12, fontFamily:"'Space Grotesk',sans-serif", outline:"none" }}>
                       {["none","daily","weekly","monthly"].map(r => <option key={r}>{r}</option>)}
                     </select>
                     {contacts.length > 0 && <ContactSelect value={editingTask.contactId} onChange={id=>setEditingTask(v=>({...v,contactId:id}))} contacts={contacts} />}
@@ -6279,7 +6300,7 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
                   </div>
                   <Inp placeholder="What's this project about? (optional)" value={newProject.description} onChange={e=>setNewProject(v=>({...v,description:e.target.value}))} />
                   <div style={{ display:"flex", gap:8, alignItems:"center" }}>
-                    <select value={newProject.status} onChange={e=>setNewProject(v=>({...v,status:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"10px 12px", color:C.text, fontSize:12, fontFamily:"'Space Mono',monospace", outline:"none" }}>
+                    <select value={newProject.status} onChange={e=>setNewProject(v=>({...v,status:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"10px 12px", color:C.text, fontSize:12, fontFamily:"'Space Grotesk',sans-serif", outline:"none" }}>
                       {["Not Started","In Progress","On Hold","Completed"].map(s => <option key={s}>{s}</option>)}
                     </select>
                     <Btn onClick={() => { if (!newProject.name.trim()) return; setProjects(p=>[{id:uid(),...newProject,taskIds:[],noteIds:[],fileIds:[],documentIds:[]},...p]); setNewProject({name:"",deadline:"",description:"",status:"Not Started"}); setShowAddProject(false); toast("Project created."); }}>Create</Btn>
@@ -6312,7 +6333,7 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
                       <Inp placeholder="Deadline" value={editingProject.deadline} onChange={e=>setEditingProject(v=>({...v,deadline:e.target.value}))} style={{ flex:1, minWidth:120 }} />
                     </div>
                     <Inp placeholder="Description" value={editingProject.description||""} onChange={e=>setEditingProject(v=>({...v,description:e.target.value}))} />
-                    <select value={editingProject.status} onChange={e=>setEditingProject(v=>({...v,status:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"10px 12px", color:C.text, fontSize:12, fontFamily:"'Space Mono',monospace", outline:"none" }}>
+                    <select value={editingProject.status} onChange={e=>setEditingProject(v=>({...v,status:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"10px 12px", color:C.text, fontSize:12, fontFamily:"'Space Grotesk',sans-serif", outline:"none" }}>
                       {["Not Started","In Progress","On Hold","Completed"].map(s => <option key={s}>{s}</option>)}
                     </select>
                     <div style={{ display:"flex", gap:8 }}>
@@ -6352,7 +6373,7 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
                       <div key={sec.kind}>
                         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:7 }}>
                           <Mono style={{ color:C.white, letterSpacing:.8 }}>{sec.label.toUpperCase()} ({sec.items.length})</Mono>
-                          <button onClick={() => setLinkPicker(linkPicker&&linkPicker.projectId===pr.id&&linkPicker.kind===sec.kind ? null : {projectId:pr.id,kind:sec.kind})} style={{ background:"none", border:"none", color:C.soft, cursor:"pointer", fontSize:11, fontFamily:"'Space Mono',monospace", textDecoration:"underline" }}>+ Link</button>
+                          <button onClick={() => setLinkPicker(linkPicker&&linkPicker.projectId===pr.id&&linkPicker.kind===sec.kind ? null : {projectId:pr.id,kind:sec.kind})} style={{ background:"none", border:"none", color:C.soft, cursor:"pointer", fontSize:11, fontFamily:"'Space Grotesk',sans-serif", textDecoration:"underline" }}>+ Link</button>
                         </div>
                         {sec.items.length===0 ? (
                           <Mono style={{ color:C.soft, display:"block" }}>Nothing linked yet.</Mono>
@@ -6577,7 +6598,7 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
                     <Inp placeholder="Email" type="email" inputMode="email" value={editingContact.email} onChange={e=>setEditingContact(v=>({...v,email:e.target.value}))} style={{ flex:1 }} />
                   </div>
                   <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
-                    <select value={editingContact.category} onChange={e=>setEditingContact(v=>({...v,category:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:8, padding:"7px 11px", color:C.text, fontSize:11, fontFamily:"'Space Mono',monospace", outline:"none" }}>
+                    <select value={editingContact.category} onChange={e=>setEditingContact(v=>({...v,category:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:8, padding:"7px 11px", color:C.text, fontSize:11, fontFamily:"'Space Grotesk',sans-serif", outline:"none" }}>
                       <option value="business">Business</option>
                       <option value="family">Family</option>
                     </select>
@@ -6660,7 +6681,7 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
                       <Inp placeholder="Email" type="email" inputMode="email" value={newContact.email} onChange={e=>setNewContact(v=>({...v,email:e.target.value}))} style={{ flex:1 }} />
                     </div>
                     <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
-                      <select value={newContact.category} onChange={e=>setNewContact(v=>({...v,category:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:8, padding:"7px 11px", color:C.text, fontSize:11, fontFamily:"'Space Mono',monospace", outline:"none" }}>
+                      <select value={newContact.category} onChange={e=>setNewContact(v=>({...v,category:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:8, padding:"7px 11px", color:C.text, fontSize:11, fontFamily:"'Space Grotesk',sans-serif", outline:"none" }}>
                         <option value="business">Business</option>
                         <option value="family">Family</option>
                       </select>
@@ -6744,7 +6765,7 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
               <Card style={{ marginBottom:16, border:`1px solid ${C.soft}` }} hi>
                 <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:12 }}>
                   <div><div style={{ fontWeight:700, fontSize:14, color:C.white, marginBottom:3 }}>Feeling hungry?</div><Mono style={{ color:C.soft }}>KROFT suggests what to eat based on your schedule.</Mono></div>
-                  <Btn onClick={() => { setHungry(true); if (voiceReplies) speak(`Hey ${user.name||"there"}, I'd suggest the Harvest Bowl from Sweetgreen. Light, healthy, just 0.1 miles away.`); toast("KROFT pick: Harvest Bowl at Sweetgreen"); }}>Yes, I'm hungry</Btn>
+                  <Btn onClick={() => { setHungry(true); if (voiceReplies) speak(`Hey ${firstNameOf(user.name)||"there"}, I'd suggest the Harvest Bowl from Sweetgreen. Light, healthy, just 0.1 miles away.`); toast("KROFT pick: Harvest Bowl at Sweetgreen"); }}>Yes, I'm hungry</Btn>
                 </div>
               </Card>
             ) : (
@@ -6852,7 +6873,7 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
             <div style={{ display:"flex", flexWrap:"wrap", gap:7, marginBottom:22 }}>
               {["Find restaurants near me","Nearest pharmacy open now","Best café for remote work","Closest ATM","Nearby supermarkets","Hotels near me"].map(q => (
                 <button key={q} onClick={() => { setAroundQuery(q); searchNearby(q, true); }}
-                  style={{ background:C.card, border:`1px solid ${C.cardB}`, borderRadius:7, padding:"6px 12px", cursor:"pointer", color:C.soft, fontSize:11, fontFamily:"'Space Mono',monospace" }}
+                  style={{ background:C.card, border:`1px solid ${C.cardB}`, borderRadius:7, padding:"6px 12px", cursor:"pointer", color:C.soft, fontSize:11, fontFamily:"'Space Grotesk',sans-serif" }}
                   onMouseEnter={e=>{e.target.style.borderColor=C.soft;e.target.style.color=C.white;}}
                   onMouseLeave={e=>{e.target.style.borderColor=C.cardB;e.target.style.color=C.border;}}>
                   {q}
@@ -7115,7 +7136,7 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
             <div style={{ fontSize:12, fontWeight:600, color:C.muted, marginBottom:6 }}>Ask about your data</div>
             <div style={{ display:"flex", flexWrap:"wrap", gap:7 }}>
               {["What's on my schedule today?","Where is my money going?","What should I focus on?","How did this month compare?","Summarise my open tasks","How's my wellness today?"].map(q => (
-                <button key={q} onClick={() => askKroft(q)} style={{ background:C.card, border:`1px solid ${C.cardB}`, borderRadius:7, padding:"6px 12px", cursor:"pointer", color:C.soft, fontSize:11, fontFamily:"'Space Mono',monospace" }} onMouseEnter={e=>{e.target.style.borderColor=C.soft;e.target.style.color=C.white;}} onMouseLeave={e=>{e.target.style.borderColor=C.cardB;e.target.style.color=C.border;}}>
+                <button key={q} onClick={() => askKroft(q)} style={{ background:C.card, border:`1px solid ${C.cardB}`, borderRadius:7, padding:"6px 12px", cursor:"pointer", color:C.soft, fontSize:11, fontFamily:"'Space Grotesk',sans-serif" }} onMouseEnter={e=>{e.target.style.borderColor=C.soft;e.target.style.color=C.white;}} onMouseLeave={e=>{e.target.style.borderColor=C.cardB;e.target.style.color=C.border;}}>
                   {q}
                 </button>
               ))}
@@ -7123,7 +7144,7 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
             <div style={{ fontSize:12, fontWeight:600, color:C.muted, margin:"14px 0 6px" }}>Or tell it to do something</div>
             <div style={{ display:"flex", flexWrap:"wrap", gap:7 }}>
               {["Log a 5,000 fuel expense","Remind me to call the bank tomorrow","Add a task to send the invoice","Schedule a meeting Friday at 10"].map(q => (
-                <button key={q} onClick={() => askKroft(q)} style={{ background:C.card, border:`1px solid ${C.accent}44`, borderRadius:7, padding:"6px 12px", cursor:"pointer", color:C.soft, fontSize:11, fontFamily:"'Space Mono',monospace" }}>
+                <button key={q} onClick={() => askKroft(q)} style={{ background:C.card, border:`1px solid ${C.accent}44`, borderRadius:7, padding:"6px 12px", cursor:"pointer", color:C.soft, fontSize:11, fontFamily:"'Space Grotesk',sans-serif" }}>
                   {q}
                 </button>
               ))}
