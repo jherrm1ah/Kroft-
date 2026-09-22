@@ -4459,19 +4459,18 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
       if (currentMonth === budgetRolloverMonth) return;
       if (subscribed) {
         const prevMonth = budgetRolloverMonth;
-        setBudgetCarryover(prevCarryover => {
+        setBudgetCarryover(() => {
           const next = {};
           Object.entries(budgets).forEach(([cat, limit]) => {
             if (!(limit > 0)) return;
             const spent = expenses
               .filter(e => e.cat === cat && (e.date || "").slice(0, 7) === prevMonth)
               .reduce((sum, e) => sum + e.amount, 0);
-            // Measured against last month's own effective limit (its base limit plus whatever
-            // had already rolled into it), not the bare limit — otherwise a category that carried
-            // a surplus in and then merely broke even (spent <= limit but > limit alone) reads as
-            // no leftover, and a multi-month streak of underspending collapses back to at most one
-            // month's surplus instead of actually compounding the way "carries forward" implies.
-            const leftover = (limit + (prevCarryover[cat] || 0)) - spent;
+            // Deliberately measured against the bare typed-in limit, not last month's own
+            // effective (carryover-boosted) limit — see the state declaration's comment: this is
+            // a one-month grace recomputed fresh each rollover, not a compounding balance that
+            // hoards indefinitely.
+            const leftover = limit - spent;
             // Only a genuine underspend carries forward — an overspent category obviously
             // shouldn't reduce next month's limit, so it simply carries nothing.
             if (leftover > 0) next[cat] = leftover;
