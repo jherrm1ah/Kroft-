@@ -209,12 +209,56 @@ const speechChunks = text => {
   return merged;
 };
 
+// Every SpeechRecognition instance in this file used to hardcode "en-US", so anyone speaking
+// another language just got garbled or empty transcripts. The browser/OS's own configured
+// language is the right default — it's already what the person actually speaks, needs no
+// language picker UI, and SpeechRecognition accepts any BCP-47 tag the platform supports.
+const speechLang = () => (typeof navigator !== "undefined" && navigator.language) || "en-US";
+
+// Groups whatever voices this browser/OS actually exposes into up to four picks — two
+// "female"-sounding, two "male"-sounding — by matching common voice names (Apple's Samantha/
+// Karen/Moira/Tessa, Chrome's "Google ... Female/Male", Edge/Windows's Zira/David/Guy/Aria,
+// etc.). No browser exposes a real gender attribute on SpeechSynthesisVoice, so a name-based
+// heuristic is the only option; devices with fewer than two recognizably-named voices per
+// group are backfilled from whatever's left, so the Settings picker always offers up to four
+// genuinely different-sounding options rather than quietly showing fewer.
+const FEMALE_VOICE_HINTS = /female|woman|samantha|karen|victoria|zira|susan|fiona|moira|tessa|serena|salli|joanna|kendra|kimberly|ivy|amy|emma|allison|ava|zoe|shelley|aria|jenny/i;
+const MALE_VOICE_HINTS = /male|\bman\b|daniel|alex|fred|david|\bguy\b|aaron|matthew|justin|joey|eric|ryan|brian|george|kevin|gordon|arthur|thomas/i;
+function categorizeVoices(vs) {
+  const pool = vs.filter(v => v.lang?.startsWith("en"));
+  const used = new Set();
+  const take = (pred, n, out) => {
+    for (const v of pool) {
+      if (out.length >= n) break;
+      if (used.has(v.voiceURI) || !pred(v)) continue;
+      used.add(v.voiceURI); out.push(v);
+    }
+  };
+  const female = []; take(v => FEMALE_VOICE_HINTS.test(v.name), 2, female);
+  const male = []; take(v => MALE_VOICE_HINTS.test(v.name), 2, male);
+  const leftovers = pool.filter(v => !used.has(v.voiceURI));
+  while (female.length < 2 && leftovers.length) { const v = leftovers.shift(); used.add(v.voiceURI); female.push(v); }
+  while (male.length < 2 && leftovers.length) { const v = leftovers.shift(); used.add(v.voiceURI); male.push(v); }
+  return { "female-1":female[0], "female-2":female[1], "male-1":male[0], "male-2":male[1] };
+}
+
+// Set from KroftApp whenever the signed-in user's chosen voice slot (persisted per-account,
+// see voicePref) changes. Lives at module scope, outside React, because speak()/speakSequence()/
+// createSpeechQueue() are plain functions called from all over this file, not hooks with access
+// to component state.
+let preferredVoiceKey = null;
+const setPreferredVoiceKey = key => { preferredVoiceKey = key; };
+
 // getVoices() returns an empty list on the first call in Chrome until the engine finishes
 // loading them and fires voiceschanged — so picking a voice synchronously silently failed on
 // the very first read-aloud of a session, falling back to the default robotic voice.
 const pickVoice = () => {
   const vs = window.speechSynthesis.getVoices();
   if (!vs.length) return null;
+  if (preferredVoiceKey) {
+    const chosen = categorizeVoices(vs)[preferredVoiceKey];
+    if (chosen) return chosen;
+  }
   return vs.find(v => /Samantha|Google US English|Karen|Serena/i.test(v.name))
       || vs.find(v => v.lang === "en-US" && !/compact/i.test(v.name))
       || vs.find(v => v.lang?.startsWith("en"))
@@ -227,7 +271,15 @@ function speak(raw) {
   if (!text) return;
   window.speechSynthesis.cancel();
   const chunks = speechChunks(text);
+  // Both the voiceschanged listener and the timeout below can fire — guarding on
+  // speechSynthesis.speaking (as this used to) is racy: a short utterance can finish speaking
+  // before the 250ms timeout even runs, so `speaking` reads false again and the fallback
+  // re-triggers the WHOLE sequence a second time, reading it twice. `started` makes run()
+  // idempotent regardless of which trigger fires first, or in what order.
+  let started = false;
   const run = () => {
+    if (started) return;
+    started = true;
     const voice = pickVoice();
     let i = 0;
     const next = () => {
@@ -244,7 +296,7 @@ function speak(raw) {
   if (!window.speechSynthesis.getVoices().length) {
     // Wait one tick for voices to arrive rather than speaking with none selected.
     window.speechSynthesis.addEventListener("voiceschanged", run, { once:true });
-    setTimeout(() => { if (!window.speechSynthesis.speaking) run(); }, 250);
+    setTimeout(run, 250);
   } else run();
 }
 const stopSpeaking = () => { if ("speechSynthesis" in window) window.speechSynthesis.cancel(); };
@@ -309,7 +361,14 @@ function speakSequence(lines, { onLine, onDone } = {}) {
   if (!("speechSynthesis" in window)) { lines.forEach((_, i) => onLine?.(i)); onDone?.(); return () => {}; }
   window.speechSynthesis.cancel();
   let cancelled = false;
+  // See speak()'s comment — guarding solely on speechSynthesis.speaking is racy, since a short
+  // first line can finish before the 250ms fallback even runs, making the fallback re-trigger
+  // the whole sequence (reading every line again from the start). `started` makes this
+  // idempotent regardless of which of the two triggers below fires first.
+  let started = false;
   const start = () => {
+    if (started || cancelled) return;
+    started = true;
     const voice = pickVoice();
     let li = 0;
     const speakLine = () => {
@@ -335,7 +394,7 @@ function speakSequence(lines, { onLine, onDone } = {}) {
   };
   if (!window.speechSynthesis.getVoices().length) {
     window.speechSynthesis.addEventListener("voiceschanged", start, { once:true });
-    setTimeout(() => { if (!cancelled && !window.speechSynthesis.speaking) start(); }, 250);
+    setTimeout(start, 250);
   } else start();
   return () => { cancelled = true; window.speechSynthesis.cancel(); };
 }
@@ -698,6 +757,8 @@ const NavIcon = ({ id, size=20, color="currentColor" }) => {
       return <svg viewBox="0 0 24 24" style={s}><rect x="9" y="3" width="6" height="11" rx="3" {...p} /><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0" {...p} /><path d="M12 18v3" {...p} /></svg>;
     case "send":
       return <svg viewBox="0 0 24 24" style={s}><path d="M4.5 12h14" {...p} /><path d="M12.5 5.5 19 12l-6.5 6.5" {...p} /></svg>;
+    case "edit":
+      return <svg viewBox="0 0 24 24" style={s}><path d="M15.5 4.5 19.5 8.5 8 20H4v-4z" {...p} /><path d="M14 6l4 4" {...p} /></svg>;
     // ---- Workspace tool icons (the hub's ToolCard grid) ----
     case "calendar":
       return <svg viewBox="0 0 24 24" style={s}><rect x="4" y="5.5" width="16" height="14" rx="2" {...p} /><path d="M4 10h16" {...p} /><path d="M8 3.5v3M16 3.5v3" {...p} /></svg>;
@@ -727,9 +788,9 @@ const NavIcon = ({ id, size=20, color="currentColor" }) => {
 const OSTEPS = ["login","signup","photo","business","prefs","done"];
 const OSTEP_LABELS = ["Photo","Business","Prefs","Ready"];
 
-function OShell({ step, children }) {
+function OShell({ step, children, hideProgress }) {
   const idx = OSTEPS.indexOf(step);
-  const showBar = !["login","signup"].includes(step);
+  const showBar = !hideProgress && !["login","signup","reset-password"].includes(step);
   const barIdx = Math.max(0, idx - 2);
   const pct = showBar ? Math.round((barIdx / (OSTEP_LABELS.length - 1)) * 100) : 0;
   return (
@@ -1209,7 +1270,17 @@ function Briefing({ user, income, expenses, emails, appts, onClose }) {
         onLine: i => setIdx(i),
         onDone: () => { setIdx(lines.length - 1); setDone(true); },
       });
-      const failsafe = setTimeout(() => { if (!window.speechSynthesis.speaking) { setIdx(lines.length - 1); setDone(true); } }, 1500);
+      // Guards against speech being genuinely blocked/unavailable (e.g. autoplay-policy
+      // restrictions before any user gesture) — NOT a generous margin for normal
+      // voice-loading delay, which this used to mistake for "broken". 1.5s was too tight: on a
+      // slower device, getVoices() can legitimately still be empty at that point, so this fired
+      // while speech was still about to start rather than actually stuck. Firing here marked
+      // the whole briefing "done" on screen while speakSequence kept talking in the background,
+      // completely out of sync with a UI that already looked finished — the audio would then
+      // run for however long the real briefing takes, well after the screen said it was over.
+      // Bumped to a real margin AND now actually cancels the dangling speech attempt, so the
+      // on-screen state and the audio can never diverge like that again.
+      const failsafe = setTimeout(() => { if (!window.speechSynthesis.speaking) { stop(); setIdx(lines.length - 1); setDone(true); } }, 4000);
       return () => { clearTimeout(failsafe); stop(); };
     }
     const t = setInterval(() => setIdx(i => { if (i >= lines.length-1) { setDone(true); clearInterval(t); return i; } return i+1; }), 3200);
@@ -1292,7 +1363,7 @@ function ProfileSwitch({ value, onChange }) {
   );
 }
 
-function ProfileSection({ user, onEditPreferences, onSignOut, theme, onToggleTheme, toast, subscribed, billingLoading, onUpgrade, onManageBilling, dailyMessageCount, freeLimit, usageStats, voiceReplies, onSetVoiceReplies, proactiveInsights, onSetProactiveInsights, onSetupBiometric, onRemoveBiometric, onExportData, onImportData, notifPermission, notifPrefs, onEnableNotifications, onSetNotifPref, onTestNotification, aiExtrasCount, extrasLimit, monthlyReportCount, reportLimit, reportsLeftThisMonth, voiceTurnsCount, voiceLimit }) {
+function ProfileSection({ user, onUpdateName, onEditPreferences, onEditBusinessDetails, onSignOut, theme, onToggleTheme, toast, subscribed, subscriptionStatus, autoRenews, billingLoading, onUpgrade, onManageBilling, dailyMessageCount, freeLimit, usageStats, voiceReplies, onSetVoiceReplies, proactiveInsights, onSetProactiveInsights, voicePref, onSetVoicePref, onSetupBiometric, onRemoveBiometric, onExportData, onImportData, notifPermission, notifPrefs, onEnableNotifications, onSetNotifPref, onTestNotification, aiExtrasCount, extrasLimit, monthlyReportCount, reportLimit, reportsLeftThisMonth, voiceTurnsCount, voiceLimit }) {
   // null = main hub. Otherwise one of: "ai" | "productivity" | "privacy" | "subscription" | "support"
   const [screen, setScreen] = useState(null);
   const [openRow, setOpenRow] = useState(null);
@@ -1301,6 +1372,21 @@ function ProfileSection({ user, onEditPreferences, onSignOut, theme, onToggleThe
   const initials = user.name ? user.name.split(" ").map(n=>n[0]).join("").toUpperCase().slice(0,2) : "?";
   const goTo = key => { setOpenRow(null); setScreen(key); };
   const goBack = () => { setOpenRow(null); setScreen(null); };
+
+  // What KROFT calls this user everywhere (greetings, voice replies, the daily briefing) — set
+  // once at signup with no way to change it afterward until now. Local draft + explicit
+  // Save/Cancel rather than saving on every keystroke, so a half-typed name never briefly
+  // becomes "what KROFT calls you" before the person finishes typing.
+  const [editingName, setEditingName] = useState(false);
+  const [nameDraft, setNameDraft] = useState(user.name || "");
+  const saveName = () => {
+    const trimmed = nameDraft.trim();
+    if (!trimmed) return;
+    onUpdateName(trimmed);
+    setEditingName(false);
+    toast(`Got it — KROFT will call you ${trimmed}.`);
+  };
+  const cancelEditName = () => { setNameDraft(user.name || ""); setEditingName(false); };
 
   // Local, in-memory-only preference toggles for this session — presentational until wired to a backend.
   // voiceReplies and proactiveInsights now live in Kroft() (lifted up) since they actually gate
@@ -1315,16 +1401,33 @@ function ProfileSection({ user, onEditPreferences, onSignOut, theme, onToggleThe
     <div style={{ animation:"fadeUp .25s ease" }}>
       <ProfileScreenHeader title="AI & Personalization" onBack={goBack} />
       <Card style={{ padding:"2px 16px" }}>
-        <ProfileRow label="Personal Preferences" sub="Name, business, currency" expanded={openRow==="prefs"} onToggle={()=>toggle("prefs")}>
+        <ProfileRow label="Personal Preferences" sub="Business, currency" expanded={openRow==="prefs"} onToggle={()=>toggle("prefs")}>
           <Mono style={{ display:"block", color:C.soft, lineHeight:1.7, marginBottom:10 }}>Business: {user.businessName || "Not set"} · Currency: {user.currency}</Mono>
-          <Btn sm onClick={onEditPreferences}>Edit details</Btn>
+          {/* Your name is edited right at the top of Profile now, not here — see the pencil
+              icon next to it. This used to say "Name, business, currency" and route to the
+              account-linking screen, which edits none of the three. */}
+          <Btn sm onClick={onEditBusinessDetails}>Edit details</Btn>
         </ProfileRow>
         <ProfileRow label="AI Memory" sub="What KROFT remembers about you" expanded={openRow==="memory"} onToggle={()=>toggle("memory")}>
-          <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>KROFT keeps context from this session only — your finances, appointments, and mood — to give relevant answers. Nothing is shared outside this session.</Mono>
+          <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>{isSupabaseConfigured ? "KROFT remembers your recent conversation (the last 60 messages) across visits, plus your finances, appointments, and mood, to answer with real context. It's kept in your own account and never shared with other KROFT users." : "KROFT remembers your recent conversation (the last 60 messages) on this device, plus your finances, appointments, and mood, to answer with real context. Nothing leaves this device in local-only mode."}</Mono>
         </ProfileRow>
         <ProfileRow label="Voice & Language" sub="English (US) · Voice replies" expanded={openRow==="voice"} onToggle={()=>toggle("voice")}
           right={<ProfileSwitch value={voiceReplies} onChange={onSetVoiceReplies} />}>
-          <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>{voiceReplies ? "KROFT speaks replies and reminders aloud." : "KROFT will stay silent unless you tap Read Aloud."}</Mono>
+          <Mono style={{ display:"block", color:C.soft, lineHeight:1.7, marginBottom:12 }}>{voiceReplies ? "KROFT speaks replies and reminders aloud." : "KROFT will stay silent unless you tap Read Aloud."}</Mono>
+          <Mono style={{ display:"block", color:C.soft, marginBottom:8 }}>Voice</Mono>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8, marginBottom:8 }}>
+            {[
+              { key:"female-1", label:"Female 1" },
+              { key:"female-2", label:"Female 2" },
+              { key:"male-1", label:"Male 1" },
+              { key:"male-2", label:"Male 2" },
+            ].map(v => (
+              <button key={v.key} onClick={() => onSetVoicePref(v.key)} style={{ padding:"10px 6px", borderRadius:10, cursor:"pointer", textAlign:"center", background:voicePref===v.key?C.white:C.surface, border:`1px solid ${voicePref===v.key?C.white:C.cardB}`, color:voicePref===v.key?C.black:C.text, fontSize:12, fontWeight:700, fontFamily:"'Space Grotesk',sans-serif" }}>
+                {v.label}
+              </button>
+            ))}
+          </div>
+          <Mono style={{ display:"block", color:C.muted, lineHeight:1.6 }}>Tap one to hear it — the exact voices available depend on your device and browser.</Mono>
         </ProfileRow>
         <ProfileRow label="Appearance" sub={theme==="dark" ? "Dark mode" : "Light mode"} expanded={openRow==="appearance"} onToggle={()=>toggle("appearance")}>
           <Mono style={{ display:"block", color:C.soft, lineHeight:1.7, marginBottom:12 }}>Switch between dark and light. Both use only black, white and off-white — no grey.</Mono>
@@ -1443,9 +1546,6 @@ function ProfileSection({ user, onEditPreferences, onSignOut, theme, onToggleThe
           right={<ProfileSwitch value={!!user.webauthnCredentialId} onChange={v => v ? onSetupBiometric() : onRemoveBiometric()} />}>
           <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>Biometric sign-in uses your device's real WebAuthn platform authenticator (Face ID, Touch ID, or Windows Hello) — turning this on will prompt an actual biometric check on this device, not just a toggle.</Mono>
         </ProfileRow>
-        <ProfileRow label="Passcode" sub="Backup unlock method" expanded={openRow==="passcode"} onToggle={()=>toggle("passcode")}>
-          <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>Used to unlock KROFT if Face ID fails or is unavailable.</Mono>
-        </ProfileRow>
         <ProfileRow label="Devices" sub="1 active session" expanded={openRow==="devices"} onToggle={()=>toggle("devices")}>
           <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>This device — signed in now.</Mono>
         </ProfileRow>
@@ -1454,9 +1554,9 @@ function ProfileSection({ user, onEditPreferences, onSignOut, theme, onToggleThe
         </ProfileRow>
         <ProfileRow label="Backup & Restore" sub="Download a copy of everything" expanded={openRow==="data"} onToggle={()=>toggle("data")}>
           <Mono style={{ display:"block", color:C.soft, lineHeight:1.7, marginBottom:12 }}>
-            KROFT keeps your data on this device only — nothing is uploaded. That also means clearing your
-            browser data erases it permanently, so download a backup you can keep somewhere safe.
-            Your password is never included in the file.
+            {isSupabaseConfigured
+              ? "Signed in with a real account, your data already syncs to your own account in the cloud — this backup is just an extra copy, useful for switching devices or keeping an offline copy. Your password is never included in the file."
+              : "KROFT keeps your data on this device only — nothing is uploaded. That also means clearing your browser data erases it permanently, so download a backup you can keep somewhere safe. Your password is never included in the file."}
           </Mono>
           <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
             <Btn sm onClick={onExportData}>Download backup</Btn>
@@ -1465,7 +1565,7 @@ function ProfileSection({ user, onEditPreferences, onSignOut, theme, onToggleThe
           <input ref={fileInputRef} type="file" accept="application/json,.json" style={{ display:"none" }}
             onChange={e => { const f = e.target.files?.[0]; if (f) onImportData(f); e.target.value = ""; }} />
           <Mono style={{ display:"block", color:C.muted, lineHeight:1.7, marginTop:11 }}>
-            Restoring replaces everything currently on this device.
+            Restoring replaces everything currently {isSupabaseConfigured ? "in your account" : "on this device"}.
           </Mono>
         </ProfileRow>
       </Card>
@@ -1684,11 +1784,31 @@ function ProfileSection({ user, onEditPreferences, onSignOut, theme, onToggleThe
         <div style={{ width:84, height:84, borderRadius:"50%", overflow:"hidden", background:user.photo?`url(${user.photo}) center/cover no-repeat`:C.surface, border:`2px solid ${C.border}`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:28, fontWeight:800, color:C.white, marginBottom:14 }}>
           {!user.photo && initials}
         </div>
-        <div style={{ fontSize:20, fontWeight:800, color:C.white, letterSpacing:-.5, marginBottom:3 }}>{user.name || "Your name"}</div>
-        <Mono style={{ color:C.muted, marginBottom:12 }}>Powered by Virt Technologies</Mono>
+        {editingName ? (
+          <div style={{ width:"100%", maxWidth:260, marginBottom:10 }}>
+            <Inp autoFocus value={nameDraft} onChange={e=>setNameDraft(e.target.value)}
+              onKeyDown={e => { if (e.key==="Enter") saveName(); if (e.key==="Escape") cancelEditName(); }}
+              placeholder="What should KROFT call you?" style={{ textAlign:"center", marginBottom:8 }} />
+            <div style={{ display:"flex", gap:7 }}>
+              <Btn sm v="outline" onClick={cancelEditName} style={{ flex:1 }}>Cancel</Btn>
+              <Btn sm disabled={!nameDraft.trim()} onClick={saveName} style={{ flex:1 }}>Save</Btn>
+            </div>
+          </div>
+        ) : (
+          <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:3 }}>
+            <div style={{ fontSize:20, fontWeight:800, color:C.white, letterSpacing:-.5 }}>{user.name || "Your name"}</div>
+            <button onClick={() => { setNameDraft(user.name||""); setEditingName(true); }} aria-label="Edit your name" title="Edit your name"
+              style={{ background:"none", border:"none", cursor:"pointer", padding:4, color:C.muted, display:"flex", alignItems:"center" }}>
+              <NavIcon id="edit" size={14} color={C.muted} />
+            </button>
+          </div>
+        )}
+        {!editingName && <Mono style={{ color:C.muted, marginBottom:12 }}>Powered by Virt Technologies</Mono>}
         <div style={{ display:"flex", gap:7, flexWrap:"wrap", justifyContent:"center" }}>
           <Tag tone="positive">Online</Tag>
-          <Tag tone="accent">Synced</Tag>
+          {/* "Synced" claimed cloud sync even in local-only mode, where nothing syncs anywhere
+              — this reflects which one is actually true for this deployment. */}
+          {isSupabaseConfigured ? <Tag tone="accent">Synced</Tag> : <Tag>Local only</Tag>}
           {user.webauthnCredentialId && <Tag tone="positive">Face ID enabled</Tag>}
         </div>
       </div>
@@ -1784,6 +1904,15 @@ const STORAGE_KEYS = {
   chatData: "kroft:chat",
   wellnessData: "kroft:wellness",
   emailData: "kroft:emails",
+  // Kept separate from `productivity` rather than folded in: voice memo audio (now a data: URL,
+  // see toggleVoiceMemo) can run to hundreds of KB per recording, and productivity's save effect
+  // fires on every small task/note edit — bundling memos in would mean re-writing all that audio
+  // on every unrelated edit instead of only when a memo itself actually changes.
+  voiceMemosData: "kroft:voicememos",
+  // Same reasoning as voiceMemosData, and the same underlying bug it fixed: uploaded files (see
+  // the Files upload handler) can run well into the megabytes, so they get their own save effect
+  // rather than riding along on every unrelated productivity edit.
+  filesData: "kroft:files",
 };
 
 function KroftApp({ onFullReset } = {}) {
@@ -1852,12 +1981,28 @@ function KroftApp({ onFullReset } = {}) {
   // below. When off, KROFT should only respond when asked, not surface unprompted toasts.
   const [proactiveInsights, setProactiveInsights] = useState(true);
 
+  // Which of the four voice slots (see categorizeVoices) KROFT speaks with — persisted
+  // per-account like every other preference here. Kept in sync with the module-level TTS
+  // functions below, since speak()/speakSequence() live outside React and read preferredVoiceKey
+  // directly rather than taking it as an argument on every call site.
+  const [voicePref, setVoicePref] = useState("female-1");
+  useEffect(() => { setPreferredVoiceKey(voicePref); }, [voicePref]);
+
   // Starts at signup. With Supabase configured, the load effect below jumps straight to the
   // dashboard when a real session already exists (a returning, still-signed-in user), the same
   // way any app with real sessions keeps you signed in across a reload. Without Supabase
   // configured (local-only mode), it instead switches to login once a saved local account is
   // found, matching this app's original device-local behavior.
   const [step, setStep] = useState("signup");
+  // True only while "business" or "prefs" is showing because Profile's Edit Details /
+  // Preferences opened it on an already-signed-in account — as opposed to the same two screens
+  // showing as part of first-time onboarding, reached by signing up. Both cases render the same
+  // step and the same form, but they need different Back/Save destinations: onboarding chains
+  // photo -> business -> prefs -> done -> dashboard, while an edit from Profile should return
+  // straight to the dashboard, never forward into onboarding's later screens or back through
+  // "photo" into "signup" — landing back on the signup screen while editing your own account
+  // details was exactly the bug this flag exists to prevent.
+  const [editingFromProfile, setEditingFromProfile] = useState(false);
   // True while a signup/login request to Supabase Auth is in flight, so the button can show a
   // spinner and can't be double-submitted by an impatient extra click.
   const [authLoading, setAuthLoading] = useState(false);
@@ -1885,6 +2030,20 @@ function KroftApp({ onFullReset } = {}) {
   const [loginPw, setLoginPw] = useState("");
   const [showLoginPw, setShowLoginPw] = useState(false);
   const [loginError, setLoginError] = useState("");
+  // Forgot-password mini-flow, inline on the login screen — only meaningful with a real
+  // Supabase account (it emails a reset link through Supabase Auth); local-only mode's
+  // password is just a local hash with no email service behind it to reset through.
+  const [forgotOpen, setForgotOpen] = useState(false);
+  const [forgotEmail, setForgotEmail] = useState("");
+  const [forgotLoading, setForgotLoading] = useState(false);
+  const [forgotSent, setForgotSent] = useState(false);
+  const [forgotError, setForgotError] = useState("");
+  // Set-new-password screen, reached only via the link Supabase emails from the request above
+  // (see the recovery-redirect effect near the other query-param handlers below).
+  const [newPw, setNewPw] = useState("");
+  const [confirmNewPw, setConfirmNewPw] = useState("");
+  const [resetPwLoading, setResetPwLoading] = useState(false);
+  const [resetPwError, setResetPwError] = useState("");
   const [loginAttempts, setLoginAttempts] = useState(0);
   const [locked, setLocked] = useState(false);
   const [lockTimer, setLockTimer] = useState(0);
@@ -2171,6 +2330,7 @@ function KroftApp({ onFullReset } = {}) {
       if (p.theme) setTheme(p.theme);
       if (typeof p.voiceReplies === "boolean") setVoiceReplies(p.voiceReplies);
       if (typeof p.proactiveInsights === "boolean") setProactiveInsights(p.proactiveInsights);
+      if (typeof p.voicePref === "string") setVoicePref(p.voicePref);
       if (p.notifPrefs) setNotifPrefs(v => ({ ...v, ...p.notifPrefs }));
       if (typeof p.aiExtrasCount === "number") setAiExtrasCount(p.aiExtrasCount);
       if (p.aiExtrasDate) setAiExtrasDate(p.aiExtrasDate);
@@ -2209,6 +2369,8 @@ function KroftApp({ onFullReset } = {}) {
     if (data.calendarData) { setAppts(data.calendarData.appts||[]); if (data.calendarData.remindersFired) setRemindersFired(data.calendarData.remindersFired); }
     if (data.contactsData) setContacts(data.contactsData.contacts||[]);
     if (data.projectsData) { setProjects(data.projectsData.projects||[]); setDocuments(data.projectsData.documents||[]); }
+    if (data.voiceMemosData) setVoiceMemos(data.voiceMemosData.voiceMemos||[]);
+    if (data.filesData) setFiles(data.filesData.files||[]);
     // Strip transient flags on restore. A reply interrupted mid-stream (tab closed, app
     // backgrounded) would otherwise come back with streaming:true and sit there showing a
     // blinking caret for a response that will never finish arriving.
@@ -2273,13 +2435,13 @@ function KroftApp({ onFullReset } = {}) {
   // subscribed is deliberately excluded — see hydrateAllGroups's comment on why it's never
   // restored from this same blob; persisting it here would just re-create the value this app
   // must never trust from client storage in the first place.
-  const saveProfileNow = () => window.storage.set(STORAGE_KEYS.profile, JSON.stringify({ user, theme, voiceReplies, proactiveInsights, dailyMessageCount, messageCountDate, incomeCats, expenseCats, notifPrefs, aiExtrasCount, aiExtrasDate, monthlyReportCount, monthlyReportMonth, dailyBriefSentDate, voiceTurnsCount, voiceTurnsDate }), false);
+  const saveProfileNow = () => window.storage.set(STORAGE_KEYS.profile, JSON.stringify({ user, theme, voiceReplies, proactiveInsights, voicePref, dailyMessageCount, messageCountDate, incomeCats, expenseCats, notifPrefs, aiExtrasCount, aiExtrasDate, monthlyReportCount, monthlyReportMonth, dailyBriefSentDate, voiceTurnsCount, voiceTurnsDate }), false);
 
   useEffect(() => {
     if (!dataLoaded) return;
     const t = setTimeout(() => { saveProfileNow().catch(()=>{}); }, 900);
     return () => clearTimeout(t);
-  }, [dataLoaded, user, theme, voiceReplies, proactiveInsights, dailyMessageCount, messageCountDate, incomeCats, expenseCats, notifPrefs, aiExtrasCount, aiExtrasDate, monthlyReportCount, monthlyReportMonth, dailyBriefSentDate, voiceTurnsCount, voiceTurnsDate]);
+  }, [dataLoaded, user, theme, voiceReplies, proactiveInsights, voicePref, dailyMessageCount, messageCountDate, incomeCats, expenseCats, notifPrefs, aiExtrasCount, aiExtrasDate, monthlyReportCount, monthlyReportMonth, dailyBriefSentDate, voiceTurnsCount, voiceTurnsDate]);
 
   useEffect(() => {
     if (!dataLoaded) return;
@@ -2310,6 +2472,25 @@ function KroftApp({ onFullReset } = {}) {
     const t = setTimeout(() => { window.storage.set(STORAGE_KEYS.projectsData, JSON.stringify({ projects, documents }), false).catch(()=>{}); }, 900);
     return () => clearTimeout(t);
   }, [dataLoaded, projects, documents]);
+
+  useEffect(() => {
+    if (!dataLoaded) return;
+    // Capped to the most recent 20 — each memo's audio is now stored inline as a data: URL
+    // (see toggleVoiceMemo), so unlike every other list here this one can genuinely be large;
+    // an unbounded list would grow storage without limit the more someone actually uses the
+    // feature. 20 recent memos is a generous working set without that risk.
+    const t = setTimeout(() => { window.storage.set(STORAGE_KEYS.voiceMemosData, JSON.stringify({ voiceMemos: voiceMemos.slice(0, 20) }), false).catch(()=>{}); }, 900);
+    return () => clearTimeout(t);
+  }, [dataLoaded, voiceMemos]);
+
+  useEffect(() => {
+    if (!dataLoaded) return;
+    // Same capped-list reasoning as voiceMemosData above — each file is now stored inline as a
+    // data: URL (see the Files upload handler), so this list is capped at the 30 most recent
+    // uploads rather than growing without limit.
+    const t = setTimeout(() => { window.storage.set(STORAGE_KEYS.filesData, JSON.stringify({ files: files.slice(0, 30) }), false).catch(()=>{}); }, 900);
+    return () => clearTimeout(t);
+  }, [dataLoaded, files]);
 
   useEffect(() => {
     if (!dataLoaded) return;
@@ -2572,6 +2753,35 @@ function KroftApp({ onFullReset } = {}) {
     setLoginError(""); setLoginAttempts(0); setLoginPw("");
     setStep("dashboard");
     toast(`Welcome back, ${user.name||"there"}.`);
+  };
+
+  const doForgotPassword = async () => {
+    if (!forgotEmail.trim()) { setForgotError("Enter your email address."); return; }
+    setForgotLoading(true); setForgotError("");
+    // redirectTo lands back on this same origin with a recovery token in the URL — the
+    // recovery-redirect effect below (near the other query-param handlers) picks that up.
+    const { error } = await supabase.auth.resetPasswordForEmail(forgotEmail.trim(), { redirectTo: window.location.origin });
+    setForgotLoading(false);
+    // Supabase intentionally doesn't reveal whether the address has an account (that itself
+    // would leak which emails are registered) — so this shows the same success state either
+    // way, matching Supabase's own privacy-preserving behavior rather than second-guessing it.
+    if (error) { setForgotError(error.message || "Couldn't send the reset link. Try again."); return; }
+    setForgotSent(true);
+  };
+
+  const doResetPassword = async () => {
+    if (!newPw || newPw.length < 8) { setResetPwError("Password must be at least 8 characters."); return; }
+    if (newPw !== confirmNewPw) { setResetPwError("Passwords do not match."); return; }
+    setResetPwLoading(true); setResetPwError("");
+    // setSession (from the recovery-redirect effect) already established an authenticated
+    // session scoped to this reset — updateUser applies to whoever that session belongs to.
+    const { error } = await supabase.auth.updateUser({ password: newPw });
+    setResetPwLoading(false);
+    if (error) { setResetPwError(error.message || "Couldn't update your password. Try again."); return; }
+    setNewPw(""); setConfirmNewPw("");
+    await hydrateAllGroups();
+    setStep("dashboard");
+    toast("Password updated — you're signed in.");
   };
 
   const doFingerprint = async () => {
@@ -2950,6 +3160,28 @@ function KroftApp({ onFullReset } = {}) {
     window.history.replaceState({}, "", cleanUrl);
   }, []);
 
+  // Catches Supabase's password-recovery redirect. resetPasswordForEmail's link lands back here
+  // with the session tokens in the URL *hash* (never the query string) as
+  // "#access_token=...&refresh_token=...&type=recovery" — and since supabaseClient.js sets
+  // detectSessionInUrl: false, Supabase won't auto-consume it, so this does that by hand: parse
+  // the hash, establish the session it describes, then send the user to the set-new-password
+  // screen. Runs once on mount, same as the query-param effects above.
+  useEffect(() => {
+    if (!isSupabaseConfigured) return;
+    const hash = window.location.hash.startsWith("#") ? window.location.hash.slice(1) : window.location.hash;
+    const hashParams = new URLSearchParams(hash);
+    if (hashParams.get("type") !== "recovery") return;
+    const access_token = hashParams.get("access_token");
+    const refresh_token = hashParams.get("refresh_token");
+    if (!access_token || !refresh_token) return;
+    (async () => {
+      const { error } = await supabase.auth.setSession({ access_token, refresh_token });
+      window.history.replaceState({}, "", window.location.pathname + window.location.search);
+      if (error) { toast("That reset link has expired. Request a new one."); return; }
+      setStep("reset-password");
+    })();
+  }, []);
+
   // Keeps the connected badges and subscription status accurate whenever the dashboard is
   // (re)entered — covers a fresh login, a returning already-signed-in session, and finishing
   // onboarding via "Enter KROFT", without needing each of those call sites to remember to
@@ -2987,6 +3219,7 @@ function KroftApp({ onFullReset } = {}) {
       // to onboarding without touching another profile field would have their name/email
       // sitting only in the pre-auth localStorage fallback, not yet under their new account.
       saveProfileNow().catch(()=>{});
+      setEditingFromProfile(false);
       setStep("photo");
       return;
     }
@@ -2998,7 +3231,7 @@ function KroftApp({ onFullReset } = {}) {
     const passwordHash = await hashPassword(signupPw, salt);
     setUser(u => { const { password, ...rest } = u; return { ...rest, passwordSalt:salt, passwordHash }; });
     setSignupPw(""); setConfirmPw("");
-    setSignupError(""); setStep("photo");
+    setSignupError(""); setEditingFromProfile(false); setStep("photo");
   };
 
   const openCamera = async () => {
@@ -3032,6 +3265,34 @@ function KroftApp({ onFullReset } = {}) {
     const reader = new FileReader();
     reader.onload = ev => { setUser(u => ({...u, photo:ev.target.result})); setPhotoSource("gallery"); toast("Photo selected."); };
     reader.readAsDataURL(file); e.target.value = "";
+  };
+
+  // Workspace Files upload. Used to store each picked File as URL.createObjectURL(f) — a blob:
+  // URL, valid only in this tab's memory for as long as the page stays open. Since `files` was
+  // also never written to window.storage at all, every uploaded file was silently gone the
+  // moment the page reloaded or a fresh login ran, even though the list still showed it until
+  // then — the exact same bug toggleVoiceMemo had, fixed the same way: a data: URL (a plain,
+  // JSON-serializable string) plus real persistence (see the filesData save effect above).
+  // Capped per-file rather than left unbounded, since a data: URL keeps the whole file in memory
+  // and in kv_store's jsonb column, unlike a blob: URL which only ever held a lightweight handle.
+  const MAX_UPLOAD_FILE_BYTES = 8 * 1024 * 1024;
+  const handleFilesUpload = e => {
+    const picked = Array.from(e.target.files || []);
+    e.target.value = "";
+    if (!picked.length) return;
+    const ok = picked.filter(f => f.size <= MAX_UPLOAD_FILE_BYTES);
+    const tooBig = picked.length - ok.length;
+    if (tooBig > 0) toast(`${tooBig} file${tooBig!==1?"s":""} skipped — over the 8MB limit.`);
+    if (!ok.length) return;
+    Promise.all(ok.map(f => new Promise(resolve => {
+      const reader = new FileReader();
+      reader.onload = () => resolve({ id:uid(), name:f.name, size:f.size, type:f.type||"file", date:dateStr(), url:reader.result, contactId:null });
+      reader.onerror = () => resolve(null);
+      reader.readAsDataURL(f);
+    }))).then(results => {
+      const added = results.filter(Boolean);
+      if (added.length) { setFiles(p => [...added, ...p]); toast(`${added.length} file${added.length!==1?"s":""} added.`); }
+    });
   };
 
   // ── Voice mode ────────────────────────────────────────────────────────────────────────
@@ -3118,7 +3379,7 @@ function KroftApp({ onFullReset } = {}) {
     voiceRecRef.current?.abort?.();
     setVoiceError(""); setVoiceTranscript(""); lastLenRef.current = 0;
     const r = new SR();
-    r.continuous = false; r.interimResults = true; r.lang = "en-US";
+    r.continuous = false; r.interimResults = true; r.lang = speechLang();
     r.onstart = () => { setMicPrimed(true); setVoiceState("listening"); };
     r.onresult = e => {
       const text = Array.from(e.results).map(x => x[0].transcript).join("");
@@ -3215,8 +3476,13 @@ function KroftApp({ onFullReset } = {}) {
       onDone: () => {
         voiceStopRef.current = null;
         // Hand the turn straight back so it stays a conversation instead of making the
-        // person tap between every exchange.
-        if (voiceOpenRef.current) voiceListen();
+        // person tap between every exchange — but not instantly: reopening the mic the moment
+        // KROFT's own voice ends risks it picking up the tail of its own audio (room echo,
+        // speaker bleed on a phone with no headset) as if it were the next thing said, which
+        // reads as KROFT answering itself before the person gets a word in. A short pause here
+        // lets that decay first, so listening only resumes once KROFT has actually finished
+        // replying to what was first said.
+        if (voiceOpenRef.current) setTimeout(() => { if (voiceOpenRef.current) voiceListen(); }, 600);
       },
     });
     voiceStopRef.current = () => queue.cancel();
@@ -3346,7 +3612,7 @@ function KroftApp({ onFullReset } = {}) {
     if (listening) { recRef.current?.stop(); setListening(false); return; }
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) { toast("Speech recognition needs Chrome or Edge."); return; }
-    const r = new SR(); r.continuous=false; r.interimResults=true; r.lang="en-US";
+    const r = new SR(); r.continuous=false; r.interimResults=true; r.lang=speechLang();
     r.onstart = () => setListening(true); r.onend = () => setListening(false);
     r.onresult = e => { const t = Array.from(e.results).map(x => x[0].transcript).join(""); setTranscript(t); if (e.results[0].isFinal) { setAiInput(t); setTab("nova"); setTranscript(""); } };
     r.onerror = () => { setListening(false); toast("Mic error — check permissions."); };
@@ -3370,7 +3636,7 @@ function KroftApp({ onFullReset } = {}) {
       const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
       let sr = null;
       if (SR) {
-        sr = new SR(); sr.continuous = true; sr.interimResults = true; sr.lang = "en-US";
+        sr = new SR(); sr.continuous = true; sr.interimResults = true; sr.lang = speechLang();
         sr.onresult = e => { liveTranscript = Array.from(e.results).map(x => x[0].transcript).join(" "); };
         sr.onerror = () => {};
         sr.start();
@@ -3382,12 +3648,24 @@ function KroftApp({ onFullReset } = {}) {
       const startedAt = Date.now();
       mr.onstop = () => {
         const blob = new Blob(memoChunksRef.current, { type:"audio/webm" });
-        const url = URL.createObjectURL(blob);
         const duration = Math.max(1, Math.round((Date.now() - startedAt) / 1000));
-        setVoiceMemos(p => [{ id:uid(), title:"", url, transcript: liveTranscript || "No speech detected.", date: dateStr(), time: timeStr(), duration }, ...p]);
         stream.getTracks().forEach(t => t.stop());
         sr?.stop();
-        toast("Voice memo saved.");
+        // A data: URL (not URL.createObjectURL's blob: URL) — that's the whole fix for memos
+        // vanishing on reload/logout. blob: URLs only ever live in this tab's memory and are
+        // never valid again after any reload, so even though voiceMemos itself is now
+        // persisted (see the save effect below), the audio each entry pointed to was gone the
+        // moment the page reloaded regardless. A data: URL is just a string, so it round-trips
+        // through JSON/kv_store like every other field and plays back identically as an
+        // <audio src>.
+        const reader = new FileReader();
+        reader.onload = () => {
+          const url = reader.result;
+          setVoiceMemos(p => [{ id:uid(), title:"", url, transcript: liveTranscript || "No speech detected.", date: dateStr(), time: timeStr(), duration }, ...p]);
+          toast("Voice memo saved.");
+        };
+        reader.onerror = () => toast("Couldn't save that recording.");
+        reader.readAsDataURL(blob);
       };
       memoRecRef.current = mr;
       mr.start();
@@ -3428,7 +3706,7 @@ function KroftApp({ onFullReset } = {}) {
     const openReminders = smartReminders.filter(r => !r.done);
     const unread = emails.filter(e => !e.read);
 
-    return `You are KROFT, a personal AI assistant by Virt Technologies. You can answer any question on any topic, and you also have live access to this user's own data (below). Use it whenever the question touches their money, schedule, work or people — quote real figures and real titles rather than speaking generally. If the data below doesn't cover something, say so plainly instead of guessing.
+    return `You are KROFT, a personal AI assistant by Virt Technologies. You can answer any question on any topic, and you also have live access to this user's own data (below). Use it whenever the question touches their money, schedule, work or people — quote real figures and real titles rather than speaking generally. If the data below doesn't cover something, say so plainly instead of guessing. Always reply in the same language the user just wrote or spoke in, not English by default — this app's voice input already recognizes speech in the device's own configured language, not only English.
 
 CURRENT MOMENT
 Date: ${now.toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric",year:"numeric"})} (${today})
@@ -3578,7 +3856,7 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
   const runKroftCompletion = async (messages, { onDelta, signal, usageType = "chat" } = {}) => {
     const recent = messages.slice(-historyLimit());
     const body = {
-      model:"claude-sonnet-4-6",
+      model:"gemini-2.5-flash",
       max_tokens:2048,
       system:krofSysPrompt(),
       messages:recent.map(m => ({ role:m.role, content:m.content })),
@@ -3600,6 +3878,16 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
       if (res.status === 429) {
         const data = await res.json().catch(() => null);
         if (data?.error === "quota_exceeded") throw new KroftError(data.message);
+      }
+      // api/chat.js's two 401 causes ("Not authenticated" — no/expired Supabase session sent
+      // with the request — vs. a server with no GEMINI_API_KEY/ANTHROPIC_API_KEY set at all)
+      // both used to collapse into the same generic "couldn't authenticate" message, which gave
+      // no way to tell a missing sign-in from a missing deploy config. Surfacing which one
+      // actually happened turns this from a dead end into something fixable.
+      if (res.status === 401 || res.status === 403) {
+        const data = await res.json().catch(() => null);
+        if (data?.error === "Not authenticated") throw new KroftError("You're not signed in — log in and try again.");
+        if (data?.error?.includes?.("not configured with a")) throw new KroftError("The AI service isn't set up on the server yet (missing API key). Contact the app owner.");
       }
       throw new KroftError(friendlyError(res.status));
     }
@@ -3817,7 +4105,7 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
     const nearBudget = budgetStatus().filter(b => b.pct >= 0.8 && b.pct < 1);
     const context = `Today: ${today}. Appointments today: ${todays.length ? todays.map(a=>`${a.title} at ${a.time}`).join("; ") : "none"}. Open tasks: ${openTasks.length}. Budgets over limit: ${overBudget.length ? overBudget.map(b=>b.cat).join(", ") : "none"}. Budgets close to limit: ${nearBudget.length ? nearBudget.map(b=>b.cat).join(", ") : "none"}. Name: ${user.name||"there"}.`;
     try {
-      const res = await aiFetch("/api/chat", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ model:"claude-sonnet-4-6", max_tokens:80, system:"Write exactly one short sentence greeting the user by name and flagging the single most useful thing about their day from the context — a tight schedule, a budget issue, or an open task count if nothing else stands out. Never state a specific dollar amount, even if one seems implied — this reads out loud on a lock screen others may see. Plain text, no preamble, no quotes, under 22 words.", messages:[{ role:"user", content:context }] }) });
+      const res = await aiFetch("/api/chat", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ model:"gemini-2.5-flash", max_tokens:80, system:"Write exactly one short sentence greeting the user by name and flagging the single most useful thing about their day from the context — a tight schedule, a budget issue, or an open task count if nothing else stands out. Never state a specific dollar amount, even if one seems implied — this reads out loud on a lock screen others may see. Plain text, no preamble, no quotes, under 22 words.", messages:[{ role:"user", content:context }] }) });
       const data = await res.json();
       const text = data.content?.map(b=>b.text||"").join("").trim();
       return (res.ok && text) || `Good morning, ${user.name||"there"} — ${openTasks.length} tasks open today.`;
@@ -4192,7 +4480,7 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
     if (!spendAiExtra()) return;
     toast("KROFT is drafting a reply…");
     try {
-      const res = await aiFetch("/api/chat", { method:"POST", headers:{"Content-Type":"application/json","X-Kroft-Usage-Type":"extra"}, body:JSON.stringify({ model:"claude-sonnet-4-6", max_tokens:400, messages:[{ role:"user", content:`Draft a concise professional reply (under 5 sentences). From: ${email.from}, Subject: ${email.subject}, Body: "${email.body}"` }] }) });
+      const res = await aiFetch("/api/chat", { method:"POST", headers:{"Content-Type":"application/json","X-Kroft-Usage-Type":"extra"}, body:JSON.stringify({ model:"gemini-2.5-flash", max_tokens:400, messages:[{ role:"user", content:`Draft a concise professional reply (under 5 sentences). From: ${email.from}, Subject: ${email.subject}, Body: "${email.body}"` }] }) });
       const data = await res.json();
       const body = data.content?.map(b=>b.text||"").join("").trim();
       if (!res.ok || !body) { toast("Draft failed — try again."); return; }
@@ -4210,7 +4498,7 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
     setSuggestingReminder(true);
     const context = `Appointments: ${appts.length>0 ? appts.map(a=>`${a.title} at ${a.time} on ${a.date}`).join("; ") : "none"}. Tasks: ${tasks.length>0 ? tasks.filter(t=>!t.done).map(t=>t.title).join("; ") : "none"}. Mood: ${mood}.`;
     try {
-      const res = await aiFetch("/api/chat", { method:"POST", headers:{"Content-Type":"application/json","X-Kroft-Usage-Type":"extra"}, body:JSON.stringify({ model:"claude-sonnet-4-6", max_tokens:120, system:"Suggest exactly ONE short, genuinely useful reminder for this user based on their context. Reply with ONLY the reminder text itself — no preamble, no quotes, under 15 words.", messages:[{ role:"user", content:context }] }) });
+      const res = await aiFetch("/api/chat", { method:"POST", headers:{"Content-Type":"application/json","X-Kroft-Usage-Type":"extra"}, body:JSON.stringify({ model:"gemini-2.5-flash", max_tokens:120, system:"Suggest exactly ONE short, genuinely useful reminder for this user based on their context. Reply with ONLY the reminder text itself — no preamble, no quotes, under 15 words.", messages:[{ role:"user", content:context }] }) });
       const data = await res.json();
       const suggestion = data.content?.map(b=>b.text||"").join("").trim();
       if (!res.ok || !suggestion) { toast("Couldn't get a suggestion — try again."); }
@@ -4243,7 +4531,7 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
     setGeneratingReport(true);
     const context = `Month: ${monthLabel(now.toISOString().slice(0,10))}. Income entries: ${monthInc.length} totaling ${fmtCur(incTotal,user.currency)}. Expense entries: ${monthExp.length} totaling ${fmtCur(expTotal,user.currency)}. Net: ${fmtCur(net,user.currency)}. Top expense categories: ${topCats.length>0?topCats.map(([c,v])=>`${c} (${fmtCur(v,user.currency)})`).join(", "):"none"}. Business: ${user.businessName||"not set"} (${user.businessType||""}).`;
     try {
-      const res = await aiFetch("/api/chat", { method:"POST", headers:{"Content-Type":"application/json","X-Kroft-Usage-Type":"report"}, body:JSON.stringify({ model:"claude-sonnet-4-6", max_tokens:400, system:"You are KROFT, a bookkeeping assistant. Given a user's monthly income/expense summary, write a short end-of-month summary: 2-3 sentences on what the numbers show, then 2-3 practical observations about their own spending patterns. Describe what happened in their data — do not recommend financial products, investments, tax positions, borrowing, or anything requiring a licensed advisor. Frame observations as prompts to consider, not instructions. No preamble, no headers, plain text only.", messages:[{ role:"user", content:context }] }) });
+      const res = await aiFetch("/api/chat", { method:"POST", headers:{"Content-Type":"application/json","X-Kroft-Usage-Type":"report"}, body:JSON.stringify({ model:"gemini-2.5-flash", max_tokens:400, system:"You are KROFT, a bookkeeping assistant. Given a user's monthly income/expense summary, write a short end-of-month summary: 2-3 sentences on what the numbers show, then 2-3 practical observations about their own spending patterns. Describe what happened in their data — do not recommend financial products, investments, tax positions, borrowing, or anything requiring a licensed advisor. Frame observations as prompts to consider, not instructions. No preamble, no headers, plain text only.", messages:[{ role:"user", content:context }] }) });
       const data = await res.json();
       const advice = (res.ok && data.content?.map(b=>b.text||"").join("").trim()) || "Couldn't generate advice right now — try again shortly.";
       setMonthlyReport({ month:monthLabel(now.toISOString().slice(0,10)), incTotal, expTotal, net, topCats, advice, generatedAt:Date.now() });
@@ -4377,7 +4665,7 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
         const res = await aiFetch("/api/chat", {
           method:"POST", headers:{"Content-Type":"application/json","X-Kroft-Usage-Type":"extra"},
           body:JSON.stringify({
-            model:"claude-sonnet-4-6", max_tokens:60,
+            model:"gemini-2.5-flash", max_tokens:60,
             system:"Convert the user's request into a single short search term (2-4 words max) suitable for a places search API, such as 'coffee shop', 'pharmacy open now', 'budget hotel', or 'ATM'. Reply with ONLY the search term, nothing else.",
             messages:[{ role:"user", content:categoryOrQuery }],
           }),
@@ -4487,6 +4775,31 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
             <h1 style={{ fontSize:30, fontWeight:800, color:C.white, letterSpacing:-1.5, marginBottom:4 }}>Welcome back</h1>
             <Mono style={{ color:C.muted }}>Sign in to KROFT by Virt Technologies</Mono>
           </div>
+          {forgotOpen ? (
+            <div style={{ marginBottom:16 }}>
+              {forgotSent ? (
+                <div style={{ background:C.fill, border:`1px solid ${C.border}`, borderRadius:10, padding:"14px", marginBottom:14, textAlign:"center" }}>
+                  <div style={{ fontSize:13, fontWeight:700, color:C.white, marginBottom:3 }}>Check your email</div>
+                  <Mono style={{ color:C.soft, lineHeight:1.5 }}>If an account exists for {forgotEmail.trim()}, a reset link is on its way.</Mono>
+                </div>
+              ) : (
+                <>
+                  <Mono style={{ display:"block", color:C.soft, marginBottom:6, letterSpacing:1 }}>Email</Mono>
+                  <Inp placeholder="your@email.com" value={forgotEmail} type="email" onChange={e => { setForgotEmail(e.target.value); setForgotError(""); }} onKeyDown={e => e.key==="Enter"&&doForgotPassword()} />
+                  {forgotError && (
+                    <div style={{ background:C.fill, border:`1px solid ${C.border}`, borderRadius:8, padding:"9px 13px", marginTop:10 }}>
+                      <Mono style={{ color:C.soft, lineHeight:1.5 }}>{forgotError}</Mono>
+                    </div>
+                  )}
+                  <Btn full onClick={doForgotPassword} disabled={forgotLoading} style={{ padding:"13px", fontSize:14, marginTop:12 }}>{forgotLoading?(<><Spinner size={16} color={C.black} thickness={2} />Sending…</>):"Send reset link"}</Btn>
+                </>
+              )}
+              <div style={{ textAlign:"center", marginTop:14 }}>
+                <Mono style={{ color:C.muted, cursor:"pointer", textDecoration:"underline" }} onClick={() => { setForgotOpen(false); setForgotSent(false); setForgotError(""); setForgotEmail(""); }}>Back to log in</Mono>
+              </div>
+            </div>
+          ) : (
+          <>
           {loginAttempts>0&&!locked && (
             <div style={{ background:C.fill, border:`1px solid ${C.muted}`, borderRadius:8, padding:"8px 13px", marginBottom:13, display:"flex", alignItems:"center", gap:8 }}>
               <div style={{ display:"flex", gap:4 }}>{[...Array(5)].map((_,i) => <div key={i} style={{ width:8, height:8, borderRadius:2, background:i<loginAttempts?C.white:C.border }} />)}</div>
@@ -4505,7 +4818,10 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
               <Inp placeholder="your@email.com" value={loginEmail} type="email" onChange={e => { setLoginEmail(e.target.value); setLoginError(""); }} onKeyDown={e => e.key==="Enter"&&document.getElementById("lpw")?.focus()} />
             </div>
             <div>
-              <Mono style={{ display:"block", color:C.soft, marginBottom:6, letterSpacing:1 }}>Password</Mono>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6 }}>
+                <Mono style={{ color:C.soft, letterSpacing:1 }}>Password</Mono>
+                <Mono style={{ color:C.muted, cursor:"pointer", textDecoration:"underline", fontSize:11 }} onClick={() => { if (!isSupabaseConfigured) { toast("Sign in with a real account to reset your password."); return; } setForgotEmail(loginEmail); setForgotError(""); setForgotOpen(true); }}>Forgot password?</Mono>
+              </div>
               <div style={{ position:"relative" }}>
                 <input id="lpw" type={showLoginPw?"text":"password"} placeholder="••••••••" value={loginPw} onChange={e => { setLoginPw(e.target.value); setLoginError(""); }} onKeyDown={e => e.key==="Enter"&&doLogin()} style={{ width:"100%", background:C.surface, border:`1px solid ${loginError&&!locked?C.soft:C.cardB}`, borderRadius:12, padding:"11px 44px 11px 14px", color:C.text, fontSize:13, fontFamily:"'Space Grotesk',sans-serif", outline:"none", boxSizing:"border-box" }} onFocus={e => { e.target.style.borderColor=C.accent; e.target.style.boxShadow=`0 0 0 3px ${C.accentBg}`; }} onBlur={e => { e.target.style.borderColor=C.cardB; e.target.style.boxShadow="none"; }} />
                 <button onClick={() => setShowLoginPw(v => !v)} style={{ position:"absolute", right:12, top:"50%", transform:"translateY(-50%)", background:"none", border:"none", cursor:"pointer", color:C.soft, fontSize:10, fontFamily:"'Space Mono',monospace", letterSpacing:.5 }}>{showLoginPw?"HIDE":"SHOW"}</button>
@@ -4526,6 +4842,10 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
           <div style={{ textAlign:"center", marginBottom:16 }}>
             <Mono style={{ color:C.muted }}>Don't have an account?{" "}<span onClick={() => { setLoginError(""); setStep("signup"); }} style={{ color:C.white, cursor:"pointer", textDecoration:"underline", fontWeight:600 }}>Sign up</span></Mono>
           </div>
+          </>
+          )}
+          {!forgotOpen && (
+          <>
           <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:12 }}>
             <div style={{ flex:1, height:1, background:C.border }} /><Mono style={{ color:C.muted }}>or</Mono><div style={{ flex:1, height:1, background:C.border }} />
           </div>
@@ -4536,6 +4856,36 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
               </button>
             ))}
           </div>
+          </>
+          )}
+        </OShell>
+      )}
+
+      {step === "reset-password" && (
+        <OShell step="reset-password">
+          <div style={{ textAlign:"center", marginBottom:28 }}>
+            <div style={{ margin:"0 auto 18px", width:64, height:64, borderRadius:18, background:C.white, display:"flex", alignItems:"center", justifyContent:"center", boxShadow:`0 0 0 8px ${C.fillStrong}` }}>
+              <span style={{ fontSize:28, fontWeight:900, color:C.black }}>K</span>
+            </div>
+            <h1 style={{ fontSize:30, fontWeight:800, color:C.white, letterSpacing:-1.5, marginBottom:4 }}>Set a new password</h1>
+            <Mono style={{ color:C.muted }}>Choose a new password for your account</Mono>
+          </div>
+          <div style={{ display:"flex", flexDirection:"column", gap:13, marginBottom:12 }}>
+            <div>
+              <Mono style={{ display:"block", color:C.soft, marginBottom:6, letterSpacing:1 }}>New password</Mono>
+              <input type="password" placeholder="At least 8 characters" value={newPw} onChange={e => { setNewPw(e.target.value); setResetPwError(""); }} style={{ width:"100%", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 14px", color:C.text, fontSize:13, fontFamily:"'Space Grotesk',sans-serif", outline:"none", boxSizing:"border-box" }} onFocus={e => { e.target.style.borderColor=C.accent; e.target.style.boxShadow=`0 0 0 3px ${C.accentBg}`; }} onBlur={e => { e.target.style.borderColor=C.cardB; e.target.style.boxShadow="none"; }} />
+            </div>
+            <div>
+              <Mono style={{ display:"block", color:C.soft, marginBottom:6, letterSpacing:1 }}>Confirm password</Mono>
+              <input type="password" placeholder="Re-enter your new password" value={confirmNewPw} onChange={e => { setConfirmNewPw(e.target.value); setResetPwError(""); }} onKeyDown={e => e.key==="Enter"&&doResetPassword()} style={{ width:"100%", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 14px", color:C.text, fontSize:13, fontFamily:"'Space Grotesk',sans-serif", outline:"none", boxSizing:"border-box" }} onFocus={e => { e.target.style.borderColor=C.accent; e.target.style.boxShadow=`0 0 0 3px ${C.accentBg}`; }} onBlur={e => { e.target.style.borderColor=C.cardB; e.target.style.boxShadow="none"; }} />
+            </div>
+          </div>
+          {resetPwError && (
+            <div style={{ background:C.fill, border:`1px solid ${C.border}`, borderRadius:8, padding:"9px 13px", marginBottom:12 }}>
+              <Mono style={{ color:C.soft, lineHeight:1.5 }}>{resetPwError}</Mono>
+            </div>
+          )}
+          <Btn full onClick={doResetPassword} disabled={resetPwLoading} style={{ padding:"13px", fontSize:14 }}>{resetPwLoading?(<><Spinner size={16} color={C.black} thickness={2} />Updating…</>):"Update password"}</Btn>
         </OShell>
       )}
 
@@ -4638,7 +4988,7 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
       )}
 
       {step === "business" && (
-        <OShell step="business">
+        <OShell step="business" hideProgress={editingFromProfile}>
           <h2 style={{ fontSize:26, fontWeight:800, color:C.white, letterSpacing:-1, marginBottom:4 }}>Your Business</h2>
           <Mono style={{ display:"block", color:C.muted, marginBottom:22 }}>So KROFT can tailor your finance dashboard.</Mono>
           <div style={{ display:"flex", flexDirection:"column", gap:13, marginBottom:22 }}>
@@ -4680,12 +5030,16 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
               )}
             </div>
           </div>
-          <div style={{ display:"flex", gap:10 }}><Btn v="outline" onClick={() => setStep("photo")} style={{ flex:1 }}>Back</Btn><Btn onClick={() => setStep("prefs")} style={{ flex:2 }}>Next</Btn></div>
+          {editingFromProfile ? (
+            <div style={{ display:"flex", gap:10 }}><Btn v="outline" onClick={() => setStep("dashboard")} style={{ flex:1 }}>Cancel</Btn><Btn onClick={() => { saveProfileNow().catch(()=>{}); setStep("dashboard"); toast("Business details saved."); }} style={{ flex:2 }}>Save</Btn></div>
+          ) : (
+            <div style={{ display:"flex", gap:10 }}><Btn v="outline" onClick={() => setStep("photo")} style={{ flex:1 }}>Back</Btn><Btn onClick={() => setStep("prefs")} style={{ flex:2 }}>Next</Btn></div>
+          )}
         </OShell>
       )}
 
       {step === "prefs" && (
-        <OShell step="prefs">
+        <OShell step="prefs" hideProgress={editingFromProfile}>
           <h2 style={{ fontSize:26, fontWeight:800, color:C.white, letterSpacing:-1, marginBottom:4 }}>Preferences</h2>
           <Mono style={{ display:"block", color:C.muted, marginBottom:22 }}>Connect the accounts KROFT should work with.</Mono>
           <div style={{ marginBottom:22 }}>
@@ -4720,7 +5074,11 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
               ))}
             </div>
           </div>
-          <div style={{ display:"flex", gap:10 }}><Btn v="outline" onClick={() => setStep("business")} style={{ flex:1 }}>Back</Btn><Btn onClick={() => setStep("done")} style={{ flex:2 }}>Almost done</Btn></div>
+          {editingFromProfile ? (
+            <div style={{ display:"flex", gap:10 }}><Btn v="outline" onClick={() => setStep("dashboard")} style={{ flex:1 }}>Cancel</Btn><Btn onClick={() => { saveProfileNow().catch(()=>{}); setStep("dashboard"); toast("Preferences saved."); }} style={{ flex:2 }}>Save</Btn></div>
+          ) : (
+            <div style={{ display:"flex", gap:10 }}><Btn v="outline" onClick={() => setStep("business")} style={{ flex:1 }}>Back</Btn><Btn onClick={() => setStep("done")} style={{ flex:2 }}>Almost done</Btn></div>
+          )}
         </OShell>
       )}
 
@@ -5603,7 +5961,7 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
                 <Mono style={{ display:"block", color:C.soft, marginBottom:18 }}>{(googleStatus.gmail || microsoftStatus.mail) ? "Nothing here right now — compose a new email to get started." : "Connect Gmail or Outlook to let KROFT organize your inbox."}</Mono>
                 <div style={{ display:"flex", gap:9, justifyContent:"center" }}>
                   <Btn sm onClick={() => setComposeDraft({to:"",subject:"",body:""})}>Compose Email</Btn>
-                  {!(googleStatus.gmail || microsoftStatus.mail) && <Btn sm v="outline" onClick={() => setStep("prefs")}>Connect Email</Btn>}
+                  {!(googleStatus.gmail || microsoftStatus.mail) && <Btn sm v="outline" onClick={() => { setEditingFromProfile(true); setStep("prefs"); }}>Connect Email</Btn>}
                 </div>
               </Card>
             )}
@@ -5790,13 +6148,7 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
               <h2 style={{ fontSize:22, fontWeight:700, color:C.white, letterSpacing:-1 }}>Files</h2>
               <label style={{ background:C.white, color:C.black, borderRadius:12, padding:"10px 22px", cursor:"pointer", fontSize:13, fontWeight:700, fontFamily:"'Space Grotesk',sans-serif" }}>
                 + Upload
-                <input type="file" multiple style={{ display:"none" }} onChange={e => {
-                  const picked = Array.from(e.target.files||[]);
-                  if (picked.length===0) return;
-                  setFiles(p => [...picked.map(f => ({ id:uid(), name:f.name, size:f.size, type:f.type||"file", date:dateStr(), url:URL.createObjectURL(f), contactId:null })), ...p]);
-                  toast(`${picked.length} file${picked.length!==1?"s":""} added.`);
-                  e.target.value = "";
-                }} />
+                <input type="file" multiple style={{ display:"none" }} onChange={handleFilesUpload} />
               </label>
             </div>
             {files.length===0 && (
@@ -5816,7 +6168,13 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
                     </div>
                   </div>
                   <div style={{ display:"flex", gap:7, flexShrink:0 }}>
-                    <a href={f.url} download={f.name} style={{ textDecoration:"none" }}><Btn sm v="outline">Open</Btn></a>
+                    {/* No download attribute here — that's what used to force a save-as dialog
+                        just to look at a file. Opening the data: URL directly in a new tab lets
+                        the browser render it in place instead (images, PDFs, text all display
+                        inline); a type with no built-in browser viewer, like a .docx, still
+                        downloads, but that's the browser's own behavior, not this forcing it. */}
+                    <a href={f.url} target="_blank" rel="noopener noreferrer" style={{ textDecoration:"none" }}><Btn sm v="outline">View</Btn></a>
+                    <a href={f.url} download={f.name} style={{ textDecoration:"none" }}><Btn sm v="outline">Download</Btn></a>
                     <Btn sm v="outline" onClick={() => shareContent({ title:f.name, text:`Sharing a file: ${f.name}`, url:f.url })}>Share</Btn>
                   </div>
                 </div>
@@ -6765,7 +7123,16 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
           <div style={{ animation:"fadeUp .4s ease" }}>
             <ProfileSection
               user={user}
-              onEditPreferences={() => setStep("prefs")}
+              onUpdateName={name => setUser(u => ({ ...u, name }))}
+              // Two different buttons used to share this one callback: "Manage connections"
+              // (Calendar/Email rows) correctly wants the account-linking screen — that's
+              // "prefs" — but "Personal Preferences" > "Edit details" wants Business
+              // name/type/currency, which live on a DIFFERENT step ("business"). Sharing one
+              // prop meant "Edit details" silently opened account-linking and edited none of
+              // what it promised. Split into two so each button reaches the fields it actually
+              // claims to edit.
+              onEditPreferences={() => { setEditingFromProfile(true); setStep("prefs"); }}
+              onEditBusinessDetails={() => { setEditingFromProfile(true); setStep("business"); }}
               onExportData={exportData}
               onImportData={importData}
               notifPermission={notifPermission}
@@ -6807,6 +7174,8 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
               onToggleTheme={setTheme}
               toast={toast}
               subscribed={subscribed}
+              subscriptionStatus={subscriptionStatus}
+              autoRenews={autoRenews}
               billingLoading={billingLoading}
               onUpgrade={startCheckout}
               onManageBilling={cancelKroftPlus}
@@ -6816,6 +7185,8 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
               onSetVoiceReplies={setVoiceReplies}
               proactiveInsights={proactiveInsights}
               onSetProactiveInsights={setProactiveInsights}
+              voicePref={voicePref}
+              onSetVoicePref={key => { setPreferredVoiceKey(key); setVoicePref(key); speak("Hi, this is how I sound."); }}
               onSetupBiometric={setupBiometric}
               onRemoveBiometric={removeBiometric}
               usageStats={{

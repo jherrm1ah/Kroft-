@@ -9,12 +9,10 @@
 // shipped to the browser.
 //
 // Kroft.jsx's six call sites and its SSE stream reader all speak Anthropic's Messages API
-// shape (model/max_tokens/system/messages/stream in, content[]/content_block_delta out) — that
-// contract is fixed at this endpoint regardless of which provider actually answers it.
-// GEMINI_API_KEY is checked first (Anthropic can cost money per request; Gemini currently has
-// a usable free tier, which is why this order exists — see api/_lib/gemini.js and
-// api/_lib/anthropic.js). Switching providers is a Vercel environment-variable change, not a
-// code change: set/unset whichever key, nothing here needs editing.
+// shape (model/max_tokens/system/messages/stream in, content[]/content_block_delta out) —
+// that's just the request/response contract this endpoint expects the client to use, not a
+// claim about which provider answers it. Only GEMINI_API_KEY is used right now (Anthropic
+// support is deliberately not wired in yet — see api/_lib/gemini.js for the shape translation).
 //
 // Runs on the Edge runtime (not the default Node serverless runtime) specifically so the
 // response can be streamed straight through: Kroft's main chat sends { stream: true } and
@@ -23,7 +21,6 @@
 export const config = { runtime: "edge" };
 
 import { callGemini } from "./_lib/gemini.js";
-import { callAnthropic } from "./_lib/anthropic.js";
 import { getAuthedUser, supabaseAdmin } from "./_lib/supabaseAdmin.js";
 
 // Mirrors Kroft.jsx's FREE_DAILY_MESSAGE_LIMIT / FREE_DAILY_EXTRAS_LIMIT / FREE_DAILY_VOICE_LIMIT
@@ -102,13 +99,12 @@ export default async function handler(req) {
   }
 
   const geminiKey = process.env.GEMINI_API_KEY;
-  const anthropicKey = process.env.ANTHROPIC_API_KEY;
-  if (!geminiKey && !anthropicKey) {
+  if (!geminiKey) {
     // Missing config, not a bad request — mirrors friendlyError()'s 401/403 branch in
     // Kroft.jsx ("I couldn't authenticate with the AI service.") rather than surfacing a
     // generic network failure.
     return new Response(
-      JSON.stringify({ error: "Server is not configured with a GEMINI_API_KEY or ANTHROPIC_API_KEY." }),
+      JSON.stringify({ error: "Server is not configured with a GEMINI_API_KEY." }),
       { status: 401, headers: { "Content-Type": "application/json" } }
     );
   }
@@ -123,5 +119,5 @@ export default async function handler(req) {
     });
   }
 
-  return geminiKey ? callGemini(rawBody, geminiKey) : callAnthropic(rawBody, anthropicKey);
+  return callGemini(rawBody, geminiKey);
 }
