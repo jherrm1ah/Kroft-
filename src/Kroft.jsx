@@ -209,12 +209,50 @@ const speechChunks = text => {
   return merged;
 };
 
+// Groups whatever voices this browser/OS actually exposes into up to four picks — two
+// "female"-sounding, two "male"-sounding — by matching common voice names (Apple's Samantha/
+// Karen/Moira/Tessa, Chrome's "Google ... Female/Male", Edge/Windows's Zira/David/Guy/Aria,
+// etc.). No browser exposes a real gender attribute on SpeechSynthesisVoice, so a name-based
+// heuristic is the only option; devices with fewer than two recognizably-named voices per
+// group are backfilled from whatever's left, so the Settings picker always offers up to four
+// genuinely different-sounding options rather than quietly showing fewer.
+const FEMALE_VOICE_HINTS = /female|woman|samantha|karen|victoria|zira|susan|fiona|moira|tessa|serena|salli|joanna|kendra|kimberly|ivy|amy|emma|allison|ava|zoe|shelley|aria|jenny/i;
+const MALE_VOICE_HINTS = /male|\bman\b|daniel|alex|fred|david|\bguy\b|aaron|matthew|justin|joey|eric|ryan|brian|george|kevin|gordon|arthur|thomas/i;
+function categorizeVoices(vs) {
+  const pool = vs.filter(v => v.lang?.startsWith("en"));
+  const used = new Set();
+  const take = (pred, n, out) => {
+    for (const v of pool) {
+      if (out.length >= n) break;
+      if (used.has(v.voiceURI) || !pred(v)) continue;
+      used.add(v.voiceURI); out.push(v);
+    }
+  };
+  const female = []; take(v => FEMALE_VOICE_HINTS.test(v.name), 2, female);
+  const male = []; take(v => MALE_VOICE_HINTS.test(v.name), 2, male);
+  const leftovers = pool.filter(v => !used.has(v.voiceURI));
+  while (female.length < 2 && leftovers.length) { const v = leftovers.shift(); used.add(v.voiceURI); female.push(v); }
+  while (male.length < 2 && leftovers.length) { const v = leftovers.shift(); used.add(v.voiceURI); male.push(v); }
+  return { "female-1":female[0], "female-2":female[1], "male-1":male[0], "male-2":male[1] };
+}
+
+// Set from KroftApp whenever the signed-in user's chosen voice slot (persisted per-account,
+// see voicePref) changes. Lives at module scope, outside React, because speak()/speakSequence()/
+// createSpeechQueue() are plain functions called from all over this file, not hooks with access
+// to component state.
+let preferredVoiceKey = null;
+const setPreferredVoiceKey = key => { preferredVoiceKey = key; };
+
 // getVoices() returns an empty list on the first call in Chrome until the engine finishes
 // loading them and fires voiceschanged — so picking a voice synchronously silently failed on
 // the very first read-aloud of a session, falling back to the default robotic voice.
 const pickVoice = () => {
   const vs = window.speechSynthesis.getVoices();
   if (!vs.length) return null;
+  if (preferredVoiceKey) {
+    const chosen = categorizeVoices(vs)[preferredVoiceKey];
+    if (chosen) return chosen;
+  }
   return vs.find(v => /Samantha|Google US English|Karen|Serena/i.test(v.name))
       || vs.find(v => v.lang === "en-US" && !/compact/i.test(v.name))
       || vs.find(v => v.lang?.startsWith("en"))
@@ -1319,7 +1357,7 @@ function ProfileSwitch({ value, onChange }) {
   );
 }
 
-function ProfileSection({ user, onUpdateName, onEditPreferences, onEditBusinessDetails, onSignOut, theme, onToggleTheme, toast, subscribed, billingLoading, onUpgrade, onManageBilling, dailyMessageCount, freeLimit, usageStats, voiceReplies, onSetVoiceReplies, proactiveInsights, onSetProactiveInsights, onSetupBiometric, onRemoveBiometric, onExportData, onImportData, notifPermission, notifPrefs, onEnableNotifications, onSetNotifPref, onTestNotification, aiExtrasCount, extrasLimit, monthlyReportCount, reportLimit, reportsLeftThisMonth, voiceTurnsCount, voiceLimit }) {
+function ProfileSection({ user, onUpdateName, onEditPreferences, onEditBusinessDetails, onSignOut, theme, onToggleTheme, toast, subscribed, billingLoading, onUpgrade, onManageBilling, dailyMessageCount, freeLimit, usageStats, voiceReplies, onSetVoiceReplies, proactiveInsights, onSetProactiveInsights, voicePref, onSetVoicePref, onSetupBiometric, onRemoveBiometric, onExportData, onImportData, notifPermission, notifPrefs, onEnableNotifications, onSetNotifPref, onTestNotification, aiExtrasCount, extrasLimit, monthlyReportCount, reportLimit, reportsLeftThisMonth, voiceTurnsCount, voiceLimit }) {
   // null = main hub. Otherwise one of: "ai" | "productivity" | "privacy" | "subscription" | "support"
   const [screen, setScreen] = useState(null);
   const [openRow, setOpenRow] = useState(null);
@@ -1369,7 +1407,21 @@ function ProfileSection({ user, onUpdateName, onEditPreferences, onEditBusinessD
         </ProfileRow>
         <ProfileRow label="Voice & Language" sub="English (US) · Voice replies" expanded={openRow==="voice"} onToggle={()=>toggle("voice")}
           right={<ProfileSwitch value={voiceReplies} onChange={onSetVoiceReplies} />}>
-          <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>{voiceReplies ? "KROFT speaks replies and reminders aloud." : "KROFT will stay silent unless you tap Read Aloud."}</Mono>
+          <Mono style={{ display:"block", color:C.soft, lineHeight:1.7, marginBottom:12 }}>{voiceReplies ? "KROFT speaks replies and reminders aloud." : "KROFT will stay silent unless you tap Read Aloud."}</Mono>
+          <Mono style={{ display:"block", color:C.soft, marginBottom:8 }}>Voice</Mono>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8, marginBottom:8 }}>
+            {[
+              { key:"female-1", label:"Female 1" },
+              { key:"female-2", label:"Female 2" },
+              { key:"male-1", label:"Male 1" },
+              { key:"male-2", label:"Male 2" },
+            ].map(v => (
+              <button key={v.key} onClick={() => onSetVoicePref(v.key)} style={{ padding:"10px 6px", borderRadius:10, cursor:"pointer", textAlign:"center", background:voicePref===v.key?C.white:C.surface, border:`1px solid ${voicePref===v.key?C.white:C.cardB}`, color:voicePref===v.key?C.black:C.text, fontSize:12, fontWeight:700, fontFamily:"'Space Grotesk',sans-serif" }}>
+                {v.label}
+              </button>
+            ))}
+          </div>
+          <Mono style={{ display:"block", color:C.muted, lineHeight:1.6 }}>Tap one to hear it — the exact voices available depend on your device and browser.</Mono>
         </ProfileRow>
         <ProfileRow label="Appearance" sub={theme==="dark" ? "Dark mode" : "Light mode"} expanded={openRow==="appearance"} onToggle={()=>toggle("appearance")}>
           <Mono style={{ display:"block", color:C.soft, lineHeight:1.7, marginBottom:12 }}>Switch between dark and light. Both use only black, white and off-white — no grey.</Mono>
@@ -1920,6 +1972,13 @@ function KroftApp({ onFullReset } = {}) {
   // below. When off, KROFT should only respond when asked, not surface unprompted toasts.
   const [proactiveInsights, setProactiveInsights] = useState(true);
 
+  // Which of the four voice slots (see categorizeVoices) KROFT speaks with — persisted
+  // per-account like every other preference here. Kept in sync with the module-level TTS
+  // functions below, since speak()/speakSequence() live outside React and read preferredVoiceKey
+  // directly rather than taking it as an argument on every call site.
+  const [voicePref, setVoicePref] = useState("female-1");
+  useEffect(() => { setPreferredVoiceKey(voicePref); }, [voicePref]);
+
   // Starts at signup. With Supabase configured, the load effect below jumps straight to the
   // dashboard when a real session already exists (a returning, still-signed-in user), the same
   // way any app with real sessions keeps you signed in across a reload. Without Supabase
@@ -2253,6 +2312,7 @@ function KroftApp({ onFullReset } = {}) {
       if (p.theme) setTheme(p.theme);
       if (typeof p.voiceReplies === "boolean") setVoiceReplies(p.voiceReplies);
       if (typeof p.proactiveInsights === "boolean") setProactiveInsights(p.proactiveInsights);
+      if (typeof p.voicePref === "string") setVoicePref(p.voicePref);
       if (p.notifPrefs) setNotifPrefs(v => ({ ...v, ...p.notifPrefs }));
       if (typeof p.aiExtrasCount === "number") setAiExtrasCount(p.aiExtrasCount);
       if (p.aiExtrasDate) setAiExtrasDate(p.aiExtrasDate);
@@ -2356,13 +2416,13 @@ function KroftApp({ onFullReset } = {}) {
   // subscribed is deliberately excluded — see hydrateAllGroups's comment on why it's never
   // restored from this same blob; persisting it here would just re-create the value this app
   // must never trust from client storage in the first place.
-  const saveProfileNow = () => window.storage.set(STORAGE_KEYS.profile, JSON.stringify({ user, theme, voiceReplies, proactiveInsights, dailyMessageCount, messageCountDate, incomeCats, expenseCats, notifPrefs, aiExtrasCount, aiExtrasDate, monthlyReportCount, monthlyReportMonth, dailyBriefSentDate, voiceTurnsCount, voiceTurnsDate }), false);
+  const saveProfileNow = () => window.storage.set(STORAGE_KEYS.profile, JSON.stringify({ user, theme, voiceReplies, proactiveInsights, voicePref, dailyMessageCount, messageCountDate, incomeCats, expenseCats, notifPrefs, aiExtrasCount, aiExtrasDate, monthlyReportCount, monthlyReportMonth, dailyBriefSentDate, voiceTurnsCount, voiceTurnsDate }), false);
 
   useEffect(() => {
     if (!dataLoaded) return;
     const t = setTimeout(() => { saveProfileNow().catch(()=>{}); }, 900);
     return () => clearTimeout(t);
-  }, [dataLoaded, user, theme, voiceReplies, proactiveInsights, dailyMessageCount, messageCountDate, incomeCats, expenseCats, notifPrefs, aiExtrasCount, aiExtrasDate, monthlyReportCount, monthlyReportMonth, dailyBriefSentDate, voiceTurnsCount, voiceTurnsDate]);
+  }, [dataLoaded, user, theme, voiceReplies, proactiveInsights, voicePref, dailyMessageCount, messageCountDate, incomeCats, expenseCats, notifPrefs, aiExtrasCount, aiExtrasDate, monthlyReportCount, monthlyReportMonth, dailyBriefSentDate, voiceTurnsCount, voiceTurnsDate]);
 
   useEffect(() => {
     if (!dataLoaded) return;
@@ -7053,6 +7113,8 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
               onSetVoiceReplies={setVoiceReplies}
               proactiveInsights={proactiveInsights}
               onSetProactiveInsights={setProactiveInsights}
+              voicePref={voicePref}
+              onSetVoicePref={key => { setPreferredVoiceKey(key); setVoicePref(key); speak("Hi, this is how I sound."); }}
               onSetupBiometric={setupBiometric}
               onRemoveBiometric={removeBiometric}
               usageStats={{
