@@ -4337,7 +4337,12 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
         // Plus: last month's underspend raises this month's effective limit. `limit` stays the
         // number the person actually typed, so the editor and "budgeted total" keep meaning what
         // they say — only the pace/warning math and the "left" figure see the carryover.
-        const carryover = subscribed ? (budgetCarryover[cat] || 0) : 0;
+        // Not gated on `subscribed` here: the rollover effect below already only ever writes a
+        // new carryover while subscribed (and clears it once a downgraded month rolls over), so
+        // re-gating the read on current subscription status just claws back a benefit already
+        // earned the moment someone downgrades mid-month — the opposite of what that effect's own
+        // comment promises ("without clawing back what already rolled over").
+        const carryover = budgetCarryover[cat] || 0;
         const effectiveLimit = limit + carryover;
 
         const pct = effectiveLimit ? spent / effectiveLimit : 0;
@@ -4444,7 +4449,9 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
   // Plus: carries each category's unused budget into the next month, computed once when the
   // calendar month actually changes. Only accrues while subscribed — the benefit belongs to
   // being on Plus when a month closes, not to having ever been on Plus, so downgrading stops
-  // future accrual without clawing back what already rolled over.
+  // future accrual once the month it happened in rolls over (budgetStatus's read side doesn't
+  // separately re-gate on `subscribed`, so a downgrade mid-month doesn't also claw back the
+  // carryover already earned for the month in progress).
   useEffect(() => {
     if (!dataLoaded) return;
     const rollover = () => {
@@ -4452,14 +4459,19 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
       if (currentMonth === budgetRolloverMonth) return;
       if (subscribed) {
         const prevMonth = budgetRolloverMonth;
-        setBudgetCarryover(() => {
+        setBudgetCarryover(prevCarryover => {
           const next = {};
           Object.entries(budgets).forEach(([cat, limit]) => {
             if (!(limit > 0)) return;
             const spent = expenses
               .filter(e => e.cat === cat && (e.date || "").slice(0, 7) === prevMonth)
               .reduce((sum, e) => sum + e.amount, 0);
-            const leftover = limit - spent;
+            // Measured against last month's own effective limit (its base limit plus whatever
+            // had already rolled into it), not the bare limit — otherwise a category that carried
+            // a surplus in and then merely broke even (spent <= limit but > limit alone) reads as
+            // no leftover, and a multi-month streak of underspending collapses back to at most one
+            // month's surplus instead of actually compounding the way "carries forward" implies.
+            const leftover = (limit + (prevCarryover[cat] || 0)) - spent;
             // Only a genuine underspend carries forward — an overspent category obviously
             // shouldn't reduce next month's limit, so it simply carries nothing.
             if (leftover > 0) next[cat] = leftover;
