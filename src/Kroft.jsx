@@ -3757,6 +3757,16 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
         const data = await res.json().catch(() => null);
         if (data?.error === "quota_exceeded") throw new KroftError(data.message);
       }
+      // api/chat.js's two 401 causes ("Not authenticated" — no/expired Supabase session sent
+      // with the request — vs. a server with no GEMINI_API_KEY/ANTHROPIC_API_KEY set at all)
+      // both used to collapse into the same generic "couldn't authenticate" message, which gave
+      // no way to tell a missing sign-in from a missing deploy config. Surfacing which one
+      // actually happened turns this from a dead end into something fixable.
+      if (res.status === 401 || res.status === 403) {
+        const data = await res.json().catch(() => null);
+        if (data?.error === "Not authenticated") throw new KroftError("You're not signed in — log in and try again.");
+        if (data?.error?.includes?.("not configured with a")) throw new KroftError("The AI service isn't set up on the server yet (missing API key). Contact the app owner.");
+      }
       throw new KroftError(friendlyError(res.status));
     }
 
