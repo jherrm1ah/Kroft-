@@ -713,6 +713,8 @@ const NavIcon = ({ id, size=20, color="currentColor" }) => {
       return <svg viewBox="0 0 24 24" style={s}><rect x="9" y="3" width="6" height="11" rx="3" {...p} /><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0" {...p} /><path d="M12 18v3" {...p} /></svg>;
     case "send":
       return <svg viewBox="0 0 24 24" style={s}><path d="M4.5 12h14" {...p} /><path d="M12.5 5.5 19 12l-6.5 6.5" {...p} /></svg>;
+    case "edit":
+      return <svg viewBox="0 0 24 24" style={s}><path d="M15.5 4.5 19.5 8.5 8 20H4v-4z" {...p} /><path d="M14 6l4 4" {...p} /></svg>;
     // ---- Workspace tool icons (the hub's ToolCard grid) ----
     case "calendar":
       return <svg viewBox="0 0 24 24" style={s}><rect x="4" y="5.5" width="16" height="14" rx="2" {...p} /><path d="M4 10h16" {...p} /><path d="M8 3.5v3M16 3.5v3" {...p} /></svg>;
@@ -1317,7 +1319,7 @@ function ProfileSwitch({ value, onChange }) {
   );
 }
 
-function ProfileSection({ user, onEditPreferences, onSignOut, theme, onToggleTheme, toast, subscribed, billingLoading, onUpgrade, onManageBilling, dailyMessageCount, freeLimit, usageStats, voiceReplies, onSetVoiceReplies, proactiveInsights, onSetProactiveInsights, onSetupBiometric, onRemoveBiometric, onExportData, onImportData, notifPermission, notifPrefs, onEnableNotifications, onSetNotifPref, onTestNotification, aiExtrasCount, extrasLimit, monthlyReportCount, reportLimit, reportsLeftThisMonth, voiceTurnsCount, voiceLimit }) {
+function ProfileSection({ user, onUpdateName, onEditPreferences, onEditBusinessDetails, onSignOut, theme, onToggleTheme, toast, subscribed, billingLoading, onUpgrade, onManageBilling, dailyMessageCount, freeLimit, usageStats, voiceReplies, onSetVoiceReplies, proactiveInsights, onSetProactiveInsights, onSetupBiometric, onRemoveBiometric, onExportData, onImportData, notifPermission, notifPrefs, onEnableNotifications, onSetNotifPref, onTestNotification, aiExtrasCount, extrasLimit, monthlyReportCount, reportLimit, reportsLeftThisMonth, voiceTurnsCount, voiceLimit }) {
   // null = main hub. Otherwise one of: "ai" | "productivity" | "privacy" | "subscription" | "support"
   const [screen, setScreen] = useState(null);
   const [openRow, setOpenRow] = useState(null);
@@ -1326,6 +1328,21 @@ function ProfileSection({ user, onEditPreferences, onSignOut, theme, onToggleThe
   const initials = user.name ? user.name.split(" ").map(n=>n[0]).join("").toUpperCase().slice(0,2) : "?";
   const goTo = key => { setOpenRow(null); setScreen(key); };
   const goBack = () => { setOpenRow(null); setScreen(null); };
+
+  // What KROFT calls this user everywhere (greetings, voice replies, the daily briefing) — set
+  // once at signup with no way to change it afterward until now. Local draft + explicit
+  // Save/Cancel rather than saving on every keystroke, so a half-typed name never briefly
+  // becomes "what KROFT calls you" before the person finishes typing.
+  const [editingName, setEditingName] = useState(false);
+  const [nameDraft, setNameDraft] = useState(user.name || "");
+  const saveName = () => {
+    const trimmed = nameDraft.trim();
+    if (!trimmed) return;
+    onUpdateName(trimmed);
+    setEditingName(false);
+    toast(`Got it — KROFT will call you ${trimmed}.`);
+  };
+  const cancelEditName = () => { setNameDraft(user.name || ""); setEditingName(false); };
 
   // Local, in-memory-only preference toggles for this session — presentational until wired to a backend.
   // voiceReplies and proactiveInsights now live in Kroft() (lifted up) since they actually gate
@@ -1340,9 +1357,12 @@ function ProfileSection({ user, onEditPreferences, onSignOut, theme, onToggleThe
     <div style={{ animation:"fadeUp .25s ease" }}>
       <ProfileScreenHeader title="AI & Personalization" onBack={goBack} />
       <Card style={{ padding:"2px 16px" }}>
-        <ProfileRow label="Personal Preferences" sub="Name, business, currency" expanded={openRow==="prefs"} onToggle={()=>toggle("prefs")}>
+        <ProfileRow label="Personal Preferences" sub="Business, currency" expanded={openRow==="prefs"} onToggle={()=>toggle("prefs")}>
           <Mono style={{ display:"block", color:C.soft, lineHeight:1.7, marginBottom:10 }}>Business: {user.businessName || "Not set"} · Currency: {user.currency}</Mono>
-          <Btn sm onClick={onEditPreferences}>Edit details</Btn>
+          {/* Your name is edited right at the top of Profile now, not here — see the pencil
+              icon next to it. This used to say "Name, business, currency" and route to the
+              account-linking screen, which edits none of the three. */}
+          <Btn sm onClick={onEditBusinessDetails}>Edit details</Btn>
         </ProfileRow>
         <ProfileRow label="AI Memory" sub="What KROFT remembers about you" expanded={openRow==="memory"} onToggle={()=>toggle("memory")}>
           <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>KROFT keeps context from this session only — your finances, appointments, and mood — to give relevant answers. Nothing is shared outside this session.</Mono>
@@ -1709,8 +1729,26 @@ function ProfileSection({ user, onEditPreferences, onSignOut, theme, onToggleThe
         <div style={{ width:84, height:84, borderRadius:"50%", overflow:"hidden", background:user.photo?`url(${user.photo}) center/cover no-repeat`:C.surface, border:`2px solid ${C.border}`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:28, fontWeight:800, color:C.white, marginBottom:14 }}>
           {!user.photo && initials}
         </div>
-        <div style={{ fontSize:20, fontWeight:800, color:C.white, letterSpacing:-.5, marginBottom:3 }}>{user.name || "Your name"}</div>
-        <Mono style={{ color:C.muted, marginBottom:12 }}>Powered by Virt Technologies</Mono>
+        {editingName ? (
+          <div style={{ width:"100%", maxWidth:260, marginBottom:10 }}>
+            <Inp autoFocus value={nameDraft} onChange={e=>setNameDraft(e.target.value)}
+              onKeyDown={e => { if (e.key==="Enter") saveName(); if (e.key==="Escape") cancelEditName(); }}
+              placeholder="What should KROFT call you?" style={{ textAlign:"center", marginBottom:8 }} />
+            <div style={{ display:"flex", gap:7 }}>
+              <Btn sm v="outline" onClick={cancelEditName} style={{ flex:1 }}>Cancel</Btn>
+              <Btn sm disabled={!nameDraft.trim()} onClick={saveName} style={{ flex:1 }}>Save</Btn>
+            </div>
+          </div>
+        ) : (
+          <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:3 }}>
+            <div style={{ fontSize:20, fontWeight:800, color:C.white, letterSpacing:-.5 }}>{user.name || "Your name"}</div>
+            <button onClick={() => { setNameDraft(user.name||""); setEditingName(true); }} aria-label="Edit your name" title="Edit your name"
+              style={{ background:"none", border:"none", cursor:"pointer", padding:4, color:C.muted, display:"flex", alignItems:"center" }}>
+              <NavIcon id="edit" size={14} color={C.muted} />
+            </button>
+          </div>
+        )}
+        {!editingName && <Mono style={{ color:C.muted, marginBottom:12 }}>Powered by Virt Technologies</Mono>}
         <div style={{ display:"flex", gap:7, flexWrap:"wrap", justifyContent:"center" }}>
           <Tag tone="positive">Online</Tag>
           <Tag tone="accent">Synced</Tag>
@@ -6790,7 +6828,16 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
           <div style={{ animation:"fadeUp .4s ease" }}>
             <ProfileSection
               user={user}
+              onUpdateName={name => setUser(u => ({ ...u, name }))}
+              // Two different buttons used to share this one callback: "Manage connections"
+              // (Calendar/Email rows) correctly wants the account-linking screen — that's
+              // "prefs" — but "Personal Preferences" > "Edit details" wants Business
+              // name/type/currency, which live on a DIFFERENT step ("business"). Sharing one
+              // prop meant "Edit details" silently opened account-linking and edited none of
+              // what it promised. Split into two so each button reaches the fields it actually
+              // claims to edit.
               onEditPreferences={() => setStep("prefs")}
+              onEditBusinessDetails={() => setStep("business")}
               onExportData={exportData}
               onImportData={importData}
               notifPermission={notifPermission}
