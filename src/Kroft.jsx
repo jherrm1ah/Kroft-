@@ -1910,6 +1910,10 @@ const STORAGE_KEYS = {
   // fires on every small task/note edit — bundling memos in would mean re-writing all that audio
   // on every unrelated edit instead of only when a memo itself actually changes.
   voiceMemosData: "kroft:voicememos",
+  // Same reasoning as voiceMemosData, and the same underlying bug it fixed: uploaded files (see
+  // the Files upload handler) can run well into the megabytes, so they get their own save effect
+  // rather than riding along on every unrelated productivity edit.
+  filesData: "kroft:files",
 };
 
 function KroftApp({ onFullReset } = {}) {
@@ -2367,6 +2371,7 @@ function KroftApp({ onFullReset } = {}) {
     if (data.contactsData) setContacts(data.contactsData.contacts||[]);
     if (data.projectsData) { setProjects(data.projectsData.projects||[]); setDocuments(data.projectsData.documents||[]); }
     if (data.voiceMemosData) setVoiceMemos(data.voiceMemosData.voiceMemos||[]);
+    if (data.filesData) setFiles(data.filesData.files||[]);
     // Strip transient flags on restore. A reply interrupted mid-stream (tab closed, app
     // backgrounded) would otherwise come back with streaming:true and sit there showing a
     // blinking caret for a response that will never finish arriving.
@@ -2478,6 +2483,15 @@ function KroftApp({ onFullReset } = {}) {
     const t = setTimeout(() => { window.storage.set(STORAGE_KEYS.voiceMemosData, JSON.stringify({ voiceMemos: voiceMemos.slice(0, 20) }), false).catch(()=>{}); }, 900);
     return () => clearTimeout(t);
   }, [dataLoaded, voiceMemos]);
+
+  useEffect(() => {
+    if (!dataLoaded) return;
+    // Same capped-list reasoning as voiceMemosData above — each file is now stored inline as a
+    // data: URL (see the Files upload handler), so this list is capped at the 30 most recent
+    // uploads rather than growing without limit.
+    const t = setTimeout(() => { window.storage.set(STORAGE_KEYS.filesData, JSON.stringify({ files: files.slice(0, 30) }), false).catch(()=>{}); }, 900);
+    return () => clearTimeout(t);
+  }, [dataLoaded, files]);
 
   useEffect(() => {
     if (!dataLoaded) return;
@@ -3252,6 +3266,34 @@ function KroftApp({ onFullReset } = {}) {
     const reader = new FileReader();
     reader.onload = ev => { setUser(u => ({...u, photo:ev.target.result})); setPhotoSource("gallery"); toast("Photo selected."); };
     reader.readAsDataURL(file); e.target.value = "";
+  };
+
+  // Workspace Files upload. Used to store each picked File as URL.createObjectURL(f) — a blob:
+  // URL, valid only in this tab's memory for as long as the page stays open. Since `files` was
+  // also never written to window.storage at all, every uploaded file was silently gone the
+  // moment the page reloaded or a fresh login ran, even though the list still showed it until
+  // then — the exact same bug toggleVoiceMemo had, fixed the same way: a data: URL (a plain,
+  // JSON-serializable string) plus real persistence (see the filesData save effect above).
+  // Capped per-file rather than left unbounded, since a data: URL keeps the whole file in memory
+  // and in kv_store's jsonb column, unlike a blob: URL which only ever held a lightweight handle.
+  const MAX_UPLOAD_FILE_BYTES = 8 * 1024 * 1024;
+  const handleFilesUpload = e => {
+    const picked = Array.from(e.target.files || []);
+    e.target.value = "";
+    if (!picked.length) return;
+    const ok = picked.filter(f => f.size <= MAX_UPLOAD_FILE_BYTES);
+    const tooBig = picked.length - ok.length;
+    if (tooBig > 0) toast(`${tooBig} file${tooBig!==1?"s":""} skipped — over the 8MB limit.`);
+    if (!ok.length) return;
+    Promise.all(ok.map(f => new Promise(resolve => {
+      const reader = new FileReader();
+      reader.onload = () => resolve({ id:uid(), name:f.name, size:f.size, type:f.type||"file", date:dateStr(), url:reader.result, contactId:null });
+      reader.onerror = () => resolve(null);
+      reader.readAsDataURL(f);
+    }))).then(results => {
+      const added = results.filter(Boolean);
+      if (added.length) { setFiles(p => [...added, ...p]); toast(`${added.length} file${added.length!==1?"s":""} added.`); }
+    });
   };
 
   // ── Voice mode ────────────────────────────────────────────────────────────────────────
@@ -6107,13 +6149,7 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
               <h2 style={{ fontSize:22, fontWeight:700, color:C.white, letterSpacing:-1 }}>Files</h2>
               <label style={{ background:C.white, color:C.black, borderRadius:12, padding:"10px 22px", cursor:"pointer", fontSize:13, fontWeight:700, fontFamily:"'Space Grotesk',sans-serif" }}>
                 + Upload
-                <input type="file" multiple style={{ display:"none" }} onChange={e => {
-                  const picked = Array.from(e.target.files||[]);
-                  if (picked.length===0) return;
-                  setFiles(p => [...picked.map(f => ({ id:uid(), name:f.name, size:f.size, type:f.type||"file", date:dateStr(), url:URL.createObjectURL(f), contactId:null })), ...p]);
-                  toast(`${picked.length} file${picked.length!==1?"s":""} added.`);
-                  e.target.value = "";
-                }} />
+                <input type="file" multiple style={{ display:"none" }} onChange={handleFilesUpload} />
               </label>
             </div>
             {files.length===0 && (
@@ -6133,7 +6169,13 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
                     </div>
                   </div>
                   <div style={{ display:"flex", gap:7, flexShrink:0 }}>
-                    <a href={f.url} download={f.name} style={{ textDecoration:"none" }}><Btn sm v="outline">Open</Btn></a>
+                    {/* No download attribute here — that's what used to force a save-as dialog
+                        just to look at a file. Opening the data: URL directly in a new tab lets
+                        the browser render it in place instead (images, PDFs, text all display
+                        inline); a type with no built-in browser viewer, like a .docx, still
+                        downloads, but that's the browser's own behavior, not this forcing it. */}
+                    <a href={f.url} target="_blank" rel="noopener noreferrer" style={{ textDecoration:"none" }}><Btn sm v="outline">View</Btn></a>
+                    <a href={f.url} download={f.name} style={{ textDecoration:"none" }}><Btn sm v="outline">Download</Btn></a>
                     <Btn sm v="outline" onClick={() => shareContent({ title:f.name, text:`Sharing a file: ${f.name}`, url:f.url })}>Share</Btn>
                   </div>
                 </div>
