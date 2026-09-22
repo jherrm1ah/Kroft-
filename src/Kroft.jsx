@@ -2751,9 +2751,13 @@ function KroftApp({ onFullReset } = {}) {
       setLoginError(""); setLoginAttempts(0); setLoginPw("");
       // The mount-time hydration effect ran before anyone was signed in and found nothing for
       // this account — load it for real now that we know who's signed in.
-      await hydrateAllGroups();
+      const data = await hydrateAllGroups();
       setStep("dashboard");
-      toast(`Welcome back, ${firstNameOf(user.name)||"there"}.`);
+      // Read the name from hydrateAllGroups's own return value, not the closure-captured `user`
+      // state — setUser() inside it doesn't retroactively update what this already-running
+      // function sees, so on a device with no prior local data for this account (first login
+      // here), `user.name` was still empty and this always said "Welcome back, there."
+      toast(`Welcome back, ${firstNameOf(data?.profile?.user?.name)||"there"}.`);
       return;
     }
 
@@ -4548,8 +4552,11 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
     if (aiLoading) return;
     const upToUser = aiMessages.slice(0, i);
     setAiMessages(upToUser);
-    setAiLoading(true);
-    await streamReply(upToUser);
+    // Routes through the same quota check/increment as every other reply (runNormalCompletion)
+    // instead of calling streamReply directly — Retry used to skip the free-tier daily limit
+    // entirely, letting someone who'd already hit it keep regenerating the last reply forever
+    // with the on-screen counter never reflecting it.
+    await runNormalCompletion(upToUser);
   };
 
   const setMsgFeedback = (i, val) => {
@@ -4750,8 +4757,16 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
     setAroundLoading(true); setAroundError(""); setAroundSearched(true); setAroundResults([]);
 
     let searchTerm = categoryOrQuery;
-    if (isNaturalLanguage) {
-      // Let Claude interpret the natural-language request into a place-type query
+    // This call spends from the same "extra" pool as aiDraftReply/suggestSmartReminder (see the
+    // X-Kroft-Usage-Type header below) but, unlike those two, never actually called spendAiExtra
+    // — the server-side quota still enforced it, but aiExtrasCount here never incremented, so
+    // Profile's "free AI drafts/suggestions" counter silently under-reported real usage. Skipping
+    // straight to a plain-text search on exhaustion (rather than blocking the search outright)
+    // matches the existing network-failure fallback below — the person still gets *a* result.
+    if (isNaturalLanguage && !spendAiExtra()) {
+      searchTerm = categoryOrQuery;
+    } else if (isNaturalLanguage) {
+      // Let Gemini interpret the natural-language request into a place-type query
       try {
         const res = await aiFetch("/api/chat", {
           method:"POST", headers:{"Content-Type":"application/json","X-Kroft-Usage-Type":"extra"},
@@ -5413,8 +5428,11 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
                   <BarChart data={[{l:"Income",v:totalIncome},{l:"Expenses",v:totalExpenses},{l:"Profit",v:Math.max(0,netProfit)}]}>
                     <CartesianGrid strokeDasharray="3 3" stroke={C.cardB} vertical={false} />
                     <XAxis dataKey="l" tick={{ fill:C.muted, fontSize:10 }} axisLine={false} tickLine={false} />
-                    <YAxis tick={{ fill:C.muted, fontSize:10 }} axisLine={false} tickLine={false} tickFormatter={v=>"$"+v} />
-                    <Tooltip contentStyle={{ background:C.card, border:`1px solid ${C.cardB}`, borderRadius:12, fontSize:11, color:C.white }} />
+                    {/* Hardcoded "$" used to show on every user's chart regardless of their actual
+                        currency (NGN, EUR, whatever they picked at signup) — everywhere else in
+                        the app already goes through fmtCur, this was the one spot that didn't. */}
+                    <YAxis tick={{ fill:C.muted, fontSize:10 }} axisLine={false} tickLine={false} tickFormatter={v=>fmtCur(0,user.currency).replace(/0\.00/,"").trim()+v} />
+                    <Tooltip formatter={v=>fmtCur(v,user.currency)} contentStyle={{ background:C.card, border:`1px solid ${C.cardB}`, borderRadius:12, fontSize:11, color:C.white }} />
                     <Bar dataKey="v" radius={[4,4,0,0]} opacity={.9}>
                       {[C.positive,C.negative,C.accent].map((clr,i) => <Cell key={i} fill={clr} />)}
                     </Bar>

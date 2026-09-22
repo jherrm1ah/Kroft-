@@ -24,7 +24,12 @@ export default async function handler(req) {
     return jsonResponse({ error: "Invalid payload" }, 400);
   }
 
-  const result = await applyFlutterwaveEvent(supabaseAdmin(), event);
+  // Needed so a duplicate/race subscription (see writeSubscriptionState) can be auto-cancelled
+  // on Flutterwave's side rather than just left to keep billing with no record of it here.
+  const result = await applyFlutterwaveEvent(supabaseAdmin(), event, process.env.FLUTTERWAVE_SECRET_KEY);
+  if (result.duplicateSubscriptionPrevented) {
+    console.error("billing/webhook: prevented a duplicate subscription and auto-cancelled it", { userId: result.userId });
+  }
   if (!result.ok) {
     // A genuine DB error while claiming the transaction for idempotent processing — surfaced as
     // a 5xx specifically so Flutterwave retries delivery, rather than acking a charge that never

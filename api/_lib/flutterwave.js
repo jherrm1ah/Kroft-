@@ -178,7 +178,7 @@ export async function claimTransactionForProcessing(admin, { transactionId, user
 // api/billing/callback.js (both hand this the same shape: a verified Flutterwave transaction
 // object). Never trusts the frontend/redirect alone — callers are required to have already
 // confirmed transaction.status via a server-side verify call before reaching this function.
-export async function applyChargeEvent(admin, transaction) {
+export async function applyChargeEvent(admin, transaction, secretKey) {
   const transactionId = transaction.id ?? transaction.tx_ref;
   if (!transactionId) return { ok: true }; // nothing to key idempotency or a subscription update on
 
@@ -205,7 +205,7 @@ export async function applyChargeEvent(admin, transaction) {
   // confirm the real subscriptions state via `userId` before telling the user Plus is active.
   if (!claim.claimed) return { ok: true, duplicate: true, userId };
 
-  const applied = await writeSubscriptionState(admin, userId, transaction, successful);
+  const applied = await writeSubscriptionState(admin, userId, transaction, successful, secretKey);
   if (!applied.ok) {
     // The transaction got claimed but the actual subscriptions write failed — release the claim
     // so a retried delivery (Flutterwave's webhook retry, or a second hit of callback.js) gets a
@@ -215,17 +215,49 @@ export async function applyChargeEvent(admin, transaction) {
     await admin.from("payment_events").delete().eq("transaction_id", String(transactionId));
     return { ok: false, error: applied.error, userId };
   }
-  return { ok: true, userId };
+  // Distinct from the `duplicate` flag above (same transaction id claimed by another delivery) —
+  // this means a genuinely different, second Flutterwave subscription was detected and
+  // auto-cancelled rather than being allowed to silently replace the one already on file.
+  // Surfaced so callers can log it; nothing currently acts on it beyond that.
+  return { ok: true, userId, duplicateSubscriptionPrevented: !!applied.duplicatePrevented };
 }
 
-async function writeSubscriptionState(admin, userId, transaction, successful) {
+async function writeSubscriptionState(admin, userId, transaction, successful, secretKey) {
   if (successful) {
+    const newSubscriptionId = transaction.plan || transaction.subscription_id || null;
+    // subscriptions is one row per user_id (see api/billing/checkout.js's own "already active"
+    // guard on why), but that guard is check-then-act and can't close the gap between two
+    // checkouts started concurrently — both can complete payment before either's charge event
+    // reaches here. Without this check, the second successful transaction's upsert (onConflict:
+    // "user_id") would silently overwrite the first's provider_subscription_id, permanently
+    // orphaning it: Flutterwave keeps billing that first subscription forever with no reference
+    // to it left in this table, and cancelKroftPlus (which only ever cancels what's stored here)
+    // can never reach it. A truly new/first-time id (no existing row, or no id known yet — see
+    // the schema comment on provider_subscription_id) still goes through the normal upsert below;
+    // this only intervenes when there's already a genuinely different active subscription on file.
+    if (newSubscriptionId) {
+      const { data: existing, error: selectError } = await admin.from("subscriptions").select("status, provider_subscription_id").eq("user_id", userId).maybeSingle();
+      if (selectError) return { ok: false, error: selectError };
+      if (existing?.status === "active" && existing.provider_subscription_id && existing.provider_subscription_id !== newSubscriptionId) {
+        // Best-effort: stop Flutterwave from billing the duplicate going forward. If this call
+        // itself fails, the row is still left untouched (the actually-recorded subscription is
+        // never put at risk), but the duplicate keeps recurring until someone cancels it by hand —
+        // logged so that's actually discoverable rather than silent.
+        if (secretKey) {
+          const cancelResult = await cancelSubscription(secretKey, newSubscriptionId);
+          if (!cancelResult.ok) console.error("writeSubscriptionState: failed to auto-cancel a duplicate subscription", { userId, newSubscriptionId, detail: cancelResult.detail });
+        } else {
+          console.error("writeSubscriptionState: detected a duplicate subscription but had no secretKey to cancel it with", { userId, newSubscriptionId });
+        }
+        return { ok: true, duplicatePrevented: true };
+      }
+    }
     const { error } = await admin.from("subscriptions").upsert(
       {
         user_id: userId,
         provider: "flutterwave",
         provider_customer_ref: transaction.customer?.email,
-        provider_subscription_id: transaction.plan || transaction.subscription_id || null,
+        provider_subscription_id: newSubscriptionId,
         status: "active",
         current_period_end: periodEndFromTransaction(transaction),
         auto_renews: isRecurringCapablePayment(transaction),
@@ -266,10 +298,10 @@ export async function applySubscriptionCancelled(admin, subscriptionEventData) {
   return { ok: true };
 }
 
-export async function applyFlutterwaveEvent(admin, event) {
+export async function applyFlutterwaveEvent(admin, event, secretKey) {
   switch (event.event) {
     case "charge.completed":
-      return applyChargeEvent(admin, event.data);
+      return applyChargeEvent(admin, event.data, secretKey);
     case "subscription.cancelled":
       return applySubscriptionCancelled(admin, event.data);
     default:
