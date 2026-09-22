@@ -1363,7 +1363,7 @@ function ProfileSwitch({ value, onChange }) {
   );
 }
 
-function ProfileSection({ user, onUpdateName, onEditPreferences, onEditBusinessDetails, onSignOut, theme, onToggleTheme, toast, subscribed, billingLoading, onUpgrade, onManageBilling, dailyMessageCount, freeLimit, usageStats, voiceReplies, onSetVoiceReplies, proactiveInsights, onSetProactiveInsights, voicePref, onSetVoicePref, onSetupBiometric, onRemoveBiometric, onExportData, onImportData, notifPermission, notifPrefs, onEnableNotifications, onSetNotifPref, onTestNotification, aiExtrasCount, extrasLimit, monthlyReportCount, reportLimit, reportsLeftThisMonth, voiceTurnsCount, voiceLimit }) {
+function ProfileSection({ user, onUpdateName, onEditPreferences, onEditBusinessDetails, onSignOut, theme, onToggleTheme, toast, subscribed, subscriptionStatus, autoRenews, billingLoading, onUpgrade, onManageBilling, dailyMessageCount, freeLimit, usageStats, voiceReplies, onSetVoiceReplies, proactiveInsights, onSetProactiveInsights, voicePref, onSetVoicePref, onSetupBiometric, onRemoveBiometric, onExportData, onImportData, notifPermission, notifPrefs, onEnableNotifications, onSetNotifPref, onTestNotification, aiExtrasCount, extrasLimit, monthlyReportCount, reportLimit, reportsLeftThisMonth, voiceTurnsCount, voiceLimit }) {
   // null = main hub. Otherwise one of: "ai" | "productivity" | "privacy" | "subscription" | "support"
   const [screen, setScreen] = useState(null);
   const [openRow, setOpenRow] = useState(null);
@@ -1409,7 +1409,7 @@ function ProfileSection({ user, onUpdateName, onEditPreferences, onEditBusinessD
           <Btn sm onClick={onEditBusinessDetails}>Edit details</Btn>
         </ProfileRow>
         <ProfileRow label="AI Memory" sub="What KROFT remembers about you" expanded={openRow==="memory"} onToggle={()=>toggle("memory")}>
-          <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>KROFT keeps context from this session only — your finances, appointments, and mood — to give relevant answers. Nothing is shared outside this session.</Mono>
+          <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>{isSupabaseConfigured ? "KROFT remembers your recent conversation (the last 60 messages) across visits, plus your finances, appointments, and mood, to answer with real context. It's kept in your own account and never shared with other KROFT users." : "KROFT remembers your recent conversation (the last 60 messages) on this device, plus your finances, appointments, and mood, to answer with real context. Nothing leaves this device in local-only mode."}</Mono>
         </ProfileRow>
         <ProfileRow label="Voice & Language" sub="English (US) · Voice replies" expanded={openRow==="voice"} onToggle={()=>toggle("voice")}
           right={<ProfileSwitch value={voiceReplies} onChange={onSetVoiceReplies} />}>
@@ -1546,9 +1546,6 @@ function ProfileSection({ user, onUpdateName, onEditPreferences, onEditBusinessD
           right={<ProfileSwitch value={!!user.webauthnCredentialId} onChange={v => v ? onSetupBiometric() : onRemoveBiometric()} />}>
           <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>Biometric sign-in uses your device's real WebAuthn platform authenticator (Face ID, Touch ID, or Windows Hello) — turning this on will prompt an actual biometric check on this device, not just a toggle.</Mono>
         </ProfileRow>
-        <ProfileRow label="Passcode" sub="Backup unlock method" expanded={openRow==="passcode"} onToggle={()=>toggle("passcode")}>
-          <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>Used to unlock KROFT if Face ID fails or is unavailable.</Mono>
-        </ProfileRow>
         <ProfileRow label="Devices" sub="1 active session" expanded={openRow==="devices"} onToggle={()=>toggle("devices")}>
           <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>This device — signed in now.</Mono>
         </ProfileRow>
@@ -1557,9 +1554,9 @@ function ProfileSection({ user, onUpdateName, onEditPreferences, onEditBusinessD
         </ProfileRow>
         <ProfileRow label="Backup & Restore" sub="Download a copy of everything" expanded={openRow==="data"} onToggle={()=>toggle("data")}>
           <Mono style={{ display:"block", color:C.soft, lineHeight:1.7, marginBottom:12 }}>
-            KROFT keeps your data on this device only — nothing is uploaded. That also means clearing your
-            browser data erases it permanently, so download a backup you can keep somewhere safe.
-            Your password is never included in the file.
+            {isSupabaseConfigured
+              ? "Signed in with a real account, your data already syncs to your own account in the cloud — this backup is just an extra copy, useful for switching devices or keeping an offline copy. Your password is never included in the file."
+              : "KROFT keeps your data on this device only — nothing is uploaded. That also means clearing your browser data erases it permanently, so download a backup you can keep somewhere safe. Your password is never included in the file."}
           </Mono>
           <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
             <Btn sm onClick={onExportData}>Download backup</Btn>
@@ -1568,7 +1565,7 @@ function ProfileSection({ user, onUpdateName, onEditPreferences, onEditBusinessD
           <input ref={fileInputRef} type="file" accept="application/json,.json" style={{ display:"none" }}
             onChange={e => { const f = e.target.files?.[0]; if (f) onImportData(f); e.target.value = ""; }} />
           <Mono style={{ display:"block", color:C.muted, lineHeight:1.7, marginTop:11 }}>
-            Restoring replaces everything currently on this device.
+            Restoring replaces everything currently {isSupabaseConfigured ? "in your account" : "on this device"}.
           </Mono>
         </ProfileRow>
       </Card>
@@ -1809,7 +1806,9 @@ function ProfileSection({ user, onUpdateName, onEditPreferences, onEditBusinessD
         {!editingName && <Mono style={{ color:C.muted, marginBottom:12 }}>Powered by Virt Technologies</Mono>}
         <div style={{ display:"flex", gap:7, flexWrap:"wrap", justifyContent:"center" }}>
           <Tag tone="positive">Online</Tag>
-          <Tag tone="accent">Synced</Tag>
+          {/* "Synced" claimed cloud sync even in local-only mode, where nothing syncs anywhere
+              — this reflects which one is actually true for this deployment. */}
+          {isSupabaseConfigured ? <Tag tone="accent">Synced</Tag> : <Tag>Local only</Tag>}
           {user.webauthnCredentialId && <Tag tone="positive">Face ID enabled</Tag>}
         </div>
       </div>
@@ -7175,6 +7174,8 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
               onToggleTheme={setTheme}
               toast={toast}
               subscribed={subscribed}
+              subscriptionStatus={subscriptionStatus}
+              autoRenews={autoRenews}
               billingLoading={billingLoading}
               onUpgrade={startCheckout}
               onManageBilling={cancelKroftPlus}
