@@ -209,6 +209,12 @@ const speechChunks = text => {
   return merged;
 };
 
+// Every SpeechRecognition instance in this file used to hardcode "en-US", so anyone speaking
+// another language just got garbled or empty transcripts. The browser/OS's own configured
+// language is the right default — it's already what the person actually speaks, needs no
+// language picker UI, and SpeechRecognition accepts any BCP-47 tag the platform supports.
+const speechLang = () => (typeof navigator !== "undefined" && navigator.language) || "en-US";
+
 // Groups whatever voices this browser/OS actually exposes into up to four picks — two
 // "female"-sounding, two "male"-sounding — by matching common voice names (Apple's Samantha/
 // Karen/Moira/Tessa, Chrome's "Google ... Female/Male", Edge/Windows's Zira/David/Guy/Aria,
@@ -3322,7 +3328,7 @@ function KroftApp({ onFullReset } = {}) {
     voiceRecRef.current?.abort?.();
     setVoiceError(""); setVoiceTranscript(""); lastLenRef.current = 0;
     const r = new SR();
-    r.continuous = false; r.interimResults = true; r.lang = "en-US";
+    r.continuous = false; r.interimResults = true; r.lang = speechLang();
     r.onstart = () => { setMicPrimed(true); setVoiceState("listening"); };
     r.onresult = e => {
       const text = Array.from(e.results).map(x => x[0].transcript).join("");
@@ -3419,8 +3425,13 @@ function KroftApp({ onFullReset } = {}) {
       onDone: () => {
         voiceStopRef.current = null;
         // Hand the turn straight back so it stays a conversation instead of making the
-        // person tap between every exchange.
-        if (voiceOpenRef.current) voiceListen();
+        // person tap between every exchange — but not instantly: reopening the mic the moment
+        // KROFT's own voice ends risks it picking up the tail of its own audio (room echo,
+        // speaker bleed on a phone with no headset) as if it were the next thing said, which
+        // reads as KROFT answering itself before the person gets a word in. A short pause here
+        // lets that decay first, so listening only resumes once KROFT has actually finished
+        // replying to what was first said.
+        if (voiceOpenRef.current) setTimeout(() => { if (voiceOpenRef.current) voiceListen(); }, 600);
       },
     });
     voiceStopRef.current = () => queue.cancel();
@@ -3550,7 +3561,7 @@ function KroftApp({ onFullReset } = {}) {
     if (listening) { recRef.current?.stop(); setListening(false); return; }
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) { toast("Speech recognition needs Chrome or Edge."); return; }
-    const r = new SR(); r.continuous=false; r.interimResults=true; r.lang="en-US";
+    const r = new SR(); r.continuous=false; r.interimResults=true; r.lang=speechLang();
     r.onstart = () => setListening(true); r.onend = () => setListening(false);
     r.onresult = e => { const t = Array.from(e.results).map(x => x[0].transcript).join(""); setTranscript(t); if (e.results[0].isFinal) { setAiInput(t); setTab("nova"); setTranscript(""); } };
     r.onerror = () => { setListening(false); toast("Mic error — check permissions."); };
@@ -3574,7 +3585,7 @@ function KroftApp({ onFullReset } = {}) {
       const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
       let sr = null;
       if (SR) {
-        sr = new SR(); sr.continuous = true; sr.interimResults = true; sr.lang = "en-US";
+        sr = new SR(); sr.continuous = true; sr.interimResults = true; sr.lang = speechLang();
         sr.onresult = e => { liveTranscript = Array.from(e.results).map(x => x[0].transcript).join(" "); };
         sr.onerror = () => {};
         sr.start();
@@ -3644,7 +3655,7 @@ function KroftApp({ onFullReset } = {}) {
     const openReminders = smartReminders.filter(r => !r.done);
     const unread = emails.filter(e => !e.read);
 
-    return `You are KROFT, a personal AI assistant by Virt Technologies. You can answer any question on any topic, and you also have live access to this user's own data (below). Use it whenever the question touches their money, schedule, work or people — quote real figures and real titles rather than speaking generally. If the data below doesn't cover something, say so plainly instead of guessing.
+    return `You are KROFT, a personal AI assistant by Virt Technologies. You can answer any question on any topic, and you also have live access to this user's own data (below). Use it whenever the question touches their money, schedule, work or people — quote real figures and real titles rather than speaking generally. If the data below doesn't cover something, say so plainly instead of guessing. Always reply in the same language the user just wrote or spoke in, not English by default — this app's voice input already recognizes speech in the device's own configured language, not only English.
 
 CURRENT MOMENT
 Date: ${now.toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric",year:"numeric"})} (${today})
@@ -3794,7 +3805,7 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
   const runKroftCompletion = async (messages, { onDelta, signal, usageType = "chat" } = {}) => {
     const recent = messages.slice(-historyLimit());
     const body = {
-      model:"claude-sonnet-4-6",
+      model:"gemini-2.5-flash",
       max_tokens:2048,
       system:krofSysPrompt(),
       messages:recent.map(m => ({ role:m.role, content:m.content })),
@@ -4043,7 +4054,7 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
     const nearBudget = budgetStatus().filter(b => b.pct >= 0.8 && b.pct < 1);
     const context = `Today: ${today}. Appointments today: ${todays.length ? todays.map(a=>`${a.title} at ${a.time}`).join("; ") : "none"}. Open tasks: ${openTasks.length}. Budgets over limit: ${overBudget.length ? overBudget.map(b=>b.cat).join(", ") : "none"}. Budgets close to limit: ${nearBudget.length ? nearBudget.map(b=>b.cat).join(", ") : "none"}. Name: ${user.name||"there"}.`;
     try {
-      const res = await aiFetch("/api/chat", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ model:"claude-sonnet-4-6", max_tokens:80, system:"Write exactly one short sentence greeting the user by name and flagging the single most useful thing about their day from the context — a tight schedule, a budget issue, or an open task count if nothing else stands out. Never state a specific dollar amount, even if one seems implied — this reads out loud on a lock screen others may see. Plain text, no preamble, no quotes, under 22 words.", messages:[{ role:"user", content:context }] }) });
+      const res = await aiFetch("/api/chat", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ model:"gemini-2.5-flash", max_tokens:80, system:"Write exactly one short sentence greeting the user by name and flagging the single most useful thing about their day from the context — a tight schedule, a budget issue, or an open task count if nothing else stands out. Never state a specific dollar amount, even if one seems implied — this reads out loud on a lock screen others may see. Plain text, no preamble, no quotes, under 22 words.", messages:[{ role:"user", content:context }] }) });
       const data = await res.json();
       const text = data.content?.map(b=>b.text||"").join("").trim();
       return (res.ok && text) || `Good morning, ${user.name||"there"} — ${openTasks.length} tasks open today.`;
@@ -4418,7 +4429,7 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
     if (!spendAiExtra()) return;
     toast("KROFT is drafting a reply…");
     try {
-      const res = await aiFetch("/api/chat", { method:"POST", headers:{"Content-Type":"application/json","X-Kroft-Usage-Type":"extra"}, body:JSON.stringify({ model:"claude-sonnet-4-6", max_tokens:400, messages:[{ role:"user", content:`Draft a concise professional reply (under 5 sentences). From: ${email.from}, Subject: ${email.subject}, Body: "${email.body}"` }] }) });
+      const res = await aiFetch("/api/chat", { method:"POST", headers:{"Content-Type":"application/json","X-Kroft-Usage-Type":"extra"}, body:JSON.stringify({ model:"gemini-2.5-flash", max_tokens:400, messages:[{ role:"user", content:`Draft a concise professional reply (under 5 sentences). From: ${email.from}, Subject: ${email.subject}, Body: "${email.body}"` }] }) });
       const data = await res.json();
       const body = data.content?.map(b=>b.text||"").join("").trim();
       if (!res.ok || !body) { toast("Draft failed — try again."); return; }
@@ -4436,7 +4447,7 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
     setSuggestingReminder(true);
     const context = `Appointments: ${appts.length>0 ? appts.map(a=>`${a.title} at ${a.time} on ${a.date}`).join("; ") : "none"}. Tasks: ${tasks.length>0 ? tasks.filter(t=>!t.done).map(t=>t.title).join("; ") : "none"}. Mood: ${mood}.`;
     try {
-      const res = await aiFetch("/api/chat", { method:"POST", headers:{"Content-Type":"application/json","X-Kroft-Usage-Type":"extra"}, body:JSON.stringify({ model:"claude-sonnet-4-6", max_tokens:120, system:"Suggest exactly ONE short, genuinely useful reminder for this user based on their context. Reply with ONLY the reminder text itself — no preamble, no quotes, under 15 words.", messages:[{ role:"user", content:context }] }) });
+      const res = await aiFetch("/api/chat", { method:"POST", headers:{"Content-Type":"application/json","X-Kroft-Usage-Type":"extra"}, body:JSON.stringify({ model:"gemini-2.5-flash", max_tokens:120, system:"Suggest exactly ONE short, genuinely useful reminder for this user based on their context. Reply with ONLY the reminder text itself — no preamble, no quotes, under 15 words.", messages:[{ role:"user", content:context }] }) });
       const data = await res.json();
       const suggestion = data.content?.map(b=>b.text||"").join("").trim();
       if (!res.ok || !suggestion) { toast("Couldn't get a suggestion — try again."); }
@@ -4469,7 +4480,7 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
     setGeneratingReport(true);
     const context = `Month: ${monthLabel(now.toISOString().slice(0,10))}. Income entries: ${monthInc.length} totaling ${fmtCur(incTotal,user.currency)}. Expense entries: ${monthExp.length} totaling ${fmtCur(expTotal,user.currency)}. Net: ${fmtCur(net,user.currency)}. Top expense categories: ${topCats.length>0?topCats.map(([c,v])=>`${c} (${fmtCur(v,user.currency)})`).join(", "):"none"}. Business: ${user.businessName||"not set"} (${user.businessType||""}).`;
     try {
-      const res = await aiFetch("/api/chat", { method:"POST", headers:{"Content-Type":"application/json","X-Kroft-Usage-Type":"report"}, body:JSON.stringify({ model:"claude-sonnet-4-6", max_tokens:400, system:"You are KROFT, a bookkeeping assistant. Given a user's monthly income/expense summary, write a short end-of-month summary: 2-3 sentences on what the numbers show, then 2-3 practical observations about their own spending patterns. Describe what happened in their data — do not recommend financial products, investments, tax positions, borrowing, or anything requiring a licensed advisor. Frame observations as prompts to consider, not instructions. No preamble, no headers, plain text only.", messages:[{ role:"user", content:context }] }) });
+      const res = await aiFetch("/api/chat", { method:"POST", headers:{"Content-Type":"application/json","X-Kroft-Usage-Type":"report"}, body:JSON.stringify({ model:"gemini-2.5-flash", max_tokens:400, system:"You are KROFT, a bookkeeping assistant. Given a user's monthly income/expense summary, write a short end-of-month summary: 2-3 sentences on what the numbers show, then 2-3 practical observations about their own spending patterns. Describe what happened in their data — do not recommend financial products, investments, tax positions, borrowing, or anything requiring a licensed advisor. Frame observations as prompts to consider, not instructions. No preamble, no headers, plain text only.", messages:[{ role:"user", content:context }] }) });
       const data = await res.json();
       const advice = (res.ok && data.content?.map(b=>b.text||"").join("").trim()) || "Couldn't generate advice right now — try again shortly.";
       setMonthlyReport({ month:monthLabel(now.toISOString().slice(0,10)), incTotal, expTotal, net, topCats, advice, generatedAt:Date.now() });
@@ -4603,7 +4614,7 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
         const res = await aiFetch("/api/chat", {
           method:"POST", headers:{"Content-Type":"application/json","X-Kroft-Usage-Type":"extra"},
           body:JSON.stringify({
-            model:"claude-sonnet-4-6", max_tokens:60,
+            model:"gemini-2.5-flash", max_tokens:60,
             system:"Convert the user's request into a single short search term (2-4 words max) suitable for a places search API, such as 'coffee shop', 'pharmacy open now', 'budget hotel', or 'ATM'. Reply with ONLY the search term, nothing else.",
             messages:[{ role:"user", content:categoryOrQuery }],
           }),
