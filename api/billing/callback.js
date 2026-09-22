@@ -32,7 +32,13 @@ export default async function handler(req) {
   if (transaction.status !== "successful") return redirectTo(origin, "error", "payment_not_successful");
 
   const admin = supabaseAdmin();
-  const applyResult = await applyChargeEvent(admin, transaction);
+  const applyResult = await applyChargeEvent(admin, transaction, secretKey);
+  if (applyResult.duplicateSubscriptionPrevented) {
+    // The user just paid for a second subscription while an active one already existed on
+    // file (the checkout-race writeSubscriptionState guards against) — logged so this is
+    // actually visible rather than a silent no-op, since a real charge just happened.
+    console.error("billing/callback: prevented a duplicate subscription and auto-cancelled it", { userId: applyResult.userId, transactionId: transaction.id });
+  }
   if (!applyResult.ok) {
     // A real DB error while claiming this transaction for idempotent processing — NOT a normal
     // "payment failed". The charge itself is real (verified above); leave it for

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo, Component } from "react";
-import { BarChart, Bar, Cell, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
+import { BarChart, ComposedChart, Bar, Line, PieChart, Pie, Cell, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend } from "recharts";
 import { supabase, isSupabaseConfigured } from "./supabaseClient.js";
 
 // Theme-aware palette — black, white and off-white only, no grey scale.
@@ -2100,6 +2100,11 @@ function KroftApp({ onFullReset } = {}) {
   const [expenses, setExpenses] = useState([]);
   const [incomeCats, setIncomeCats] = useState(["Invoice","Sales","Consulting","Freelance","Other"]);
   const [expenseCats, setExpenseCats] = useState(["Operations","Tech","Marketing","Travel","Rent","Other"]);
+  // Filters for the income/expense lists — local UI state only, never persisted, since a filter
+  // left on from a prior session would silently hide entries on the next visit.
+  const [txnQuery, setTxnQuery] = useState("");
+  const [txnFrom, setTxnFrom] = useState("");
+  const [txnTo, setTxnTo] = useState("");
   // Monthly spending limits per category, as { [category]: amount }. Tracking spend without ever
   // warning about it means the app only tells you about a problem after the month is over.
   const [budgets, setBudgets] = useState({});
@@ -2114,6 +2119,9 @@ function KroftApp({ onFullReset } = {}) {
   // The last month rollover was processed for, so it runs exactly once per month rather than
   // every time the heartbeat ticks.
   const [budgetRolloverMonth, setBudgetRolloverMonth] = useState(() => todayISO().slice(0, 7));
+  // Percent of this month's net profit to flag as reserved for taxes — 0 means the feature is
+  // off. Purely a display calculation; nothing is actually moved or withheld anywhere.
+  const [taxSetAsidePct, setTaxSetAsidePct] = useState(0);
   // Notification settings, lifted out of ProfileSection where they were local state that nothing
   // read and nothing persisted. Each maps to a real trigger below.
   const [notifPrefs, setNotifPrefs] = useState({ appointments:true, reminders:true, budgets:true, dailyBrief:true });
@@ -2245,6 +2253,10 @@ function KroftApp({ onFullReset } = {}) {
   const [aiMessages, setAiMessages] = useState([]);
   const [aiInput, setAiInput] = useState("");
   const [aiLoading, setAiLoading] = useState(false);
+  // Drives the floating "scroll to bottom" button — shown only once someone has actually
+  // scrolled up to re-read earlier messages, not on every render.
+  const [chatNearBottom, setChatNearBottom] = useState(true);
+  const aiInputRef = useRef(null);
   // Lets a long reply be cut off mid-stream. Held in a ref so the Stop button can reach the
   // controller for whichever request is currently in flight without re-rendering on every token.
   const aiAbortRef = useRef(null);
@@ -2372,6 +2384,7 @@ function KroftApp({ onFullReset } = {}) {
       // means a brief flash of "Free plan" until that fetch resolves, not a lasting gap.
       if (typeof p.dailyMessageCount === "number") setDailyMessageCount(p.dailyMessageCount);
       if (p.messageCountDate) setMessageCountDate(p.messageCountDate);
+      if (typeof p.taxSetAsidePct === "number") setTaxSetAsidePct(p.taxSetAsidePct);
       if (Array.isArray(p.incomeCats)) setIncomeCats(p.incomeCats);
       if (Array.isArray(p.expenseCats)) setExpenseCats(p.expenseCats);
     }
@@ -2459,13 +2472,13 @@ function KroftApp({ onFullReset } = {}) {
   // subscribed is deliberately excluded — see hydrateAllGroups's comment on why it's never
   // restored from this same blob; persisting it here would just re-create the value this app
   // must never trust from client storage in the first place.
-  const saveProfileNow = () => window.storage.set(STORAGE_KEYS.profile, JSON.stringify({ user, theme, voiceReplies, proactiveInsights, voicePref, dailyMessageCount, messageCountDate, incomeCats, expenseCats, notifPrefs, aiExtrasCount, aiExtrasDate, monthlyReportCount, monthlyReportMonth, dailyBriefSentDate, voiceTurnsCount, voiceTurnsDate }), false);
+  const saveProfileNow = () => window.storage.set(STORAGE_KEYS.profile, JSON.stringify({ user, theme, voiceReplies, proactiveInsights, voicePref, dailyMessageCount, messageCountDate, incomeCats, expenseCats, notifPrefs, aiExtrasCount, aiExtrasDate, monthlyReportCount, monthlyReportMonth, dailyBriefSentDate, voiceTurnsCount, voiceTurnsDate, taxSetAsidePct }), false);
 
   useEffect(() => {
     if (!dataLoaded) return;
     const t = setTimeout(() => { saveProfileNow().catch(()=>{}); }, 900);
     return () => clearTimeout(t);
-  }, [dataLoaded, user, theme, voiceReplies, proactiveInsights, voicePref, dailyMessageCount, messageCountDate, incomeCats, expenseCats, notifPrefs, aiExtrasCount, aiExtrasDate, monthlyReportCount, monthlyReportMonth, dailyBriefSentDate, voiceTurnsCount, voiceTurnsDate]);
+  }, [dataLoaded, user, theme, voiceReplies, proactiveInsights, voicePref, dailyMessageCount, messageCountDate, incomeCats, expenseCats, notifPrefs, aiExtrasCount, aiExtrasDate, monthlyReportCount, monthlyReportMonth, dailyBriefSentDate, voiceTurnsCount, voiceTurnsDate, taxSetAsidePct]);
 
   useEffect(() => {
     if (!dataLoaded) return;
@@ -2554,6 +2567,69 @@ function KroftApp({ onFullReset } = {}) {
   const totalIncome = income.reduce((s,r) => s+r.amount, 0);
   const totalExpenses = expenses.reduce((s,r) => s+r.amount, 0);
   const netProfit = totalIncome - totalExpenses;
+
+  // Last 6 calendar months (oldest first, ending this month), each with income/expenses/net
+  // actually posted in it — the Overview chart used to just show lifetime totals as three bars,
+  // which can't show a trend at all. Built from calendar months rather than a rolling 180-day
+  // window so it lines up with how budgets and the monthly report already think about "a month".
+  const monthlyTrend = useMemo(() => {
+    const now = new Date();
+    const months = Array.from({ length:6 }, (_, i) => {
+      const d = new Date(now.getFullYear(), now.getMonth() - (5 - i), 1);
+      return { ym: d.toISOString().slice(0,7), label: d.toLocaleDateString("en-US", { month:"short" }) };
+    });
+    return months.map(({ ym, label }) => {
+      const inc = income.filter(r => (r.date||"").slice(0,7) === ym).reduce((s,r) => s+r.amount, 0);
+      const exp = expenses.filter(r => (r.date||"").slice(0,7) === ym).reduce((s,r) => s+r.amount, 0);
+      return { ym, label, income:inc, expenses:exp, net: inc - exp };
+    });
+  }, [income, expenses]);
+
+  // This calendar month's own totals, computed live (unlike monthlyReport, which needs an
+  // explicit Generate tap and — on the free tier — a limited quota) so other widgets (tax
+  // set-aside, cash flow) always have a current figure to work from.
+  const thisMonthNet = useMemo(() => {
+    const ym = todayISO().slice(0, 7);
+    const inc = income.filter(r => (r.date||"").slice(0,7) === ym).reduce((s,r) => s+r.amount, 0);
+    const exp = expenses.filter(r => (r.date||"").slice(0,7) === ym).reduce((s,r) => s+r.amount, 0);
+    return { income:inc, expenses:exp, net: inc - exp };
+  }, [income, expenses]);
+
+  // This month's expenses grouped by category, for the "Spending by category" donut — largest
+  // slice first so both the chart and its legend read in the same order.
+  const categoryBreakdown = useMemo(() => {
+    const ym = todayISO().slice(0, 7);
+    const byCat = {};
+    expenses.filter(e => (e.date||"").slice(0,7) === ym).forEach(e => { byCat[e.cat] = (byCat[e.cat]||0) + e.amount; });
+    const total = Object.values(byCat).reduce((s,v) => s+v, 0);
+    return Object.entries(byCat).sort((a,b) => b[1]-a[1]).map(([cat, amt]) => ({ cat, amt, pct: total ? amt/total : 0 }));
+  }, [expenses]);
+
+  // Every future occurrence (not just each template's single next one) of every recurring income
+  // or expense due in the next 30 days, simulated forward from nextDate without actually posting
+  // anything — the posting engine only ever tracks one occurrence ahead per template, which isn't
+  // enough to forecast a weekly bill 4 times over.
+  const upcomingCashFlow = useMemo(() => {
+    const today = todayISO();
+    const horizon = new Date(); horizon.setDate(horizon.getDate() + 30);
+    const horizonISO = horizon.toISOString().slice(0, 10);
+    const collect = (list, sign) => {
+      const out = [];
+      list.forEach(e => {
+        if (!e.repeat || e.repeat === "none" || !e.nextDate) return;
+        let cursor = e.nextDate, guard = 0;
+        while (cursor <= horizonISO && guard++ < 60) {
+          if (cursor >= today) out.push({ id:`${e.id}:${cursor}`, label:e.label, cat:e.cat, date:cursor, amount:e.amount, sign });
+          cursor = advanceRepeatDate(cursor, e.repeat);
+        }
+      });
+      return out;
+    };
+    const items = [...collect(income, "+"), ...collect(expenses, "-")].sort((a,b) => a.date.localeCompare(b.date));
+    const projected = items.reduce((s,e) => s + (e.sign === "+" ? e.amount : -e.amount), 0);
+    return { items, projected };
+  }, [income, expenses]);
+
   const pw = signupPw;
   const pwChecks = { length:pw.length>=8, upper:/[A-Z]/.test(pw), lower:/[a-z]/.test(pw), number:/[0-9]/.test(pw), special:/[^A-Za-z0-9]/.test(pw) };
   const pwScore = Object.values(pwChecks).filter(Boolean).length;
@@ -2565,6 +2641,14 @@ function KroftApp({ onFullReset } = {}) {
   // that replies stream, so an unconditional smooth-scroll stacked ~50 animations a second and
   // yanked the view back down whenever someone scrolled up to re-read an earlier message.
   const chatScrollRef = useRef(null);
+  // The chat textarea grows with its content (see the onChange handler where it's rendered),
+  // but sending a message clears aiInput without touching the DOM element's own height, which a
+  // browser never shrinks back down on its own — so a reply typed across three lines would leave
+  // the empty box three lines tall afterward. Whenever aiInput goes back to empty (a send, or the
+  // person clearing it themselves), snap the height back to one line.
+  useEffect(() => {
+    if (aiInput === "" && aiInputRef.current) aiInputRef.current.style.height = "auto";
+  }, [aiInput]);
   useEffect(() => {
     const box = chatScrollRef.current;
     if (!box) { chatEnd.current?.scrollIntoView({ behavior:"smooth" }); return; }
@@ -2739,9 +2823,13 @@ function KroftApp({ onFullReset } = {}) {
       setLoginError(""); setLoginAttempts(0); setLoginPw("");
       // The mount-time hydration effect ran before anyone was signed in and found nothing for
       // this account — load it for real now that we know who's signed in.
-      await hydrateAllGroups();
+      const data = await hydrateAllGroups();
       setStep("dashboard");
-      toast(`Welcome back, ${firstNameOf(user.name)||"there"}.`);
+      // Read the name from hydrateAllGroups's own return value, not the closure-captured `user`
+      // state — setUser() inside it doesn't retroactively update what this already-running
+      // function sees, so on a device with no prior local data for this account (first login
+      // here), `user.name` was still empty and this always said "Welcome back, there."
+      toast(`Welcome back, ${firstNameOf(data?.profile?.user?.name)||"there"}.`);
       return;
     }
 
@@ -3353,6 +3441,11 @@ function KroftApp({ onFullReset } = {}) {
     return () => clearInterval(t);
   }, [voiceState]);
   const voiceRecRef = useRef(null);
+  // Set once if the device's own language (speechLang()) turns out to be one Chrome's
+  // recognizer rejects outright — see the "language-not-supported" handling below. null means
+  // "use the device's language", so this only ever overrides it for the one device/session where
+  // that language actually doesn't work.
+  const voiceLangOverrideRef = useRef(null);
   const voiceAudioRef = useRef(null);   // { ctx, analyser, stream, raf }
   const voiceStopRef = useRef(null);    // cancels in-flight speech
   const voiceAbortRef = useRef(null);   // cancels an in-flight generation
@@ -3403,7 +3496,7 @@ function KroftApp({ onFullReset } = {}) {
     voiceRecRef.current?.abort?.();
     setVoiceError(""); setVoiceTranscript(""); lastLenRef.current = 0;
     const r = new SR();
-    r.continuous = false; r.interimResults = true; r.lang = speechLang();
+    r.continuous = false; r.interimResults = true; r.lang = voiceLangOverrideRef.current || speechLang();
     r.onstart = () => { setMicPrimed(true); setVoiceState("listening"); };
     r.onresult = e => {
       const text = Array.from(e.results).map(x => x[0].transcript).join("");
@@ -3441,8 +3534,35 @@ function KroftApp({ onFullReset } = {}) {
         setVoiceError("I didn't catch anything. Tap the orb when you're ready.");
         return;
       }
+      // Chrome's speech recognition sends audio to Google's servers to transcribe it, so a poor
+      // connection surfaces here as "network" — distinct from every other case above, all of
+      // which are local (permissions, silence, the mic itself), and worth telling apart from the
+      // generic fallback below since the fix is completely different (check your connection vs.
+      // just retry).
+      if (ev.error === "network") {
+        setVoiceState("idle");
+        setVoiceError("Voice recognition needs a network connection — check yours and try again.");
+        return;
+      }
+      if (ev.error === "audio-capture") {
+        setVoiceState("idle");
+        setVoiceError("No working microphone found on this device.");
+        return;
+      }
+      // r.lang was set from the device's own language (see speechLang()) rather than always
+      // "en-US" — most devices report a language Chrome's recognizer actually supports, but a
+      // regional tag it doesn't (e.g. a less common locale) fails every single attempt with no
+      // way for the person to fix it themselves. voiceListen() builds a brand-new recognizer on
+      // every call and would just pick the same unsupported language again, so the override has
+      // to live outside this one instance — falling back to "en-US" via the ref and retrying
+      // once keeps voice mode usable instead of permanently broken for anyone in that situation.
+      if (ev.error === "language-not-supported" && r.lang !== "en-US") {
+        voiceLangOverrideRef.current = "en-US";
+        setTimeout(() => { if (voiceOpenRef.current) voiceListen(); }, 250);
+        return;
+      }
       setVoiceState("idle");
-      setVoiceError("Couldn't hear that. Tap to try again.");
+      setVoiceError(`Couldn't hear that (${ev.error}). Tap to try again.`);
     };
     r.onend = () => { listeningRef.current = false; setVoiceState(s => (s === "listening" ? "idle" : s)); };
     voiceRecRef.current = r;
@@ -4289,7 +4409,12 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
         // Plus: last month's underspend raises this month's effective limit. `limit` stays the
         // number the person actually typed, so the editor and "budgeted total" keep meaning what
         // they say — only the pace/warning math and the "left" figure see the carryover.
-        const carryover = subscribed ? (budgetCarryover[cat] || 0) : 0;
+        // Not gated on `subscribed` here: the rollover effect below already only ever writes a
+        // new carryover while subscribed (and clears it once a downgraded month rolls over), so
+        // re-gating the read on current subscription status just claws back a benefit already
+        // earned the moment someone downgrades mid-month — the opposite of what that effect's own
+        // comment promises ("without clawing back what already rolled over").
+        const carryover = budgetCarryover[cat] || 0;
         const effectiveLimit = limit + carryover;
 
         const pct = effectiveLimit ? spent / effectiveLimit : 0;
@@ -4396,7 +4521,9 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
   // Plus: carries each category's unused budget into the next month, computed once when the
   // calendar month actually changes. Only accrues while subscribed — the benefit belongs to
   // being on Plus when a month closes, not to having ever been on Plus, so downgrading stops
-  // future accrual without clawing back what already rolled over.
+  // future accrual once the month it happened in rolls over (budgetStatus's read side doesn't
+  // separately re-gate on `subscribed`, so a downgrade mid-month doesn't also claw back the
+  // carryover already earned for the month in progress).
   useEffect(() => {
     if (!dataLoaded) return;
     const rollover = () => {
@@ -4411,6 +4538,10 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
             const spent = expenses
               .filter(e => e.cat === cat && (e.date || "").slice(0, 7) === prevMonth)
               .reduce((sum, e) => sum + e.amount, 0);
+            // Deliberately measured against the bare typed-in limit, not last month's own
+            // effective (carryover-boosted) limit — see the state declaration's comment: this is
+            // a one-month grace recomputed fresh each rollover, not a compounding balance that
+            // hoards indefinitely.
             const leftover = limit - spent;
             // Only a genuine underspend carries forward — an overspent category obviously
             // shouldn't reduce next month's limit, so it simply carries nothing.
@@ -4471,6 +4602,17 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
     return out.slice(0, 4);
   };
 
+  // Starts a fresh conversation without losing the old one outright — matches the undo pattern
+  // used for every other destructive action in this app (delete a task, remove a memo, etc.)
+  // rather than a bare confirm() dialog.
+  const startNewChat = () => {
+    const prev = aiMessages;
+    setAiMessages([{ role:"assistant", content:`Hey ${firstNameOf(user.name)||"there"} — new conversation. What can I help with?` }]);
+    toast("Started a new conversation.", () => setAiMessages(prev));
+  };
+
+  const scrollChatToBottom = () => chatEnd.current?.scrollIntoView({ behavior:"smooth" });
+
   const askKroft = async override => {
     const q = override || aiInput; if (!q.trim()) return;
 
@@ -4493,8 +4635,11 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
     if (aiLoading) return;
     const upToUser = aiMessages.slice(0, i);
     setAiMessages(upToUser);
-    setAiLoading(true);
-    await streamReply(upToUser);
+    // Routes through the same quota check/increment as every other reply (runNormalCompletion)
+    // instead of calling streamReply directly — Retry used to skip the free-tier daily limit
+    // entirely, letting someone who'd already hit it keep regenerating the last reply forever
+    // with the on-screen counter never reflecting it.
+    await runNormalCompletion(upToUser);
   };
 
   const setMsgFeedback = (i, val) => {
@@ -4607,6 +4752,37 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
     URL.revokeObjectURL(url);
   };
+
+  // Shared by the income and expenses lists — a description/category text match plus an
+  // inclusive date range, all optional. Applied client-side since these lists are already fully
+  // loaded in memory; nothing here needs a round trip.
+  const matchesTxnFilter = e => {
+    if (txnQuery.trim() && !`${e.label} ${e.cat}`.toLowerCase().includes(txnQuery.trim().toLowerCase())) return false;
+    if (txnFrom && (e.date || "") < txnFrom) return false;
+    if (txnTo && (e.date || "") > txnTo) return false;
+    return true;
+  };
+  const txnFilterActive = !!(txnQuery.trim() || txnFrom || txnTo);
+
+  // A field containing a comma, quote or newline has to be quoted, with any internal quote
+  // doubled — otherwise a description like `Lunch, client meeting` would silently split into two
+  // spreadsheet columns on open.
+  const csvField = v => {
+    const s = String(v ?? "");
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const exportFinanceCsv = () => {
+    if (income.length === 0 && expenses.length === 0) { toast("Nothing to export yet."); return; }
+    const rows = [
+      ["Date","Type","Description","Category","Amount","Currency","Repeats"],
+      ...[...income.map(r => ({ ...r, type:"Income" })), ...expenses.map(r => ({ ...r, type:"Expense" }))]
+        .sort((a,b) => (a.date||"").localeCompare(b.date||""))
+        .map(r => [r.date||"", r.type, r.label, r.cat, r.amount, r.cur||user.currency, (r.repeat&&r.repeat!=="none")?r.repeat:""]),
+    ];
+    const csv = rows.map(row => row.map(csvField).join(",")).join("\r\n");
+    downloadText(`kroft-finance-${todayISO()}.csv`, csv);
+    toast("CSV downloaded.");
+  };
   // Frees a blob: URL's browser memory after a deleted item's Undo window has fully closed —
   // NOT immediately on delete, since the "Undo" toast can restore the item, and an object URL
   // revoked too early would leave the restored file/memo's Open/playback link permanently
@@ -4695,8 +4871,16 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
     setAroundLoading(true); setAroundError(""); setAroundSearched(true); setAroundResults([]);
 
     let searchTerm = categoryOrQuery;
-    if (isNaturalLanguage) {
-      // Let Claude interpret the natural-language request into a place-type query
+    // This call spends from the same "extra" pool as aiDraftReply/suggestSmartReminder (see the
+    // X-Kroft-Usage-Type header below) but, unlike those two, never actually called spendAiExtra
+    // — the server-side quota still enforced it, but aiExtrasCount here never incremented, so
+    // Profile's "free AI drafts/suggestions" counter silently under-reported real usage. Skipping
+    // straight to a plain-text search on exhaustion (rather than blocking the search outright)
+    // matches the existing network-failure fallback below — the person still gets *a* result.
+    if (isNaturalLanguage && !spendAiExtra()) {
+      searchTerm = categoryOrQuery;
+    } else if (isNaturalLanguage) {
+      // Let Gemini interpret the natural-language request into a place-type query
       try {
         const res = await aiFetch("/api/chat", {
           method:"POST", headers:{"Content-Type":"application/json","X-Kroft-Usage-Type":"extra"},
@@ -5353,17 +5537,18 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
               </Card>
             ) : (
               <Card style={{ marginBottom:16 }}>
-                <Mono style={{ display:"block", color:C.muted, marginBottom:12, letterSpacing:.8 }}>Income vs expenses</Mono>
-                <ResponsiveContainer width="100%" height={150}>
-                  <BarChart data={[{l:"Income",v:totalIncome},{l:"Expenses",v:totalExpenses},{l:"Profit",v:Math.max(0,netProfit)}]}>
+                <Mono style={{ display:"block", color:C.muted, marginBottom:12, letterSpacing:.8 }}>Income vs expenses · last 6 months</Mono>
+                <ResponsiveContainer width="100%" height={190}>
+                  <ComposedChart data={monthlyTrend}>
                     <CartesianGrid strokeDasharray="3 3" stroke={C.cardB} vertical={false} />
-                    <XAxis dataKey="l" tick={{ fill:C.muted, fontSize:10 }} axisLine={false} tickLine={false} />
-                    <YAxis tick={{ fill:C.muted, fontSize:10 }} axisLine={false} tickLine={false} tickFormatter={v=>"$"+v} />
-                    <Tooltip contentStyle={{ background:C.card, border:`1px solid ${C.cardB}`, borderRadius:12, fontSize:11, color:C.white }} />
-                    <Bar dataKey="v" radius={[4,4,0,0]} opacity={.9}>
-                      {[C.positive,C.negative,C.accent].map((clr,i) => <Cell key={i} fill={clr} />)}
-                    </Bar>
-                  </BarChart>
+                    <XAxis dataKey="label" tick={{ fill:C.muted, fontSize:10 }} axisLine={false} tickLine={false} />
+                    <YAxis tick={{ fill:C.muted, fontSize:10 }} axisLine={false} tickLine={false} tickFormatter={v=>fmtCur(0,user.currency).replace(/0\.00/,"").trim()+v} />
+                    <Tooltip formatter={v=>fmtCur(v,user.currency)} contentStyle={{ background:C.card, border:`1px solid ${C.cardB}`, borderRadius:12, fontSize:11, color:C.white }} />
+                    <Legend wrapperStyle={{ fontSize:10, color:C.muted }} formatter={v=>({income:"Income",expenses:"Expenses",net:"Net"}[v]||v)} />
+                    <Bar dataKey="income" fill={C.positive} radius={[4,4,0,0]} opacity={.9} />
+                    <Bar dataKey="expenses" fill={C.negative} radius={[4,4,0,0]} opacity={.9} />
+                    <Line type="monotone" dataKey="net" stroke={C.accent} strokeWidth={2} dot={{ r:3, fill:C.accent }} />
+                  </ComposedChart>
                 </ResponsiveContainer>
               </Card>
             )}
@@ -5412,9 +5597,10 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
           <div style={{ animation:"fadeUp .4s ease" }}>
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:18 }}>
               <h2 style={{ fontSize:22, fontWeight:700, color:C.white, letterSpacing:-1 }}>Finance</h2>
-              <div style={{ display:"flex", gap:8 }}>
+              <div style={{ display:"flex", gap:8, flexWrap:"wrap", justifyContent:"flex-end" }}>
                 <Btn sm onClick={() => { setShowAddInc(v=>!v); setShowAddExp(false); }}>Add Income</Btn>
                 <Btn sm v="outline" onClick={() => { setShowAddExp(v=>!v); setShowAddInc(false); }}>Add Expense</Btn>
+                <Btn sm v="outline" onClick={exportFinanceCsv}>Export</Btn>
               </div>
             </div>
             {!dataLoaded && <><SkeletonCard lines={2} /><SkeletonCard lines={4} /></>}
@@ -5585,6 +5771,105 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
                 </Card>
               );
             })()}
+            {/* Spending by category. The monthly report already surfaces a top-3 list, but only
+                once someone taps Generate and only within the AI text — this is always visible
+                and covers every category, not just the three biggest. */}
+            {categoryBreakdown.length > 0 && (() => {
+              const pieColors = [C.accent, C.positive, C.warning, C.negative, C.soft, C.muted];
+              return (
+                <Card level="raised" style={{ marginBottom:14 }}>
+                  <Mono style={{ display:"block", color:C.muted, marginBottom:12, letterSpacing:.8 }}>Spending by category · this month</Mono>
+                  <div style={{ display:"flex", alignItems:"center", gap:16, flexWrap:"wrap" }}>
+                    <ResponsiveContainer width={140} height={140} style={{ flexShrink:0 }}>
+                      <PieChart>
+                        <Pie data={categoryBreakdown} dataKey="amt" nameKey="cat" innerRadius={38} outerRadius={62} paddingAngle={2} stroke="none">
+                          {categoryBreakdown.map((c, i) => <Cell key={c.cat} fill={pieColors[i % pieColors.length]} />)}
+                        </Pie>
+                        <Tooltip formatter={(v, n) => [fmtCur(v, user.currency), n]} contentStyle={{ background:C.card, border:`1px solid ${C.cardB}`, borderRadius:12, fontSize:11, color:C.white }} />
+                      </PieChart>
+                    </ResponsiveContainer>
+                    <div style={{ flex:1, minWidth:140, display:"flex", flexDirection:"column", gap:7 }}>
+                      {categoryBreakdown.slice(0, 6).map((c, i) => (
+                        <div key={c.cat} style={{ display:"flex", alignItems:"center", gap:7 }}>
+                          <div style={{ width:8, height:8, borderRadius:99, background:pieColors[i % pieColors.length], flexShrink:0 }} />
+                          <Mono style={{ color:C.text, flex:1, minWidth:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{c.cat}</Mono>
+                          <Mono style={{ color:C.muted, flexShrink:0 }}>{fmtCur(c.amt, user.currency)} · {Math.round(c.pct*100)}%</Mono>
+                        </div>
+                      ))}
+                      {categoryBreakdown.length > 6 && <Mono style={{ color:C.muted }}>+{categoryBreakdown.length - 6} more</Mono>}
+                    </div>
+                  </div>
+                </Card>
+              );
+            })()}
+            {/* Cash flow forecast. Recurring entries already exist, but nothing surfaced what's
+                actually coming due — someone only found out rent posted by seeing it in the list
+                after the fact. This looks ahead instead, simulating every future occurrence in
+                the window rather than just each template's single next date. */}
+            {(income.length>0||expenses.length>0) && (
+            <Card level="raised" style={{ marginBottom:14 }}>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"baseline", marginBottom:upcomingCashFlow.items.length?12:6 }}>
+                <Mono style={{ color:C.muted, letterSpacing:.8 }}>Upcoming · next 30 days</Mono>
+                {upcomingCashFlow.items.length > 0 && (
+                  <Mono style={{ color:upcomingCashFlow.projected>=0?C.positive:C.negative, flexShrink:0 }}>
+                    {upcomingCashFlow.projected>=0?"+":""}{fmtCur(upcomingCashFlow.projected, user.currency)} projected
+                  </Mono>
+                )}
+              </div>
+              {upcomingCashFlow.items.length === 0 ? (
+                <Mono style={{ display:"block", color:C.muted, lineHeight:1.6 }}>
+                  Nothing recurring is due in the next 30 days. Set an income or expense entry to repeat and it'll show up here ahead of time.
+                </Mono>
+              ) : (
+                <div style={{ display:"flex", flexDirection:"column", gap:7 }}>
+                  {upcomingCashFlow.items.slice(0, 6).map(e => (
+                    <div key={e.id} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:8 }}>
+                      <div style={{ minWidth:0 }}>
+                        <div style={{ fontSize:12, fontWeight:600, color:C.text, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{e.label}</div>
+                        <Mono style={{ color:C.muted }}>{fmtDate(e.date)} · {e.cat}</Mono>
+                      </div>
+                      <Mono style={{ color:e.sign==="+"?C.positive:C.negative, fontWeight:700, flexShrink:0 }}>{e.sign}{fmtCur(e.amount, user.currency)}</Mono>
+                    </div>
+                  ))}
+                  {upcomingCashFlow.items.length > 6 && <Mono style={{ color:C.muted, marginTop:2 }}>+{upcomingCashFlow.items.length - 6} more</Mono>}
+                </div>
+              )}
+            </Card>
+            )}
+            {/* Tax set-aside. Purely a display split of this month's live net profit — nothing is
+                actually withheld or moved anywhere; it exists so "profit" doesn't quietly read as
+                fully spendable when a chunk of it isn't really the user's to spend. */}
+            {(income.length>0||expenses.length>0) && (
+              <Card level="raised" style={{ marginBottom:14 }}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
+                  <Mono style={{ color:C.muted, letterSpacing:.8 }}>Tax set-aside</Mono>
+                  <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                    <Inp type="number" inputMode="decimal" min="0" max="100" step="1" value={taxSetAsidePct||""} placeholder="0"
+                      onChange={e => {
+                        const n = parseFloat(e.target.value);
+                        setTaxSetAsidePct(Number.isFinite(n) ? Math.min(100, Math.max(0, n)) : 0);
+                      }}
+                      style={{ width:64, padding:"7px 9px", fontSize:12, textAlign:"right" }} />
+                    <Mono style={{ color:C.muted }}>% of profit</Mono>
+                  </div>
+                </div>
+                {taxSetAsidePct > 0 ? (
+                  thisMonthNet.net > 0 ? (
+                    <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:8 }}>
+                      <div><Mono style={{ color:C.muted, fontSize:9, display:"block" }}>This month's net</Mono><Mono style={{ color:C.white, fontWeight:700, fontSize:13 }}>{fmtCur(thisMonthNet.net,user.currency)}</Mono></div>
+                      <div><Mono style={{ color:C.muted, fontSize:9, display:"block" }}>Reserved</Mono><Mono style={{ color:C.warning, fontWeight:700, fontSize:13 }}>{fmtCur(thisMonthNet.net*taxSetAsidePct/100,user.currency)}</Mono></div>
+                      <div><Mono style={{ color:C.muted, fontSize:9, display:"block" }}>Spendable</Mono><Mono style={{ color:C.positive, fontWeight:700, fontSize:13 }}>{fmtCur(thisMonthNet.net*(1-taxSetAsidePct/100),user.currency)}</Mono></div>
+                    </div>
+                  ) : (
+                    <Mono style={{ display:"block", color:C.muted, lineHeight:1.6 }}>No profit yet this month to reserve against.</Mono>
+                  )
+                ) : (
+                  <Mono style={{ display:"block", color:C.muted, lineHeight:1.6 }}>
+                    Set a percentage and this month's profit splits into what's reserved for taxes and what's actually spendable. Not tax advice — just a running estimate from your own numbers.
+                  </Mono>
+                )}
+              </Card>
+            )}
             {showAddInc && (
               <Card style={{ marginBottom:13, border:`1px solid ${C.border}` }}>
                 <Mono style={{ display:"block", color:C.white, marginBottom:11, letterSpacing:.8 }}>New income entry</Mono>
@@ -5660,11 +5945,27 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
             )}
             {(income.length>0||expenses.length>0) && (
               <>
+                {/* Filters both lists below by description/category text and/or an inclusive date
+                    range. Purely a view filter — deleting or undoing an entry still operates on
+                    the full underlying list (see holdActions), never on this filtered subset. */}
+                <Card level="inset" style={{ marginBottom:12 }}>
+                  <div style={{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center" }}>
+                    <Inp placeholder="Search description or category…" value={txnQuery} onChange={e=>setTxnQuery(e.target.value)} style={{ flex:2, minWidth:160 }} />
+                    <input type="date" value={txnFrom} max={txnTo||undefined} onChange={e=>setTxnFrom(e.target.value)} style={{ flex:1, minWidth:130, background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"10px 12px", color:C.text, fontSize:12, fontFamily:"'Space Grotesk',sans-serif", outline:"none", colorScheme:theme }} />
+                    <input type="date" value={txnTo} min={txnFrom||undefined} max={todayISO()} onChange={e=>setTxnTo(e.target.value)} style={{ flex:1, minWidth:130, background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"10px 12px", color:C.text, fontSize:12, fontFamily:"'Space Grotesk',sans-serif", outline:"none", colorScheme:theme }} />
+                    {txnFilterActive && <Btn sm v="outline" onClick={() => { setTxnQuery(""); setTxnFrom(""); setTxnTo(""); }}>Clear</Btn>}
+                  </div>
+                </Card>
                 <div style={{ display:"flex", flexDirection:"column", gap:12, marginBottom:12 }}>
-                  {[{title:"INCOME",kind:"income",data:income,sign:"+",set:setIncome,cats:incomeCats,setCats:setIncomeCats},{title:"EXPENSES",kind:"expenses",data:expenses,sign:"-",set:setExpenses,cats:expenseCats,setCats:setExpenseCats}].map(({title,kind,data,sign,set,cats,setCats}) => (
+                  {[{title:"INCOME",kind:"income",data:income,sign:"+",set:setIncome,cats:incomeCats,setCats:setIncomeCats},{title:"EXPENSES",kind:"expenses",data:expenses,sign:"-",set:setExpenses,cats:expenseCats,setCats:setExpenseCats}].map(({title,kind,data,sign,set,cats,setCats}) => {
+                    const filtered = txnFilterActive ? data.filter(matchesTxnFilter) : data;
+                    return (
                     <Card key={title} style={{ minWidth:0 }}>
-                      <Mono style={{ display:"block", color:C.muted, marginBottom:11, letterSpacing:.8 }}>{title}</Mono>
-                      {data.length===0 ? <Mono style={{ color:C.soft, display:"block", padding:"8px 0" }}>None yet.</Mono> : [...data].sort((a,b)=>(b.date||"").localeCompare(a.date||"")).map(r => (
+                      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"baseline", marginBottom:11 }}>
+                        <Mono style={{ color:C.muted, letterSpacing:.8 }}>{title}</Mono>
+                        {txnFilterActive && <Mono style={{ color:C.muted }}>{filtered.length} of {data.length}</Mono>}
+                      </div>
+                      {filtered.length===0 ? <Mono style={{ color:C.soft, display:"block", padding:"8px 0" }}>{txnFilterActive?"No matches.":"None yet."}</Mono> : [...filtered].sort((a,b)=>(b.date||"").localeCompare(a.date||"")).map(r => (
                         editingEntry && editingEntry.kind===kind && editingEntry.id===r.id ? (
                           <div key={r.id} style={{ background:C.surface, border:`1px solid ${C.soft}`, borderRadius:12, padding:"10px 11px", marginBottom:7 }}>
                             <div style={{ display:"flex", flexDirection:"column", gap:7 }}>
@@ -5716,12 +6017,13 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
                         )
                       ))}
                       <div style={{ display:"flex", justifyContent:"space-between", marginTop:6 }}>
-                        <Mono style={{ color:C.muted }}>Total</Mono>
-                        <Mono style={{ color:C.white, fontWeight:700 }}>{fmtCur(data.reduce((s,r)=>s+r.amount,0),user.currency)}</Mono>
+                        <Mono style={{ color:C.muted }}>{txnFilterActive?"Filtered total":"Total"}</Mono>
+                        <Mono style={{ color:C.white, fontWeight:700 }}>{fmtCur(filtered.reduce((s,r)=>s+r.amount,0),user.currency)}</Mono>
                       </div>
 
                     </Card>
-                  ))}
+                    );
+                  })}
                 </div>
                 <Card hi style={{ border:`1px solid ${C.soft}`, marginBottom:12 }}>
                   <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:10 }}>
@@ -7023,20 +7325,26 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
         })()}
 
         {tab==="nova" && (
-          <div style={{ animation:"fadeUp .4s ease" }}>
-            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:4 }}>
-              <h2 style={{ fontSize:22, fontWeight:700, color:C.white, letterSpacing:-1 }}>Ask Kroft</h2>
-              <div style={{ display:"flex", gap:7 }}>
+          <div style={{ position:"fixed", inset:0, zIndex:300, background:C.bg, display:"flex", flexDirection:"column" }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:10, padding:"12px 16px", borderBottom:`1px solid ${C.cardB}`, flexShrink:0 }}>
+              <div style={{ display:"flex", alignItems:"center", gap:8, minWidth:0 }}>
+                <button onClick={() => setTab("home")} aria-label="Close Ask Kroft" title="Close" style={{ background:"none", border:"none", color:C.white, cursor:"pointer", fontSize:20, padding:"2px 4px", lineHeight:1, flexShrink:0 }}>←</button>
+                <h2 style={{ fontSize:17, fontWeight:700, color:C.white, letterSpacing:-.5, whiteSpace:"nowrap" }}>Ask Kroft</h2>
+              </div>
+              <div style={{ display:"flex", gap:7, flexShrink:0 }}>
+                {/* Only worth showing once there's actually a conversation to start over from —
+                    a lone welcome message has nothing to clear. */}
+                {aiMessages.length > 1 && (
+                  <button onClick={startNewChat} className="hbtn" aria-label="Start a new conversation" title="New chat" style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:8, padding:"6px 12px", cursor:"pointer", color:C.soft, fontSize:11, fontWeight:700 }}>New chat</button>
+                )}
                 <button onClick={() => setShowBriefing(true)} className="hbtn" style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:8, padding:"6px 12px", cursor:"pointer", color:C.soft, fontSize:11, fontWeight:700 }}>Brief</button>
                 <button onClick={() => { setVoiceOpen(true); setVoiceState("idle"); setVoiceError(""); }} className="hbtn" style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:8, padding:"6px 12px", cursor:"pointer", display:"flex", alignItems:"center", gap:6, color:C.soft, fontSize:11, fontWeight:700 }}>
                   <NavIcon id="mic" size={13} color={C.soft} />Voice
                 </button>
               </div>
             </div>
-            {subscribed ? (
-              <Mono style={{ display:"block", color:C.soft, marginBottom:16 }}>Ask anything — finance, schedule, general knowledge, advice, or just chat. Unlimited on KROFT Plus.</Mono>
-            ) : (
-              <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:16, flexWrap:"wrap", gap:8 }}>
+            {!subscribed && (
+              <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"10px 16px 0", flexWrap:"wrap", gap:8, flexShrink:0 }}>
                 <Mono style={{ color:C.soft }}>
                   {Math.max(0, FREE_DAILY_MESSAGE_LIMIT - dailyMessageCount)} of {FREE_DAILY_MESSAGE_LIMIT} free messages left today
                 </Mono>
@@ -7047,8 +7355,11 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
                 )}
               </div>
             )}
-            <Card style={{ marginBottom:13, padding:0, overflow:"hidden", border:`1px solid ${C.border}` }}>
-              <div ref={chatScrollRef} style={{ maxHeight:460, overflowY:"auto", padding:"16px", display:"flex", flexDirection:"column", gap:12 }}>
+            <div style={{ flex:1, minHeight:0, position:"relative" }}>
+              <div ref={chatScrollRef} onScroll={e => {
+                const box = e.currentTarget;
+                setChatNearBottom(box.scrollHeight - box.scrollTop - box.clientHeight < 120);
+              }} style={{ position:"absolute", inset:0, overflowY:"auto", padding:"16px", display:"flex", flexDirection:"column", gap:12 }}>
                 {aiMessages.map((m,i) => (
                   <div key={m.id || i} style={{ display:"flex", flexDirection:"column", alignItems:m.role==="user"?"flex-end":"flex-start", animation:"fadeUp .3s ease" }}>
                     <div style={{ background:m.role==="user"?C.white:C.surface, border:`1px solid ${m.role==="user"?C.soft:C.cardB}`, borderRadius:m.role==="user"?"14px 14px 3px 14px":"14px 14px 14px 3px", padding:"10px 14px", maxWidth:"80%" }}>
@@ -7099,8 +7410,63 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
                 )}
                 <div ref={chatEnd} />
               </div>
-              <div style={{ borderTop:`1px solid ${C.cardB}`, padding:"12px 16px", display:"flex", gap:8, alignItems:"center" }}>
-                <Inp value={aiInput} onChange={e => setAiInput(e.target.value)} onKeyDown={e => e.key==="Enter"&&!e.shiftKey&&askKroft()} placeholder="Message KROFT…" style={{ flex:1, fontSize:13 }} />
+              {/* Only appears once someone has actually scrolled up to re-read earlier messages
+                  — otherwise it'd sit there uselessly on every normal, already-at-bottom chat. */}
+              {!chatNearBottom && aiMessages.length > 1 && (
+                <button onClick={scrollChatToBottom} aria-label="Scroll to latest message" title="Scroll to latest"
+                  style={{ position:"absolute", right:16, bottom:16, width:34, height:34, borderRadius:"50%", background:C.text, border:"none", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", boxShadow:C.shadowRaised, zIndex:1 }}>
+                  <svg viewBox="0 0 24 24" width={16} height={16} fill="none" stroke={C.card} strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round"><path d="M6 9l6 6 6-6" /></svg>
+                </button>
+              )}
+            </div>
+            {/* Suggestions only make sense before a real conversation exists — once one is
+                underway, this space is worth more to the actual messages than to prompts nobody
+                needs anymore. */}
+            {aiMessages.length <= 1 && (
+              <div style={{ padding:"0 16px 12px", flexShrink:0, maxHeight:"32vh", overflowY:"auto" }}>
+                <div style={{ fontSize:12, fontWeight:600, color:C.muted, marginBottom:6 }}>Ask about your data</div>
+                <div style={{ display:"flex", flexWrap:"wrap", gap:7, marginBottom:12 }}>
+                  {["What's on my schedule today?","Where is my money going?","What should I focus on?","How did this month compare?","Summarise my open tasks","How's my wellness today?"].map(q => (
+                    <button key={q} onClick={() => askKroft(q)} style={{ background:C.card, border:`1px solid ${C.cardB}`, borderRadius:7, padding:"6px 12px", cursor:"pointer", color:C.soft, fontSize:11, fontFamily:"'Space Grotesk',sans-serif" }} onMouseEnter={e=>{e.target.style.borderColor=C.soft;e.target.style.color=C.white;}} onMouseLeave={e=>{e.target.style.borderColor=C.cardB;e.target.style.color=C.border;}}>
+                      {q}
+                    </button>
+                  ))}
+                </div>
+                <div style={{ fontSize:12, fontWeight:600, color:C.muted, marginBottom:6 }}>Or tell it to do something</div>
+                <div style={{ display:"flex", flexWrap:"wrap", gap:7 }}>
+                  {["Log a 5,000 fuel expense","Remind me to call the bank tomorrow","Add a task to send the invoice","Schedule a meeting Friday at 10"].map(q => (
+                    <button key={q} onClick={() => askKroft(q)} style={{ background:C.card, border:`1px solid ${C.accent}44`, borderRadius:7, padding:"6px 12px", cursor:"pointer", color:C.soft, fontSize:11, fontFamily:"'Space Grotesk',sans-serif" }}>
+                      {q}
+                    </button>
+                  ))}
+                </div>
+                <Mono style={{ display:"block", color:C.muted, marginTop:10, lineHeight:1.6 }}>
+                  KROFT can see your finances, schedule, tasks and contacts, and can add things for you. It can't delete or edit — that stays with you.
+                </Mono>
+              </div>
+            )}
+            <div style={{ borderTop:`1px solid ${C.cardB}`, padding:"12px 16px calc(12px + env(safe-area-inset-bottom))", display:"flex", gap:8, alignItems:"center", flexShrink:0, background:C.bg }}>
+                {/* A plain single-line <Inp> couldn't hold more than one line at all — pasting
+                    or composing anything longer just scrolled the text sideways out of view.
+                    This grows with the content (capped at ~5 lines, then scrolls internally)
+                    and keeps Enter-to-send / Shift+Enter-for-newline, the behavior every chat
+                    app trains people to expect. */}
+                <textarea
+                  ref={aiInputRef}
+                  value={aiInput}
+                  onChange={e => {
+                    setAiInput(e.target.value);
+                    const el = e.target;
+                    el.style.height = "auto";
+                    el.style.height = Math.min(el.scrollHeight, 120) + "px";
+                  }}
+                  onKeyDown={e => { if (e.key==="Enter" && !e.shiftKey) { e.preventDefault(); askKroft(); } }}
+                  placeholder="Message KROFT…"
+                  rows={1}
+                  style={{ flex:1, fontSize:13, fontFamily:"'Space Grotesk',sans-serif", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 14px", color:C.text, outline:"none", resize:"none", maxHeight:120, overflowY:"auto", lineHeight:1.4, boxSizing:"border-box", transition:"border-color .18s" }}
+                  onFocus={e => { e.target.style.borderColor=C.accent; e.target.style.boxShadow=`0 0 0 3px ${C.accentBg}`; }}
+                  onBlur={e => { e.target.style.borderColor=C.cardB; e.target.style.boxShadow="none"; }}
+                />
                 {/* One button in one place: the mic sits there until you start typing, then it
                     becomes Send. Showing both at once meant a permanently greyed-out Send
                     taking up space next to a mic you'd use far more often. */}
@@ -7129,29 +7495,6 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
                   </button>
                 )}
               </div>
-            </Card>
-            {/* Nothing previously told anyone that KROFT can read their actual data or write to it —
-                the two things that separate it from any generic chatbot. The prompts below are
-                grouped so both are visible the first time someone opens the tab. */}
-            <div style={{ fontSize:12, fontWeight:600, color:C.muted, marginBottom:6 }}>Ask about your data</div>
-            <div style={{ display:"flex", flexWrap:"wrap", gap:7 }}>
-              {["What's on my schedule today?","Where is my money going?","What should I focus on?","How did this month compare?","Summarise my open tasks","How's my wellness today?"].map(q => (
-                <button key={q} onClick={() => askKroft(q)} style={{ background:C.card, border:`1px solid ${C.cardB}`, borderRadius:7, padding:"6px 12px", cursor:"pointer", color:C.soft, fontSize:11, fontFamily:"'Space Grotesk',sans-serif" }} onMouseEnter={e=>{e.target.style.borderColor=C.soft;e.target.style.color=C.white;}} onMouseLeave={e=>{e.target.style.borderColor=C.cardB;e.target.style.color=C.border;}}>
-                  {q}
-                </button>
-              ))}
-            </div>
-            <div style={{ fontSize:12, fontWeight:600, color:C.muted, margin:"14px 0 6px" }}>Or tell it to do something</div>
-            <div style={{ display:"flex", flexWrap:"wrap", gap:7 }}>
-              {["Log a 5,000 fuel expense","Remind me to call the bank tomorrow","Add a task to send the invoice","Schedule a meeting Friday at 10"].map(q => (
-                <button key={q} onClick={() => askKroft(q)} style={{ background:C.card, border:`1px solid ${C.accent}44`, borderRadius:7, padding:"6px 12px", cursor:"pointer", color:C.soft, fontSize:11, fontFamily:"'Space Grotesk',sans-serif" }}>
-                  {q}
-                </button>
-              ))}
-            </div>
-            <Mono style={{ display:"block", color:C.muted, marginTop:10, lineHeight:1.6 }}>
-              KROFT can see your finances, schedule, tasks and contacts, and can add things for you. It can't delete or edit — that stays with you.
-            </Mono>
           </div>
         )}
 
