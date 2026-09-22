@@ -7078,10 +7078,13 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
         })()}
 
         {tab==="nova" && (
-          <div style={{ animation:"fadeUp .4s ease" }}>
-            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:4 }}>
-              <h2 style={{ fontSize:22, fontWeight:700, color:C.white, letterSpacing:-1 }}>Ask Kroft</h2>
-              <div style={{ display:"flex", gap:7 }}>
+          <div style={{ position:"fixed", inset:0, zIndex:300, background:C.bg, display:"flex", flexDirection:"column" }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:10, padding:"12px 16px", borderBottom:`1px solid ${C.cardB}`, flexShrink:0 }}>
+              <div style={{ display:"flex", alignItems:"center", gap:8, minWidth:0 }}>
+                <button onClick={() => setTab("home")} aria-label="Close Ask Kroft" title="Close" style={{ background:"none", border:"none", color:C.white, cursor:"pointer", fontSize:20, padding:"2px 4px", lineHeight:1, flexShrink:0 }}>←</button>
+                <h2 style={{ fontSize:17, fontWeight:700, color:C.white, letterSpacing:-.5, whiteSpace:"nowrap" }}>Ask Kroft</h2>
+              </div>
+              <div style={{ display:"flex", gap:7, flexShrink:0 }}>
                 {/* Only worth showing once there's actually a conversation to start over from —
                     a lone welcome message has nothing to clear. */}
                 {aiMessages.length > 1 && (
@@ -7093,10 +7096,8 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
                 </button>
               </div>
             </div>
-            {subscribed ? (
-              <Mono style={{ display:"block", color:C.soft, marginBottom:16 }}>Ask anything — finance, schedule, general knowledge, advice, or just chat. Unlimited on KROFT Plus.</Mono>
-            ) : (
-              <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:16, flexWrap:"wrap", gap:8 }}>
+            {!subscribed && (
+              <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"10px 16px 0", flexWrap:"wrap", gap:8, flexShrink:0 }}>
                 <Mono style={{ color:C.soft }}>
                   {Math.max(0, FREE_DAILY_MESSAGE_LIMIT - dailyMessageCount)} of {FREE_DAILY_MESSAGE_LIMIT} free messages left today
                 </Mono>
@@ -7107,11 +7108,11 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
                 )}
               </div>
             )}
-            <Card style={{ marginBottom:13, padding:0, overflow:"hidden", border:`1px solid ${C.border}`, position:"relative" }}>
+            <div style={{ flex:1, minHeight:0, position:"relative" }}>
               <div ref={chatScrollRef} onScroll={e => {
                 const box = e.currentTarget;
                 setChatNearBottom(box.scrollHeight - box.scrollTop - box.clientHeight < 120);
-              }} style={{ maxHeight:460, overflowY:"auto", padding:"16px", display:"flex", flexDirection:"column", gap:12 }}>
+              }} style={{ position:"absolute", inset:0, overflowY:"auto", padding:"16px", display:"flex", flexDirection:"column", gap:12 }}>
                 {aiMessages.map((m,i) => (
                   <div key={m.id || i} style={{ display:"flex", flexDirection:"column", alignItems:m.role==="user"?"flex-end":"flex-start", animation:"fadeUp .3s ease" }}>
                     <div style={{ background:m.role==="user"?C.white:C.surface, border:`1px solid ${m.role==="user"?C.soft:C.cardB}`, borderRadius:m.role==="user"?"14px 14px 3px 14px":"14px 14px 14px 3px", padding:"10px 14px", maxWidth:"80%" }}>
@@ -7166,11 +7167,38 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
                   — otherwise it'd sit there uselessly on every normal, already-at-bottom chat. */}
               {!chatNearBottom && aiMessages.length > 1 && (
                 <button onClick={scrollChatToBottom} aria-label="Scroll to latest message" title="Scroll to latest"
-                  style={{ position:"absolute", right:16, bottom:78, width:34, height:34, borderRadius:"50%", background:C.text, border:"none", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", boxShadow:C.shadowRaised, zIndex:1 }}>
+                  style={{ position:"absolute", right:16, bottom:16, width:34, height:34, borderRadius:"50%", background:C.text, border:"none", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", boxShadow:C.shadowRaised, zIndex:1 }}>
                   <svg viewBox="0 0 24 24" width={16} height={16} fill="none" stroke={C.card} strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round"><path d="M6 9l6 6 6-6" /></svg>
                 </button>
               )}
-              <div style={{ borderTop:`1px solid ${C.cardB}`, padding:"12px 16px", display:"flex", gap:8, alignItems:"center" }}>
+            </div>
+            {/* Suggestions only make sense before a real conversation exists — once one is
+                underway, this space is worth more to the actual messages than to prompts nobody
+                needs anymore. */}
+            {aiMessages.length <= 1 && (
+              <div style={{ padding:"0 16px 12px", flexShrink:0, maxHeight:"32vh", overflowY:"auto" }}>
+                <div style={{ fontSize:12, fontWeight:600, color:C.muted, marginBottom:6 }}>Ask about your data</div>
+                <div style={{ display:"flex", flexWrap:"wrap", gap:7, marginBottom:12 }}>
+                  {["What's on my schedule today?","Where is my money going?","What should I focus on?","How did this month compare?","Summarise my open tasks","How's my wellness today?"].map(q => (
+                    <button key={q} onClick={() => askKroft(q)} style={{ background:C.card, border:`1px solid ${C.cardB}`, borderRadius:7, padding:"6px 12px", cursor:"pointer", color:C.soft, fontSize:11, fontFamily:"'Space Grotesk',sans-serif" }} onMouseEnter={e=>{e.target.style.borderColor=C.soft;e.target.style.color=C.white;}} onMouseLeave={e=>{e.target.style.borderColor=C.cardB;e.target.style.color=C.border;}}>
+                      {q}
+                    </button>
+                  ))}
+                </div>
+                <div style={{ fontSize:12, fontWeight:600, color:C.muted, marginBottom:6 }}>Or tell it to do something</div>
+                <div style={{ display:"flex", flexWrap:"wrap", gap:7 }}>
+                  {["Log a 5,000 fuel expense","Remind me to call the bank tomorrow","Add a task to send the invoice","Schedule a meeting Friday at 10"].map(q => (
+                    <button key={q} onClick={() => askKroft(q)} style={{ background:C.card, border:`1px solid ${C.accent}44`, borderRadius:7, padding:"6px 12px", cursor:"pointer", color:C.soft, fontSize:11, fontFamily:"'Space Grotesk',sans-serif" }}>
+                      {q}
+                    </button>
+                  ))}
+                </div>
+                <Mono style={{ display:"block", color:C.muted, marginTop:10, lineHeight:1.6 }}>
+                  KROFT can see your finances, schedule, tasks and contacts, and can add things for you. It can't delete or edit — that stays with you.
+                </Mono>
+              </div>
+            )}
+            <div style={{ borderTop:`1px solid ${C.cardB}`, padding:"12px 16px calc(12px + env(safe-area-inset-bottom))", display:"flex", gap:8, alignItems:"center", flexShrink:0, background:C.bg }}>
                 {/* A plain single-line <Inp> couldn't hold more than one line at all — pasting
                     or composing anything longer just scrolled the text sideways out of view.
                     This grows with the content (capped at ~5 lines, then scrolls internally)
@@ -7220,29 +7248,6 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
                   </button>
                 )}
               </div>
-            </Card>
-            {/* Nothing previously told anyone that KROFT can read their actual data or write to it —
-                the two things that separate it from any generic chatbot. The prompts below are
-                grouped so both are visible the first time someone opens the tab. */}
-            <div style={{ fontSize:12, fontWeight:600, color:C.muted, marginBottom:6 }}>Ask about your data</div>
-            <div style={{ display:"flex", flexWrap:"wrap", gap:7 }}>
-              {["What's on my schedule today?","Where is my money going?","What should I focus on?","How did this month compare?","Summarise my open tasks","How's my wellness today?"].map(q => (
-                <button key={q} onClick={() => askKroft(q)} style={{ background:C.card, border:`1px solid ${C.cardB}`, borderRadius:7, padding:"6px 12px", cursor:"pointer", color:C.soft, fontSize:11, fontFamily:"'Space Grotesk',sans-serif" }} onMouseEnter={e=>{e.target.style.borderColor=C.soft;e.target.style.color=C.white;}} onMouseLeave={e=>{e.target.style.borderColor=C.cardB;e.target.style.color=C.border;}}>
-                  {q}
-                </button>
-              ))}
-            </div>
-            <div style={{ fontSize:12, fontWeight:600, color:C.muted, margin:"14px 0 6px" }}>Or tell it to do something</div>
-            <div style={{ display:"flex", flexWrap:"wrap", gap:7 }}>
-              {["Log a 5,000 fuel expense","Remind me to call the bank tomorrow","Add a task to send the invoice","Schedule a meeting Friday at 10"].map(q => (
-                <button key={q} onClick={() => askKroft(q)} style={{ background:C.card, border:`1px solid ${C.accent}44`, borderRadius:7, padding:"6px 12px", cursor:"pointer", color:C.soft, fontSize:11, fontFamily:"'Space Grotesk',sans-serif" }}>
-                  {q}
-                </button>
-              ))}
-            </div>
-            <Mono style={{ display:"block", color:C.muted, marginTop:10, lineHeight:1.6 }}>
-              KROFT can see your finances, schedule, tasks and contacts, and can add things for you. It can't delete or edit — that stays with you.
-            </Mono>
           </div>
         )}
 
