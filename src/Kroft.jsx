@@ -3353,6 +3353,11 @@ function KroftApp({ onFullReset } = {}) {
     return () => clearInterval(t);
   }, [voiceState]);
   const voiceRecRef = useRef(null);
+  // Set once if the device's own language (speechLang()) turns out to be one Chrome's
+  // recognizer rejects outright — see the "language-not-supported" handling below. null means
+  // "use the device's language", so this only ever overrides it for the one device/session where
+  // that language actually doesn't work.
+  const voiceLangOverrideRef = useRef(null);
   const voiceAudioRef = useRef(null);   // { ctx, analyser, stream, raf }
   const voiceStopRef = useRef(null);    // cancels in-flight speech
   const voiceAbortRef = useRef(null);   // cancels an in-flight generation
@@ -3403,7 +3408,7 @@ function KroftApp({ onFullReset } = {}) {
     voiceRecRef.current?.abort?.();
     setVoiceError(""); setVoiceTranscript(""); lastLenRef.current = 0;
     const r = new SR();
-    r.continuous = false; r.interimResults = true; r.lang = speechLang();
+    r.continuous = false; r.interimResults = true; r.lang = voiceLangOverrideRef.current || speechLang();
     r.onstart = () => { setMicPrimed(true); setVoiceState("listening"); };
     r.onresult = e => {
       const text = Array.from(e.results).map(x => x[0].transcript).join("");
@@ -3441,8 +3446,35 @@ function KroftApp({ onFullReset } = {}) {
         setVoiceError("I didn't catch anything. Tap the orb when you're ready.");
         return;
       }
+      // Chrome's speech recognition sends audio to Google's servers to transcribe it, so a poor
+      // connection surfaces here as "network" — distinct from every other case above, all of
+      // which are local (permissions, silence, the mic itself), and worth telling apart from the
+      // generic fallback below since the fix is completely different (check your connection vs.
+      // just retry).
+      if (ev.error === "network") {
+        setVoiceState("idle");
+        setVoiceError("Voice recognition needs a network connection — check yours and try again.");
+        return;
+      }
+      if (ev.error === "audio-capture") {
+        setVoiceState("idle");
+        setVoiceError("No working microphone found on this device.");
+        return;
+      }
+      // r.lang was set from the device's own language (see speechLang()) rather than always
+      // "en-US" — most devices report a language Chrome's recognizer actually supports, but a
+      // regional tag it doesn't (e.g. a less common locale) fails every single attempt with no
+      // way for the person to fix it themselves. voiceListen() builds a brand-new recognizer on
+      // every call and would just pick the same unsupported language again, so the override has
+      // to live outside this one instance — falling back to "en-US" via the ref and retrying
+      // once keeps voice mode usable instead of permanently broken for anyone in that situation.
+      if (ev.error === "language-not-supported" && r.lang !== "en-US") {
+        voiceLangOverrideRef.current = "en-US";
+        setTimeout(() => { if (voiceOpenRef.current) voiceListen(); }, 250);
+        return;
+      }
       setVoiceState("idle");
-      setVoiceError("Couldn't hear that. Tap to try again.");
+      setVoiceError(`Couldn't hear that (${ev.error}). Tap to try again.`);
     };
     r.onend = () => { listeningRef.current = false; setVoiceState(s => (s === "listening" ? "idle" : s)); };
     voiceRecRef.current = r;
