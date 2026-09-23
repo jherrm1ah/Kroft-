@@ -5722,6 +5722,59 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
               );
             })()}
 
+            {/* Grouped into named sections (Summary / Planning / Transactions / Reports) instead
+                of one undifferentiated stack of cards — Net profit and category breakdown lead
+                since they're the headline numbers, budgeting tools follow, then the raw ledger,
+                then the on-demand report. */}
+            {(income.length>0||expenses.length>0) && (
+              <>
+                <div style={{ fontSize:12, fontWeight:600, color:C.muted, marginBottom:11 }}>Summary</div>
+                <Card hi style={{ border:`1px solid ${C.soft}`, marginBottom:14 }}>
+                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:10 }}>
+                    <div style={{ minWidth:0 }}>
+                      <Mono style={{ display:"block", color:C.white, marginBottom:4, letterSpacing:.8 }}>Net profit</Mono>
+                      <div style={{ fontSize:32, fontWeight:700, color:netProfit>=0?C.positive:C.negative, letterSpacing:-1.5, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{fmtCur(netProfit,user.currency)}</div>
+                      {totalIncome>0 && <Mono style={{ color:C.soft, marginTop:4, display:"block" }}>Margin: {((netProfit/totalIncome)*100).toFixed(1)}% · {user.currency}</Mono>}
+                    </div>
+                    <Tag tone={netProfit>=0?"positive":"negative"}>{netProfit>=0?"PROFIT":"DEFICIT"}</Tag>
+                  </div>
+                </Card>
+              </>
+            )}
+            {/* Spending by category. The monthly report already surfaces a top-3 list, but only
+                once someone taps Generate and only within the AI text — this is always visible
+                and covers every category, not just the three biggest. */}
+            {categoryBreakdown.length > 0 && (() => {
+              const pieColors = [C.accent, C.positive, C.warning, C.negative, C.soft, C.muted];
+              return (
+                <Card level="raised" style={{ marginBottom:14 }}>
+                  <Mono style={{ display:"block", color:C.muted, marginBottom:12, letterSpacing:.8 }}>Spending by category · this month</Mono>
+                  <div style={{ display:"flex", alignItems:"center", gap:16, flexWrap:"wrap" }}>
+                    <ResponsiveContainer width={140} height={140} style={{ flexShrink:0 }}>
+                      <PieChart>
+                        <Pie data={categoryBreakdown} dataKey="amt" nameKey="cat" innerRadius={38} outerRadius={62} paddingAngle={2} stroke="none">
+                          {categoryBreakdown.map((c, i) => <Cell key={c.cat} fill={pieColors[i % pieColors.length]} />)}
+                        </Pie>
+                        <Tooltip formatter={(v, n) => [fmtCur(v, user.currency), n]} contentStyle={{ background:C.card, border:`1px solid ${C.cardB}`, borderRadius:12, fontSize:11, color:C.white }} />
+                      </PieChart>
+                    </ResponsiveContainer>
+                    <div style={{ flex:1, minWidth:140, display:"flex", flexDirection:"column", gap:7 }}>
+                      {categoryBreakdown.slice(0, 6).map((c, i) => (
+                        <div key={c.cat} style={{ display:"flex", alignItems:"center", gap:7 }}>
+                          <div style={{ width:8, height:8, borderRadius:99, background:pieColors[i % pieColors.length], flexShrink:0 }} />
+                          <Mono style={{ color:C.text, flex:1, minWidth:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{c.cat}</Mono>
+                          <Mono style={{ color:C.muted, flexShrink:0 }}>{fmtCur(c.amt, user.currency)} · {Math.round(c.pct*100)}%</Mono>
+                        </div>
+                      ))}
+                      {categoryBreakdown.length > 6 && <Mono style={{ color:C.muted }}>+{categoryBreakdown.length - 6} more</Mono>}
+                    </div>
+                  </div>
+                </Card>
+              );
+            })()}
+            {(expenses.length>0 || categoryBreakdown.length>0) && (
+              <div style={{ fontSize:12, fontWeight:600, color:C.muted, marginBottom:11, marginTop:8 }}>Planning</div>
+            )}
             {/* Budgets. Shown only once there are expenses to budget against — an empty budget
                 card on a fresh account is noise, not guidance. */}
             {expenses.length > 0 && (() => {
@@ -5867,37 +5920,6 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
                 </Card>
               );
             })()}
-            {/* Spending by category. The monthly report already surfaces a top-3 list, but only
-                once someone taps Generate and only within the AI text — this is always visible
-                and covers every category, not just the three biggest. */}
-            {categoryBreakdown.length > 0 && (() => {
-              const pieColors = [C.accent, C.positive, C.warning, C.negative, C.soft, C.muted];
-              return (
-                <Card level="raised" style={{ marginBottom:14 }}>
-                  <Mono style={{ display:"block", color:C.muted, marginBottom:12, letterSpacing:.8 }}>Spending by category · this month</Mono>
-                  <div style={{ display:"flex", alignItems:"center", gap:16, flexWrap:"wrap" }}>
-                    <ResponsiveContainer width={140} height={140} style={{ flexShrink:0 }}>
-                      <PieChart>
-                        <Pie data={categoryBreakdown} dataKey="amt" nameKey="cat" innerRadius={38} outerRadius={62} paddingAngle={2} stroke="none">
-                          {categoryBreakdown.map((c, i) => <Cell key={c.cat} fill={pieColors[i % pieColors.length]} />)}
-                        </Pie>
-                        <Tooltip formatter={(v, n) => [fmtCur(v, user.currency), n]} contentStyle={{ background:C.card, border:`1px solid ${C.cardB}`, borderRadius:12, fontSize:11, color:C.white }} />
-                      </PieChart>
-                    </ResponsiveContainer>
-                    <div style={{ flex:1, minWidth:140, display:"flex", flexDirection:"column", gap:7 }}>
-                      {categoryBreakdown.slice(0, 6).map((c, i) => (
-                        <div key={c.cat} style={{ display:"flex", alignItems:"center", gap:7 }}>
-                          <div style={{ width:8, height:8, borderRadius:99, background:pieColors[i % pieColors.length], flexShrink:0 }} />
-                          <Mono style={{ color:C.text, flex:1, minWidth:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{c.cat}</Mono>
-                          <Mono style={{ color:C.muted, flexShrink:0 }}>{fmtCur(c.amt, user.currency)} · {Math.round(c.pct*100)}%</Mono>
-                        </div>
-                      ))}
-                      {categoryBreakdown.length > 6 && <Mono style={{ color:C.muted }}>+{categoryBreakdown.length - 6} more</Mono>}
-                    </div>
-                  </div>
-                </Card>
-              );
-            })()}
             {/* Cash flow forecast. Recurring entries already exist, but nothing surfaced what's
                 actually coming due — someone only found out rent posted by seeing it in the list
                 after the fact. This looks ahead instead, simulating every future occurrence in
@@ -5965,6 +5987,9 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
                   </Mono>
                 )}
               </Card>
+            )}
+            {(income.length>0||expenses.length>0||showAddInc||showAddExp) && (
+              <div style={{ fontSize:12, fontWeight:600, color:C.muted, marginBottom:11, marginTop:8 }}>Transactions</div>
             )}
             {showAddInc && (
               <Card style={{ marginBottom:13, border:`1px solid ${C.border}` }}>
@@ -6121,16 +6146,7 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
                     );
                   })}
                 </div>
-                <Card hi style={{ border:`1px solid ${C.soft}`, marginBottom:12 }}>
-                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:10 }}>
-                    <div style={{ minWidth:0 }}>
-                      <Mono style={{ display:"block", color:C.white, marginBottom:4, letterSpacing:.8 }}>Net profit</Mono>
-                      <div style={{ fontSize:32, fontWeight:700, color:netProfit>=0?C.positive:C.negative, letterSpacing:-1.5, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{fmtCur(netProfit,user.currency)}</div>
-                      {totalIncome>0 && <Mono style={{ color:C.soft, marginTop:4, display:"block" }}>Margin: {((netProfit/totalIncome)*100).toFixed(1)}% · {user.currency}</Mono>}
-                    </div>
-                    <Tag tone={netProfit>=0?"positive":"negative"}>{netProfit>=0?"PROFIT":"DEFICIT"}</Tag>
-                  </div>
-                </Card>
+                <div style={{ fontSize:12, fontWeight:600, color:C.muted, marginBottom:11, marginTop:8 }}>Reports</div>
                 <Card style={{ border:`1px solid ${C.cardB}` }}>
                   <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:monthlyReport?14:0 }}>
                     <div>
