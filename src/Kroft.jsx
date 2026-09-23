@@ -4087,7 +4087,9 @@ Valid types and their fields:
 {"type":"add_appointment","title":"string","date":"YYYY-MM-DD","time":"HH:MM","location":"string"}
 {"type":"add_note","title":"string","body":"string"}
 {"type":"add_reminder","text":"string","when":"string"}
-Rules: amounts are positive numbers with no currency symbol. Resolve relative dates ("tomorrow", "next Friday") against the current date above and emit an absolute YYYY-MM-DD. Expense categories to prefer: ${expenseCats.join(", ")}. Income categories to prefer: ${incomeCats.join(", ")}. Emit at most one action per reply, only when clearly asked to save something — never for a question like "how much did I spend?". You cannot delete or edit anything; if asked, say that has to be done by hand.`;
+{"type":"complete_task","title":"string"}
+{"type":"edit_appointment","title":"string","date":"YYYY-MM-DD","time":"HH:MM"}
+Rules: amounts are positive numbers with no currency symbol. Resolve relative dates ("tomorrow", "next Friday") against the current date above and emit an absolute YYYY-MM-DD. Expense categories to prefer: ${expenseCats.join(", ")}. Income categories to prefer: ${incomeCats.join(", ")}. Emit at most one action per reply, only when clearly asked to save something — never for a question like "how much did I spend?". complete_task and edit_appointment match an EXISTING item by title against the TASKS/SCHEDULE lists above — use the shortest distinctive wording from that list, not a paraphrase, so the match is unambiguous. edit_appointment only needs the field(s) actually changing (e.g. just "time" to only move the time). You still cannot delete anything or send anything on the user's behalf — if asked for that, say it has to be done by hand.`;
   };
 
   // Pulls the action block out of a reply. The block is stripped before the text is shown or
@@ -4101,15 +4103,43 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
     return { clean:text.replace(ACTION_RE, "").trim(), action };
   };
 
-  // Executes an action the model asked for. Deliberately additive only — nothing here can
-  // delete or overwrite existing data, so a misread instruction can at worst create one stray
-  // item, which the undo toast covers. Every write is validated locally rather than trusted:
-  // the model can hallucinate an amount or a malformed date.
+  // Finds the existing item complete_task/edit_appointment refers to. Only ever reached via a
+  // title the model was told to copy verbatim from the same TASKS/SCHEDULE list it was just
+  // shown, so a case-insensitive substring match is enough — this is matching the model's own
+  // quoted-back wording, not fuzzy-searching free text a person typed.
+  const findByTitle = (list, title) => list.find(x => x.title.toLowerCase().includes(title.toLowerCase()));
+
+  // Executes an action the model asked for. add_* stays additive-only, so a misread instruction
+  // there can at worst create one stray item, covered by the undo toast. complete_task and
+  // edit_appointment modify an existing item instead — same undo-toast safety net (the previous
+  // state is captured and restored), but unlike add_*, a failed match returns a toast explaining
+  // why rather than silently doing nothing: the model's reply already told the user it was done,
+  // so staying quiet on a miss would leave them wrongly believing it happened. Nothing here can
+  // delete an item or send anything on the user's behalf — those still require the person's own
+  // hand, deliberately, until a real confirm-before-execute flow exists for actions that aren't
+  // trivially reversible by an undo tap.
   const applyAiAction = action => {
     if (!action || typeof action !== "object") return null;
     const str = v => (typeof v === "string" ? v.trim() : "");
     const validDate = d => /^\d{4}-\d{2}-\d{2}$/.test(d) && !isNaN(new Date(d+"T00:00:00"));
     switch (action.type) {
+      case "complete_task": {
+        const title = str(action.title); if (!title) return null;
+        const match = findByTitle(tasks.filter(t => !t.done), title);
+        if (!match) return { label:`Couldn't find an open task matching "${title}" to complete.` };
+        setTasks(p => p.map(x => x.id === match.id ? { ...x, done:true } : x));
+        return { label:`Marked done: ${match.title}`, undo:() => setTasks(p => p.map(x => x.id === match.id ? { ...x, done:false } : x)) };
+      }
+      case "edit_appointment": {
+        const title = str(action.title); if (!title) return null;
+        const match = findByTitle(appts, title);
+        if (!match) return { label:`Couldn't find an appointment matching "${title}" to reschedule.` };
+        const newDate = validDate(action.date) ? action.date : match.date;
+        const newTime = str(action.time) || match.time;
+        const prev = { date:match.date, time:match.time };
+        setAppts(p => p.map(x => x.id === match.id ? { ...x, date:newDate, time:newTime } : x));
+        return { label:`Rescheduled "${match.title}" to ${newDate} at ${newTime}`, undo:() => setAppts(p => p.map(x => x.id === match.id ? { ...x, ...prev } : x)) };
+      }
       case "add_task": {
         const title = str(action.title); if (!title) return null;
         const priority = ["High","Medium","Low"].includes(action.priority) ? action.priority : "Medium";
