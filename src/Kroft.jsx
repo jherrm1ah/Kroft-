@@ -1467,7 +1467,7 @@ function ProfileSwitch({ value, onChange }) {
   );
 }
 
-function ProfileSection({ user, onUpdateName, onEditPreferences, onEditBusinessDetails, onSignOut, theme, onToggleTheme, toast, subscribed, subscriptionStatus, autoRenews, billingLoading, onUpgrade, onManageBilling, dailyMessageCount, freeLimit, usageStats, voiceReplies, onSetVoiceReplies, proactiveInsights, onSetProactiveInsights, voicePref, onSetVoicePref, onSetupBiometric, onRemoveBiometric, onExportData, onImportData, notifPermission, notifPrefs, onEnableNotifications, onSetNotifPref, onTestNotification, aiExtrasCount, extrasLimit, monthlyReportCount, reportLimit, reportsLeftThisMonth, voiceTurnsCount, voiceLimit }) {
+function ProfileSection({ user, onUpdateName, onEditPreferences, onEditBusinessDetails, onSignOut, theme, onToggleTheme, toast, subscribed, subscriptionStatus, autoRenews, billingLoading, onUpgrade, onManageBilling, usageStats, voiceReplies, onSetVoiceReplies, proactiveInsights, onSetProactiveInsights, voicePref, onSetVoicePref, onSetupBiometric, onRemoveBiometric, onExportData, onImportData, notifPermission, notifPrefs, onEnableNotifications, onSetNotifPref, onTestNotification, voiceTurnsCount, voiceLimit }) {
   // null = main hub. Otherwise one of: "ai" | "productivity" | "privacy" | "subscription" | "support"
   const [screen, setScreen] = useState(null);
   const [openRow, setOpenRow] = useState(null);
@@ -1686,30 +1686,24 @@ function ProfileSection({ user, onUpdateName, onEditPreferences, onEditBusinessD
           <div style={{ fontSize:16, fontWeight:800, color:C.white }}>{subscribed ? "KROFT Plus" : "Free Plan"}</div>
           <Tag tone={subscribed?"positive":undefined}>{subscribed ? "Active" : "Current"}</Tag>
         </div>
-        {/* Three real usage pools shown as meters, not one vague "limit." Each is a genuinely
-            different habit — chatting a lot, drafting a handful of emails, generating one report
-            a month — so a person can see exactly what's actually constrained rather than a single
-            number that hides which of three different things they're running low on. */}
-        {!subscribed && [
-          { label:"AI chat", used:dailyMessageCount, limit:freeLimit },
-          { label:"Voice mode", used:voiceTurnsCount, limit:voiceLimit },
-          { label:"AI drafts & suggestions", used:aiExtrasCount, limit:extrasLimit },
-          { label:"Monthly reports", used:monthlyReportCount, limit:reportLimit, period:"this month" },
-        ].map(row => {
-          const pct = Math.min(100, (row.used/row.limit)*100);
+        {/* Chat, AI drafts/suggestions and monthly reports are unlimited on every plan — nothing
+            to meter. Voice is the one AI pool still worth a real allowance: an open-ended spoken
+            conversation is a materially different resource than a one-shot text call. */}
+        {!subscribed && (() => {
+          const pct = Math.min(100, (voiceTurnsCount/voiceLimit)*100);
           const barColor = pct>=90?C.negative:pct>=70?C.warning:C.accent;
           return (
-            <div key={row.label} style={{ marginBottom:11 }}>
+            <div style={{ marginBottom:11 }}>
               <div style={{ display:"flex", justifyContent:"space-between", marginBottom:4 }}>
-                <Mono style={{ color:C.soft }}>{row.label}</Mono>
-                <Mono style={{ color:C.muted }}>{row.used}/{row.limit}{row.period ? ` ${row.period}` : " today"}</Mono>
+                <Mono style={{ color:C.soft }}>Voice mode</Mono>
+                <Mono style={{ color:C.muted }}>{voiceTurnsCount}/{voiceLimit} today</Mono>
               </div>
               <div style={{ background:C.surface, borderRadius:99, height:6, overflow:"hidden" }}>
                 <div style={{ height:"100%", width:`${pct}%`, background:barColor, borderRadius:99, transition:"width .3s ease" }} />
               </div>
             </div>
           );
-        })}
+        })()}
         {subscribed && (
           <Mono style={{ display:"block", color:C.soft, marginBottom:14 }}>Unlimited chat, voice, drafts and reports.</Mono>
         )}
@@ -1721,16 +1715,13 @@ function ProfileSection({ user, onUpdateName, onEditPreferences, onEditBusinessD
       <Card style={{ padding:"2px 16px" }}>
         <ProfileRow label="What's in Plus" sub={subscribed ? "Active" : "Free plan"} expanded={openRow==="plus"} onToggle={()=>toggle("plus")}>
           {/* The free tier isn't a stripped-down trial — finances, budgets, contacts, notes,
-              recurring transactions and notifications are complete and stay free permanently.
-              Plus is specifically the AI calls that cost real money per use, so upgrading is
-              paying for more of a genuinely limited resource rather than unlocking basics that
-              were artificially held back. */}
+              recurring transactions, notifications, AI chat, drafts/suggestions and monthly
+              reports are complete and stay free permanently. Plus is specifically about voice
+              (a materially more expensive resource — open-ended spoken conversation) and a
+              handful of real conveniences, not gating basic text usage. */}
           <div style={{ display:"flex", flexDirection:"column", gap:10, marginBottom:12 }}>
             {[
-              { t:"Unlimited AI chat", d:`No daily cap on Ask KROFT — free plan gets ${freeLimit} messages a day.` },
-              { t:"Unlimited voice mode", d:`Talk to KROFT as much as you want, hands-free — free plan gets ${voiceLimit} voice turns a day, separate from chat.` },
-              { t:"Unlimited AI drafts & suggestions", d:`Email replies and smart reminders, as many as you need — free plan gets ${extrasLimit} a day.` },
-              { t:"Monthly reports on demand", d:"Generate your finance summary whenever you want — free plan gets one a month." },
+              { t:"Unlimited voice mode", d:`Talk to KROFT as much as you want, hands-free — free plan gets ${voiceLimit} voice turns a day.` },
               { t:"Budget rollover", d:"Unused budget carries into next month instead of resetting to zero." },
               { t:"Longer conversation memory", d:"KROFT remembers more of a long conversation — 60 messages of context instead of 20." },
               { t:"Scheduled reminder calls", d:"Set a time and KROFT rings you in the app, speaks the reminder, and can talk it through if you answer." },
@@ -1783,10 +1774,7 @@ function ProfileSection({ user, onUpdateName, onEditPreferences, onEditBusinessD
         <ProfileRow label="Usage Statistics" sub="Real activity from this session" expanded={openRow==="usage"} onToggle={()=>toggle("usage")}>
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:9 }}>
             {[
-              { l:"AI messages today", v: dailyMessageCount, ai:true },
               { l:"Voice turns today", v: voiceTurnsCount, ai:true },
-              { l:"AI drafts today", v: aiExtrasCount, ai:true },
-              { l:"Reports this month", v: monthlyReportCount, ai:true },
               { l:"Total AI messages", v: usageStats.totalMessages, ai:true },
               { l:"Appointments", v: usageStats.appts },
               { l:"Finance entries", v: usageStats.financeEntries },
@@ -2365,10 +2353,8 @@ function KroftApp({ onFullReset } = {}) {
   const recRef = useRef(null);
 
   // Subscription — real, session-local state. No payment processor is available in this
-  // environment, so "upgrading" flips this flag rather than charging anything. What it
-  // actually unlocks (removing the daily AI message cap) is real and enforced below.
-  const FREE_DAILY_MESSAGE_LIMIT = 15;
-  // How long until the daily allowance resets. Being told you're out with no idea whether that
+  // environment, so "upgrading" flips this flag rather than charging anything.
+  // How long until a daily allowance resets. Being told you're out with no idea whether that
   // means an hour or a day is the difference between waiting and assuming the app is broken.
   const resetsIn = () => {
     const now = new Date();
@@ -2378,60 +2364,32 @@ function KroftApp({ onFullReset } = {}) {
     const hrs = Math.round(mins / 60);
     return `${hrs} hour${hrs !== 1 ? "s" : ""}`;
   };
-  const messagesLeft = () => Math.max(0, FREE_DAILY_MESSAGE_LIMIT - dailyMessageCount);
 
-  // A second, smaller daily pool for the lighter one-off AI calls (email drafts, reminder
-  // suggestions) that aren't part of the main chat conversation. Kept separate from the message
-  // cap because someone chatting a lot shouldn't lose their ability to draft an email, and vice
-  // versa — they're different habits, not the same budget.
-  const FREE_DAILY_EXTRAS_LIMIT = 5;
-  const [aiExtrasCount, setAiExtrasCount] = useState(0);
-  const [aiExtrasDate, setAiExtrasDate] = useState(() => new Date().toDateString());
-  const extrasLeft = () => Math.max(0, FREE_DAILY_EXTRAS_LIMIT - aiExtrasCount);
-  // Call before any one-off AI action. Returns whether it's allowed to proceed, rolling the
-  // counter over on a new day and incrementing on success — mirrors the chat message gate so
-  // the two never disagree about what "a new day" means.
-  const spendAiExtra = () => {
-    const today = new Date().toDateString();
-    let count = aiExtrasCount;
-    if (today !== aiExtrasDate) { count = 0; setAiExtrasDate(today); setAiExtrasCount(0); }
-    if (!subscribed && count >= FREE_DAILY_EXTRAS_LIMIT) {
-      toast(`That's today's ${FREE_DAILY_EXTRAS_LIMIT} free AI drafts and suggestions used. Resets in about ${resetsIn()}, or KROFT Plus removes the limit.`);
-      return false;
-    }
-    if (!subscribed) setAiExtrasCount(count + 1);
-    return true;
-  };
-
-  // Voice mode used to share the same 15/day pool as typed chat — which meant the one feature
-  // built specifically for hands-free use (cooking, driving, walking) competed for quota with
-  // ordinary typing. Splitting it out means a chatty day never costs you your voice turns, and
-  // it's the clearest thing to point to when explaining why Plus is worth it: voice is what
-  // makes KROFT different from a chat window, so unlimited voice is the differentiated feature,
-  // not just "more of the same."
-  const FREE_DAILY_VOICE_LIMIT = 10;
+  // Chat, AI drafts/suggestions, and monthly reports are plain text generation — genuinely
+  // unlimited on every plan. api/chat.js enforces that by simply having no configured row for
+  // those usage types in the plan_limits table (see supabase/schema.sql); there's nothing to
+  // mirror client-side any more. Voice is the one AI pool that still has a real daily allowance
+  // — a materially different resource (open-ended spoken conversation, not a one-shot text
+  // call) — and its limit is fetched from the server via refreshUsageLimits() rather than
+  // hardcoded here, so it can change without redeploying the app.
+  const [usageLimits, setUsageLimits] = useState({}); // { voice: {limit, used, period, label}, ... } from GET /api/usage
+  const FALLBACK_VOICE_LIMIT = 30; // shown only before the real server-configured value has loaded
+  const voiceLimit = usageLimits.voice?.limit ?? FALLBACK_VOICE_LIMIT;
   const [voiceTurnsCount, setVoiceTurnsCount] = useState(0);
   const [voiceTurnsDate, setVoiceTurnsDate] = useState(() => new Date().toDateString());
-  const voiceTurnsLeft = () => Math.max(0, FREE_DAILY_VOICE_LIMIT - voiceTurnsCount);
-  // Returns whether a voice turn may proceed, rolling the day over and incrementing on success —
-  // same shape as spendAiExtra, kept separate because it gates a different pool.
+  const voiceTurnsLeft = () => Math.max(0, voiceLimit - voiceTurnsCount);
+  // Returns whether a voice turn may proceed, rolling the day over and incrementing on success.
+  // This is an optimistic client-side mirror for instant UI feedback — api/chat.js's own count,
+  // backed by the real ai_usage table, is what's actually enforced.
   const spendVoiceTurn = () => {
     const today = new Date().toDateString();
     let count = voiceTurnsCount;
     if (today !== voiceTurnsDate) { count = 0; setVoiceTurnsDate(today); setVoiceTurnsCount(0); }
-    if (!subscribed && count >= FREE_DAILY_VOICE_LIMIT) return false;
+    if (!subscribed && count >= voiceLimit) return false;
     if (!subscribed) setVoiceTurnsCount(count + 1);
     return true;
   };
 
-  // Monthly reports are the most expensive single call (fullest context, longest output), so
-  // they get their own much smaller allowance rather than sharing the daily pools — one free
-  // report a month is still real value, without one heavy user burning through daily quota meant
-  // for quick drafts.
-  const FREE_MONTHLY_REPORT_LIMIT = 1;
-  const [monthlyReportCount, setMonthlyReportCount] = useState(0);
-  const [monthlyReportMonth, setMonthlyReportMonth] = useState(() => todayISO().slice(0, 7));
-  const reportsLeftThisMonth = () => Math.max(0, FREE_MONTHLY_REPORT_LIMIT - monthlyReportCount);
   const [subscribed, setSubscribed] = useState(false);
   // Raw subscriptions.status ("inactive" | "active" | "past_due" | "canceled") — kept alongside
   // the derived `subscribed` boolean so the UI can tell "never subscribed" apart from "a renewal
@@ -2441,8 +2399,6 @@ function KroftApp({ onFullReset } = {}) {
   // transfer, USSD, mobile money, or an unconfirmed wallet-pay) — see isRecurringCapablePayment
   // in api/_lib/flutterwave.js, which is what actually sets this on the server.
   const [autoRenews, setAutoRenews] = useState(false);
-  const [dailyMessageCount, setDailyMessageCount] = useState(0);
-  const [messageCountDate, setMessageCountDate] = useState(() => new Date().toDateString());
 
   // Loads all persisted groups from window.storage and applies them to state. window.storage.get
   // throws (not returns null) for a key that's never been written — expected for a first-ever
@@ -2469,10 +2425,6 @@ function KroftApp({ onFullReset } = {}) {
       if (typeof p.proactiveInsights === "boolean") setProactiveInsights(p.proactiveInsights);
       if (typeof p.voicePref === "string") setVoicePref(p.voicePref);
       if (p.notifPrefs) setNotifPrefs(v => ({ ...v, ...p.notifPrefs }));
-      if (typeof p.aiExtrasCount === "number") setAiExtrasCount(p.aiExtrasCount);
-      if (p.aiExtrasDate) setAiExtrasDate(p.aiExtrasDate);
-      if (typeof p.monthlyReportCount === "number") setMonthlyReportCount(p.monthlyReportCount);
-      if (p.monthlyReportMonth) setMonthlyReportMonth(p.monthlyReportMonth);
       if (p.dailyBriefSentDate) setDailyBriefSentDate(p.dailyBriefSentDate);
       if (typeof p.voiceTurnsCount === "number") setVoiceTurnsCount(p.voiceTurnsCount);
       if (p.voiceTurnsDate) setVoiceTurnsDate(p.voiceTurnsDate);
@@ -2483,8 +2435,6 @@ function KroftApp({ onFullReset } = {}) {
       // refreshSubscriptionStatus's read of the server-verified subscriptions row (written only
       // by api/billing/webhook.js and api/billing/callback.js); defaulting to false here just
       // means a brief flash of "Free plan" until that fetch resolves, not a lasting gap.
-      if (typeof p.dailyMessageCount === "number") setDailyMessageCount(p.dailyMessageCount);
-      if (p.messageCountDate) setMessageCountDate(p.messageCountDate);
       if (typeof p.taxSetAsidePct === "number") setTaxSetAsidePct(p.taxSetAsidePct);
       if (Array.isArray(p.incomeCats)) setIncomeCats(p.incomeCats);
       if (Array.isArray(p.expenseCats)) setExpenseCats(p.expenseCats);
@@ -2579,13 +2529,13 @@ function KroftApp({ onFullReset } = {}) {
   // subscribed is deliberately excluded — see hydrateAllGroups's comment on why it's never
   // restored from this same blob; persisting it here would just re-create the value this app
   // must never trust from client storage in the first place.
-  const saveProfileNow = () => window.storage.set(STORAGE_KEYS.profile, JSON.stringify({ user, theme, voiceReplies, proactiveInsights, voicePref, dailyMessageCount, messageCountDate, incomeCats, expenseCats, notifPrefs, aiExtrasCount, aiExtrasDate, monthlyReportCount, monthlyReportMonth, dailyBriefSentDate, voiceTurnsCount, voiceTurnsDate, taxSetAsidePct }), false);
+  const saveProfileNow = () => window.storage.set(STORAGE_KEYS.profile, JSON.stringify({ user, theme, voiceReplies, proactiveInsights, voicePref, incomeCats, expenseCats, notifPrefs, dailyBriefSentDate, voiceTurnsCount, voiceTurnsDate, taxSetAsidePct }), false);
 
   useEffect(() => {
     if (!dataLoaded) return;
     const t = setTimeout(() => { saveProfileNow().catch(()=>{}); }, 900);
     return () => clearTimeout(t);
-  }, [dataLoaded, user, theme, voiceReplies, proactiveInsights, voicePref, dailyMessageCount, messageCountDate, incomeCats, expenseCats, notifPrefs, aiExtrasCount, aiExtrasDate, monthlyReportCount, monthlyReportMonth, dailyBriefSentDate, voiceTurnsCount, voiceTurnsDate, taxSetAsidePct]);
+  }, [dataLoaded, user, theme, voiceReplies, proactiveInsights, voicePref, incomeCats, expenseCats, notifPrefs, dailyBriefSentDate, voiceTurnsCount, voiceTurnsDate, taxSetAsidePct]);
 
   useEffect(() => {
     if (!dataLoaded) return;
@@ -3342,6 +3292,24 @@ function KroftApp({ onFullReset } = {}) {
     }
   };
 
+  // The configured daily/monthly allowance for the AI pools that still have one (voice today;
+  // any future metered feature — vision, image generation, file analysis, web research —
+  // reads from the same plan_limits table with zero client changes once it exists), plus
+  // this account's current usage against it. Fetched fresh on every dashboard entry rather
+  // than hardcoded, so an admin changing a limit in the database takes effect immediately —
+  // no redeploy needed.
+  const refreshUsageLimits = async () => {
+    if (!isSupabaseConfigured) return;
+    try {
+      const res = await authedFetch("/api/usage");
+      if (!res.ok) return;
+      const data = await res.json();
+      setUsageLimits(data?.limits || {});
+    } catch {
+      // Silent — a background refresh; the FALLBACK_VOICE_LIMIT keeps the UI sane meanwhile.
+    }
+  };
+
   // Redirects to Flutterwave's hosted Checkout for a new subscription. Nothing here can make
   // `subscribed` true directly — that only ever happens once api/billing/callback.js verifies
   // a real payment server-side (or, for later renewals, once api/billing/webhook.js confirms
@@ -3471,7 +3439,7 @@ function KroftApp({ onFullReset } = {}) {
   // onboarding via "Enter KROFT", without needing each of those call sites to remember to
   // trigger it themselves.
   useEffect(() => {
-    if (step === "dashboard") { refreshGoogleStatus(); refreshMicrosoftStatus(); refreshSubscriptionStatus(); }
+    if (step === "dashboard") { refreshGoogleStatus(); refreshMicrosoftStatus(); refreshSubscriptionStatus(); refreshUsageLimits(); }
   }, [step]);
 
   const doSignup = async () => {
@@ -3765,7 +3733,7 @@ function KroftApp({ onFullReset } = {}) {
     // Voice mode has its own daily allowance, separate from typed chat, so a busy voice
     // conversation and a busy typing session never compete for the same quota.
     if (!spendVoiceTurn()) {
-      const msg = `That's today's ${FREE_DAILY_VOICE_LIMIT} free voice turns. They reset in about ${resetsIn()}, or KROFT Plus removes the limit — typed chat still works.`;
+      const msg = `That's today's ${voiceLimit} free voice turns. They reset in about ${resetsIn()}, or KROFT Plus removes the limit — typed chat still works.`;
       setVoiceTranscript(""); setVoiceReply(msg); setVoiceState("speaking");
       voiceStopRef.current = speakSequence([msg], { onDone: () => { voiceStopRef.current = null; setVoiceState("idle"); } });
       return;
@@ -4390,27 +4358,7 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
   // without re-appending the user's message a second time — that message was already added
   // when the suggestion first appeared.
   const runNormalCompletion = async (conversationSoFar, contactAction = null) => {
-    const today = new Date().toDateString();
-    let currentCount = dailyMessageCount;
-    if (today !== messageCountDate) {
-      currentCount = 0;
-      setMessageCountDate(today);
-      setDailyMessageCount(0);
-    }
-    if (!subscribed && currentCount >= FREE_DAILY_MESSAGE_LIMIT) {
-      // Shown in the conversation rather than as a toast that disappears. Being silently
-      // stopped mid-thought, with the only explanation already faded away, reads as the app
-      // breaking rather than a limit being reached.
-      setAiMessages(p => [...p, {
-        id: uid(),
-        role: "assistant",
-        content: `That's all ${FREE_DAILY_MESSAGE_LIMIT} free messages for today — they reset in about ${resetsIn()}. Everything else in KROFT keeps working in the meantime.`,
-        limitNotice: true,
-      }]);
-      return;
-    }
     setAiLoading(true);
-    if (!subscribed) setDailyMessageCount(currentCount + 1);
     await streamReply(conversationSoFar, contactAction);
   };
 
@@ -4948,7 +4896,6 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
   };
 
   const aiDraftReply = async email => {
-    if (!spendAiExtra()) return;
     toast("KROFT is drafting a reply…");
     try {
       const res = await aiFetch("/api/chat", { method:"POST", headers:{"Content-Type":"application/json","X-Kroft-Usage-Type":"extra"}, body:JSON.stringify({ model:"gemini-3.6-flash", max_tokens:400, messages:[{ role:"user", content:`Draft a concise professional reply (under 5 sentences). From: ${email.from}, Subject: ${email.subject}, Body: "${email.body}"` }] }) });
@@ -4965,7 +4912,6 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
   // Smart Reminders — genuinely asks the AI for a useful reminder based on real context
   const [suggestingReminder, setSuggestingReminder] = useState(false);
   const suggestSmartReminder = async () => {
-    if (!spendAiExtra()) return;
     setSuggestingReminder(true);
     const context = `Appointments: ${appts.length>0 ? appts.map(a=>`${a.title} at ${a.time} on ${a.date}`).join("; ") : "none"}. Tasks: ${tasks.length>0 ? tasks.filter(t=>!t.done).map(t=>t.title).join("; ") : "none"}. Mood: ${mood}.`;
     try {
@@ -4988,14 +4934,6 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
     const expTotal = monthExp.reduce((s,r)=>s+r.amount,0);
     const net = incTotal - expTotal;
     if (monthInc.length===0 && monthExp.length===0) { toast("No entries logged this month yet."); return; }
-    const currentMonth = ym;
-    if (currentMonth !== monthlyReportMonth) { setMonthlyReportMonth(currentMonth); setMonthlyReportCount(0); }
-    const reportCount = currentMonth !== monthlyReportMonth ? 0 : monthlyReportCount;
-    if (!subscribed && reportCount >= FREE_MONTHLY_REPORT_LIMIT) {
-      toast(`You've used this month's free report. KROFT Plus gives you one whenever you want it.`);
-      return;
-    }
-    if (!subscribed) setMonthlyReportCount(reportCount + 1);
     const byCat = {};
     monthExp.forEach(r => { byCat[r.cat] = (byCat[r.cat]||0) + r.amount; });
     const topCats = Object.entries(byCat).sort((a,b)=>b[1]-a[1]).slice(0,3);
@@ -5161,19 +5099,16 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
     setAroundLoading(true); setAroundError(""); setAroundSearched(true); setAroundResults([]);
 
     let searchTerm = categoryOrQuery;
-    // This call spends from the same "extra" pool as aiDraftReply/suggestSmartReminder (see the
-    // X-Kroft-Usage-Type header below) but, unlike those two, never actually called spendAiExtra
-    // — the server-side quota still enforced it, but aiExtrasCount here never incremented, so
-    // Profile's "free AI drafts/suggestions" counter silently under-reported real usage. Skipping
-    // straight to a plain-text search on exhaustion (rather than blocking the search outright)
-    // matches the existing network-failure fallback below — the person still gets *a* result.
-    if (isNaturalLanguage && !spendAiExtra()) {
-      searchTerm = categoryOrQuery;
-    } else if (isNaturalLanguage) {
-      // Let Gemini interpret the natural-language request into a place-type query
+    if (isNaturalLanguage) {
+      // Let Gemini interpret the natural-language request into a place-type query. Tagged as its
+      // own "location_search" pool (separate from the now-unlimited plain-text AI calls) since
+      // repeated AI-powered nearby searches carry a real external-API cost the app wants to
+      // meter — if the free allowance is exhausted, the server's 429 has no `content` field, so
+      // searchTerm below falls straight back to the raw query and a plain-text search still runs
+      // (matching the network-failure fallback), rather than blocking the search outright.
       try {
         const res = await aiFetch("/api/chat", {
-          method:"POST", headers:{"Content-Type":"application/json","X-Kroft-Usage-Type":"extra"},
+          method:"POST", headers:{"Content-Type":"application/json","X-Kroft-Usage-Type":"location_search"},
           body:JSON.stringify({
             model:"gemini-3.6-flash", max_tokens:60,
             system:"Convert the user's request into a single short search term (2-4 words max) suitable for a places search API, such as 'coffee shop', 'pharmacy open now', 'budget hotel', or 'ATM'. Reply with ONLY the search term, nothing else.",
@@ -6398,7 +6333,6 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
                       <Mono style={{ display:"block", color:C.white, letterSpacing:.8, marginBottom:2 }}>Monthly report</Mono>
                       <Mono style={{ color:C.muted, fontSize:10 }}>
                         {monthlyReport ? monthlyReport.month : "See how this month went, with advice"}
-                        {!subscribed && (reportsLeftThisMonth() > 0 ? ` · ${reportsLeftThisMonth()} free left this month` : " · resets next month, or upgrade")}
                       </Mono>
                     </div>
                     <Btn sm v="outline" onClick={generateMonthlyReport} disabled={generatingReport}>{generatingReport?<><Spinner size={11} color={C.soft} thickness={2} />Generating…</>:monthlyReport?"Refresh":"Generate"}</Btn>
@@ -7792,18 +7726,6 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
                 </button>
               </div>
             </div>
-            {!subscribed && (
-              <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"10px 16px 0", flexWrap:"wrap", gap:8, flexShrink:0 }}>
-                <Mono style={{ color:C.soft }}>
-                  {Math.max(0, FREE_DAILY_MESSAGE_LIMIT - dailyMessageCount)} of {FREE_DAILY_MESSAGE_LIMIT} free messages left today
-                </Mono>
-                {dailyMessageCount >= FREE_DAILY_MESSAGE_LIMIT - 3 && (
-                  <button onClick={() => setTab("profile")} style={{ background:"none", border:"none", color:C.white, textDecoration:"underline", cursor:"pointer", fontSize:11, fontWeight:700, fontFamily:"'Space Grotesk',sans-serif" }}>
-                    Upgrade to Plus
-                  </button>
-                )}
-              </div>
-            )}
             <div style={{ flex:1, minHeight:0, position:"relative" }}>
               <div ref={chatScrollRef} onScroll={e => {
                 const box = e.currentTarget;
@@ -7919,14 +7841,6 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
                 {/* One button in one place: the mic sits there until you start typing, then it
                     becomes Send. Showing both at once meant a permanently greyed-out Send
                     taking up space next to a mic you'd use far more often. */}
-                {/* Usage is visible where messages are actually spent, and only once it starts
-                    to matter. The meter previously lived in Profile alone, so the first sign of
-                    a limit was hitting it mid-conversation. */}
-                {!subscribed && messagesLeft() <= 5 && (
-                  <Mono style={{ color: messagesLeft() === 0 ? C.negative : C.muted, flexShrink:0, alignSelf:"center" }}>
-                    {messagesLeft() === 0 ? `resets in ${resetsIn()}` : `${messagesLeft()} left`}
-                  </Mono>
-                )}
                 {aiLoading ? (
                   <button onClick={stopReply} aria-label="Stop generating" title="Stop"
                     style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:"50%", width:44, height:44, flexShrink:0, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>
@@ -7976,13 +7890,8 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
                 const ok = sendNotification("Test from KROFT", "If you can see this, notifications are working.", "kroft:test");
                 toast(ok ? "Test sent." : "Couldn't send — check your browser settings.");
               }}
-              aiExtrasCount={aiExtrasCount}
-              extrasLimit={FREE_DAILY_EXTRAS_LIMIT}
-              monthlyReportCount={monthlyReportCount}
-              reportLimit={FREE_MONTHLY_REPORT_LIMIT}
-              reportsLeftThisMonth={reportsLeftThisMonth()}
               voiceTurnsCount={voiceTurnsCount}
-              voiceLimit={FREE_DAILY_VOICE_LIMIT}
+              voiceLimit={voiceLimit}
               onSignOut={async () => {
                 // Signing out previously only flipped `step` back to the login screen — every
                 // bit of data stayed live in memory, so returning to the dashboard showed the
@@ -8007,8 +7916,6 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
               billingLoading={billingLoading}
               onUpgrade={startCheckout}
               onManageBilling={cancelKroftPlus}
-              dailyMessageCount={dailyMessageCount}
-              freeLimit={FREE_DAILY_MESSAGE_LIMIT}
               voiceReplies={voiceReplies}
               onSetVoiceReplies={setVoiceReplies}
               proactiveInsights={proactiveInsights}
