@@ -799,6 +799,8 @@ const NavIcon = ({ id, size=20, color="currentColor" }) => {
       return <svg viewBox="0 0 24 24" style={s}><path d="M4.5 12h14" {...p} /><path d="M12.5 5.5 19 12l-6.5 6.5" {...p} /></svg>;
     case "edit":
       return <svg viewBox="0 0 24 24" style={s}><path d="M15.5 4.5 19.5 8.5 8 20H4v-4z" {...p} /><path d="M14 6l4 4" {...p} /></svg>;
+    case "history": // past conversations list
+      return <svg viewBox="0 0 24 24" style={s}><path d="M4.5 6h15M4.5 12h15M4.5 18h9" {...p} /></svg>;
     // ---- Workspace tool icons (the hub's ToolCard grid) ----
     case "calendar":
       return <svg viewBox="0 0 24 24" style={s}><rect x="4" y="5.5" width="16" height="14" rx="2" {...p} /><path d="M4 10h16" {...p} /><path d="M8 3.5v3M16 3.5v3" {...p} /></svg>;
@@ -2277,6 +2279,13 @@ function KroftApp({ onFullReset } = {}) {
   const [showBriefing, setShowBriefing] = useState(false);
   const [uberDest, setUberDest] = useState(null);
   const [aiMessages, setAiMessages] = useState([]);
+  // Past conversations, most-recent first — { id, title, messages, updatedAt }. aiMessages is
+  // only ever the ONE live/active conversation; starting a new chat or opening a saved one moves
+  // whatever was active into this list first (see startNewChat/openHistoryChat) rather than just
+  // discarding it, so nothing typed is ever permanently lost the way it used to be.
+  const [chatHistory, setChatHistory] = useState([]);
+  const [showChatHistory, setShowChatHistory] = useState(false);
+  const [chatHistorySearch, setChatHistorySearch] = useState("");
   const [aiInput, setAiInput] = useState("");
   const [aiLoading, setAiLoading] = useState(false);
   // Drives the floating "scroll to bottom" button — shown only once someone has actually
@@ -2451,7 +2460,12 @@ function KroftApp({ onFullReset } = {}) {
     // Read/unread and deletions were lost on every reload — the inbox silently reset to
     // all-unread, so marking things read never stuck.
     if (data.emailData && Array.isArray(data.emailData.emails)) setEmails(data.emailData.emails);
-    if (data.chatData) setAiMessages((data.chatData.aiMessages||[]).map(({ streaming, ...m }) => m));
+    if (data.chatData) {
+      setAiMessages((data.chatData.aiMessages||[]).map(({ streaming, ...m }) => m));
+      if (Array.isArray(data.chatData.history)) {
+        setChatHistory(data.chatData.history.map(c => ({ ...c, messages:(c.messages||[]).map(({ streaming, ...m }) => m) })));
+      }
+    }
     return data;
   };
 
@@ -2558,11 +2572,15 @@ function KroftApp({ onFullReset } = {}) {
 
   useEffect(() => {
     if (!dataLoaded) return;
-    // Capped to the most recent 60 messages — chat history grows unbounded otherwise, and
-    // storage values are size-limited.
-    const t = setTimeout(() => { window.storage.set(STORAGE_KEYS.chatData, JSON.stringify({ aiMessages: aiMessages.slice(-60).map(({ streaming, ...m }) => m) }), false).catch(()=>{}); }, 900);
+    // Capped to the most recent 60 messages on the active conversation, and to the most recent
+    // 30 saved conversations (each itself capped at 60 messages) — unbounded chat history grows
+    // forever otherwise, and storage values are size-limited.
+    const t = setTimeout(() => { window.storage.set(STORAGE_KEYS.chatData, JSON.stringify({
+      aiMessages: aiMessages.slice(-60).map(({ streaming, ...m }) => m),
+      history: chatHistory.slice(0, 30).map(c => ({ ...c, messages: c.messages.slice(-60) })),
+    }), false).catch(()=>{}); }, 900);
     return () => clearTimeout(t);
-  }, [dataLoaded, aiMessages]);
+  }, [dataLoaded, aiMessages, chatHistory]);
 
   useEffect(() => {
     if (!dataLoaded) return;
@@ -4701,10 +4719,63 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
   // Starts a fresh conversation without losing the old one outright — matches the undo pattern
   // used for every other destructive action in this app (delete a task, remove a memo, etc.)
   // rather than a bare confirm() dialog.
+  // A conversation's title is just its first user message, truncated — cheap and immediate,
+  // rather than spending a separate AI call to summarize it the way some chat apps do (this
+  // app already treats AI calls as a metered resource everywhere else, via the free-tier quotas
+  // above).
+  const deriveChatTitle = messages => {
+    const first = messages.find(m => m.role === "user");
+    if (!first) return "New conversation";
+    const text = (first.content || "").trim().replace(/\s+/g, " ");
+    return text.length > 42 ? text.slice(0, 42) + "…" : text || "New conversation";
+  };
+
+  // Starting a new chat used to just discard whatever was active (recoverable only via a toast's
+  // undo button, and only until that toast faded) — now it's saved into history first, so nothing
+  // typed is ever actually lost, and it can be reopened any time from the history panel.
   const startNewChat = () => {
     const prev = aiMessages;
+    const hadContent = prev.some(m => m.role === "user");
+    let savedEntry = null;
+    if (hadContent) {
+      savedEntry = { id:uid(), title:deriveChatTitle(prev), messages:prev, updatedAt:Date.now() };
+      setChatHistory(h => [savedEntry, ...h].slice(0, 30));
+    }
     setAiMessages([{ role:"assistant", content:`Hey ${firstNameOf(user.name)||"there"} — new conversation. What can I help with?` }]);
-    toast("Started a new conversation.", () => setAiMessages(prev));
+    toast(hadContent ? "Conversation saved to history." : "Started a new conversation.", () => {
+      if (savedEntry) setChatHistory(h => h.filter(c => c.id !== savedEntry.id));
+      setAiMessages(prev);
+    });
+  };
+
+  // Swaps in a saved conversation as the active one — saving whatever's currently active into
+  // history first (same as startNewChat), and pulling the opened conversation out of the history
+  // list since it's the live one again now, not a saved item.
+  const openHistoryChat = id => {
+    const target = chatHistory.find(c => c.id === id);
+    if (!target) return;
+    const current = aiMessages;
+    const currentHadContent = current.some(m => m.role === "user");
+    setChatHistory(h => {
+      const rest = h.filter(c => c.id !== id);
+      return currentHadContent
+        ? [{ id:uid(), title:deriveChatTitle(current), messages:current, updatedAt:Date.now() }, ...rest].slice(0, 30)
+        : rest;
+    });
+    setAiMessages(target.messages);
+    setShowChatHistory(false);
+    setChatHistorySearch("");
+  };
+
+  // Short, glanceable "when" for a history entry — "Today"/"Yesterday" reads faster than a full
+  // date for the recent conversations someone is actually scanning for, falling back to a date
+  // once it's further back than that.
+  const chatHistoryWhen = ts => {
+    const d = new Date(ts);
+    const days = Math.floor((Date.now() - ts) / 86400000);
+    if (days <= 0 && d.toDateString() === new Date().toDateString()) return "Today";
+    if (days === 1) return "Yesterday";
+    return d.toLocaleDateString("en-US", { month:"short", day:"numeric" });
   };
 
   const scrollChatToBottom = () => chatEnd.current?.scrollIntoView({ behavior:"smooth" });
@@ -5436,6 +5507,56 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
     <div key={themeTick} style={{ fontFamily:"'Space Grotesk',sans-serif", background:C.bg, minHeight:"100vh", color:C.text, overflowX:"hidden", maxWidth:"100vw", touchAction:"pan-y" }}>
       <style>{G}</style>
       {showBriefing && <Briefing user={user} income={totalIncome} expenses={totalExpenses} emails={emails} appts={appts} onClose={() => setShowBriefing(false)} />}
+      {showChatHistory && (() => {
+        const q = chatHistorySearch.trim().toLowerCase();
+        const filtered = q ? chatHistory.filter(c => c.title.toLowerCase().includes(q)) : chatHistory;
+        return (
+          <div role="dialog" aria-modal="true" aria-label="Chat history" style={{ position:"fixed", inset:0, zIndex:310, background:C.bg, display:"flex", flexDirection:"column" }}>
+            <div style={{ display:"flex", alignItems:"center", gap:10, padding:"12px 16px", borderBottom:`1px solid ${C.cardB}`, flexShrink:0 }}>
+              <button onClick={() => { setShowChatHistory(false); setChatHistorySearch(""); }} aria-label="Close chat history" style={{ background:"none", border:"none", color:C.white, cursor:"pointer", fontSize:20, padding:"2px 4px", lineHeight:1 }}>←</button>
+              <h2 style={{ fontSize:17, fontWeight:700, color:C.white, letterSpacing:-.5, flex:1 }}>Chat history</h2>
+              <Btn sm onClick={() => { startNewChat(); setShowChatHistory(false); setChatHistorySearch(""); }}>New chat</Btn>
+            </div>
+            <div style={{ flex:1, minHeight:0, overflowY:"auto", padding:16 }}>
+              {chatHistory.length > 0 && (
+                <Inp placeholder="Search conversations…" value={chatHistorySearch} onChange={e=>setChatHistorySearch(e.target.value)} style={{ marginBottom:16, width:"100%", boxSizing:"border-box" }} />
+              )}
+              {chatHistory.length === 0 ? (
+                <Card level="inset" style={{ textAlign:"center", padding:26, borderStyle:"dashed" }}>
+                  <div style={{ fontSize:15, fontWeight:600, color:C.white, marginBottom:6 }}>No past conversations yet</div>
+                  <Mono style={{ display:"block", color:C.soft }}>Starting a new chat saves the one you're leaving here.</Mono>
+                </Card>
+              ) : filtered.length === 0 ? (
+                <Card level="inset" style={{ textAlign:"center", padding:26, borderStyle:"dashed" }}>
+                  <Mono style={{ color:C.soft }}>Nothing matches "{chatHistorySearch}".</Mono>
+                </Card>
+              ) : (
+                <div style={{ display:"flex", flexDirection:"column", gap:9 }}>
+                  {filtered.map(c => (
+                    <Card key={c.id} onClick={() => openHistoryChat(c.id)}
+                      {...longPress(() => setActionSheet(holdActions({
+                        title: c.title,
+                        subtitle: `${c.messages.length} messages · ${chatHistoryWhen(c.updatedAt)}`,
+                        list: chatHistory, setList: setChatHistory, id: c.id,
+                        deletedLabel: "Conversation deleted.",
+                        confirmText: "This removes the conversation from your history.",
+                      })))}
+                      style={{ cursor:"pointer", WebkitTouchCallout:"none", WebkitUserSelect:"none", userSelect:"none" }}>
+                      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:10 }}>
+                        <div style={{ minWidth:0, flex:1 }}>
+                          <div style={{ fontSize:13, fontWeight:600, color:C.white, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{c.title}</div>
+                          <Mono style={{ color:C.muted, display:"block", marginTop:3 }}>{c.messages.filter(m=>m.role==="user").length} message{c.messages.filter(m=>m.role==="user").length===1?"":"s"} you sent</Mono>
+                        </div>
+                        <Mono style={{ color:C.soft, flexShrink:0 }}>{chatHistoryWhen(c.updatedAt)}</Mono>
+                      </div>
+                    </Card>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })()}
       {uberDest && <UberModal dest={uberDest} onClose={() => setUberDest(null)} />}
       {composeDraft && <ComposeModal draft={composeDraft} onChange={setComposeDraft} onSend={async d => {
         // Real send when a real email account is connected — otherwise fall back to the
@@ -7530,6 +7651,9 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:10, padding:"12px 16px", borderBottom:`1px solid ${C.cardB}`, flexShrink:0 }}>
               <div style={{ display:"flex", alignItems:"center", gap:8, minWidth:0 }}>
                 <button onClick={() => setTab("home")} aria-label="Close Ask Kroft" title="Close" style={{ background:"none", border:"none", color:C.white, cursor:"pointer", fontSize:20, padding:"2px 4px", lineHeight:1, flexShrink:0 }}>←</button>
+                <button onClick={() => setShowChatHistory(true)} aria-label="Chat history" title="Chat history" style={{ background:"none", border:"none", color:C.white, cursor:"pointer", padding:6, lineHeight:1, flexShrink:0, display:"flex" }}>
+                  <NavIcon id="history" size={18} color={C.white} />
+                </button>
                 <h2 style={{ fontSize:17, fontWeight:700, color:C.white, letterSpacing:-.5, whiteSpace:"nowrap" }}>Ask Kroft</h2>
               </div>
               <div style={{ display:"flex", gap:7, flexShrink:0 }}>
