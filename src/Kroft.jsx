@@ -7,42 +7,51 @@ import { supabase, isSupabaseConfigured } from "./supabaseClient.js";
 // Light mode: white/off-white surfaces, near-black text.
 // Every token below meets or exceeds WCAG AA contrast against its paired surface.
 const DARK = {
-  bg:"#000000", card:"#0d0d0d", cardB:"#242424", surface:"#141414",
+  bg:"#000000", card:"#0d0d0d", cardB:"#1c1c1c", surface:"#141414",
   hover:"#1a1a1a", white:"#ffffff", black:"#000000",
   offWhite:"#f4f2ee",
   text:"#ffffff",        // primary text — pure white on black, max contrast
   soft:"#dcd8d0",        // secondary text — bright off-white, clearly readable (was low-contrast grey)
   muted:"#9a968e",       // tertiary/placeholder — still readable, used sparingly
-  border:"#3a3a3a",      // visible borders / dividers on dark surfaces
-  div:"#242424",
+  border:"#2c2c2c",      // visible borders / dividers on dark surfaces
+  div:"#1c1c1c",
   invBg:"#f4f2ee", invText:"#0a0a0a", // inverse surface for chips/pills on dark
-  positive:"#4ade80", positiveBg:"rgba(74,222,128,.12)",   // income, completed, gains
-  negative:"#f87171", negativeBg:"rgba(248,113,113,.12)",  // expense, urgent, deficit
-  warning:"#fbbf24", warningBg:"rgba(251,191,36,.12)",     // on hold, pending, due soon
-  accent:"#818cf8", accentBg:"rgba(129,140,248,.14)",      // AI, links, in-progress
+  // Muted/desaturated versions of the original Tailwind-400 tones (#4ade80/#f87171/#fbbf24/
+  // #818cf8) — those read as bright "candy" colors once reused everywhere (tags, chart fills,
+  // borders), especially stacked across several cards on one screen. Still clearly distinct
+  // from each other and each verified ≥4.5:1 against both bg and card.
+  positive:"#7dbd8f", positiveBg:"rgba(125,189,143,.12)",  // income, completed, gains
+  negative:"#d9776a", negativeBg:"rgba(217,119,106,.12)",  // expense, urgent, deficit
+  warning:"#c9a350", warningBg:"rgba(201,163,80,.12)",     // on hold, pending, due soon
+  accent:"#8891c4", accentBg:"rgba(136,145,196,.14)",      // AI, links, in-progress
   // Translucent fills for notices/inset panels. These were previously hardcoded as
   // rgba(255,255,255,.04–.09), which is invisible against a light surface — so every error
   // box and inset panel lost its background entirely in light mode.
   fill:"rgba(255,255,255,.05)", fillStrong:"rgba(255,255,255,.09)",
-  // Elevation shadows, keyed to a card's role rather than one shadow used everywhere.
-  shadowRaised:"0 10px 30px rgba(0,0,0,.55)", shadowBase:"0 2px 8px rgba(0,0,0,.4)",
+  // Elevation shadows, keyed to a card's role rather than one shadow used everywhere. Softened
+  // (lower alpha) alongside the smaller CARD_LEVELS radii below — many cards stacked on one
+  // screen with a heavy shadow and a large radius each reads as a pile of distinct boxes rather
+  // than one calm layout.
+  shadowRaised:"0 8px 22px rgba(0,0,0,.4)", shadowBase:"0 1px 5px rgba(0,0,0,.3)",
 };
 const LIGHT = {
-  bg:"#f4f2ee", card:"#ffffff", cardB:"#e2ded6", surface:"#ffffff",
+  bg:"#f4f2ee", card:"#ffffff", cardB:"#e6e2da", surface:"#ffffff",
   hover:"#ece8e0", white:"#0a0a0a", black:"#ffffff",
   offWhite:"#000000",
   text:"#0a0a0a",        // primary text — near-black on off-white
   soft:"#3a3833",        // secondary text — dark and clearly readable
   muted:"#6b6860",       // tertiary/placeholder
-  border:"#c9c4b8",      // visible borders / dividers on light surfaces
-  div:"#e2ded6",
+  border:"#d6d1c5",      // visible borders / dividers on light surfaces
+  div:"#e6e2da",
   invBg:"#0a0a0a", invText:"#f4f2ee",
-  positive:"#16a34a", positiveBg:"rgba(22,163,74,.10)",
-  negative:"#dc2626", negativeBg:"rgba(220,38,38,.10)",
-  warning:"#d97706", warningBg:"rgba(217,119,6,.10)",
-  accent:"#6366f1", accentBg:"rgba(99,102,241,.10)",
+  // See DARK's positive/negative/warning/accent comment — same desaturation, same contrast bar,
+  // checked against both bg and card since text on either uses this color directly.
+  positive:"#457154", positiveBg:"rgba(69,113,84,.10)",
+  negative:"#a04b3f", negativeBg:"rgba(160,75,63,.10)",
+  warning:"#87672a", warningBg:"rgba(135,103,42,.10)",
+  accent:"#4f5389", accentBg:"rgba(79,83,137,.10)",
   fill:"rgba(10,10,10,.04)", fillStrong:"rgba(10,10,10,.07)",
-  shadowRaised:"0 10px 30px rgba(40,36,28,.14)", shadowBase:"0 1px 3px rgba(40,36,28,.08)",
+  shadowRaised:"0 8px 22px rgba(40,36,28,.10)", shadowBase:"0 1px 3px rgba(40,36,28,.05)",
 };
 // The Briefing plays over an always-dark scrim for focus, so it reads its colors from DARK
 // regardless of the active theme. Without this it inherits light tokens and renders a
@@ -437,9 +446,12 @@ function generatePassword() {
 //   base   — the default content card (unchanged from before, so existing usage is untouched)
 //   inset  — nested rows inside another card; tighter radius, border only, no shadow
 const CARD_LEVELS = {
-  raised: { radius:22, pad:20, shadow:() => C.shadowRaised },
-  base:   { radius:18, pad:16, shadow:() => C.shadowBase },
-  inset:  { radius:12, pad:12, shadow:() => "none" },
+  // Radii pulled in from 22/18/12 — large rounding reads fine on one card, but stacking several
+  // per screen (Finance alone now runs eight-plus) turned every one of them into an obviously
+  // separate bubble instead of one calm layout.
+  raised: { radius:18, pad:20, shadow:() => C.shadowRaised },
+  base:   { radius:14, pad:16, shadow:() => C.shadowBase },
+  inset:  { radius:10, pad:12, shadow:() => "none" },
 };
 const Card = ({ children, style, onClick, hi, level="base", ...rest }) => {
   const L = CARD_LEVELS[level] || CARD_LEVELS.base;
@@ -1026,8 +1038,8 @@ function IncomingCallScreen({ call, onAnswer, onDecline }) {
       <VoiceOrb state="thinking" levelRef={{ current:0 }} size={size} />
 
       <div style={{ display:"flex", gap:28, alignItems:"center" }}>
-        <button onClick={onDecline} aria-label="Decline call" style={{ width:64, height:64, borderRadius:"50%", border:"none", background:"#dc2626", color:"#fff", fontSize:22, cursor:"pointer" }}>✕</button>
-        <button onClick={onAnswer} aria-label="Answer call" style={{ width:64, height:64, borderRadius:"50%", border:"none", background:"#16a34a", color:"#fff", fontSize:22, cursor:"pointer" }}>✓</button>
+        <button onClick={onDecline} aria-label="Decline call" style={{ width:64, height:64, borderRadius:"50%", border:"none", background:BRIEF.negative, color:"#fff", fontSize:22, cursor:"pointer" }}>✕</button>
+        <button onClick={onAnswer} aria-label="Answer call" style={{ width:64, height:64, borderRadius:"50%", border:"none", background:BRIEF.positive, color:"#fff", fontSize:22, cursor:"pointer" }}>✓</button>
       </div>
     </div>
   );
@@ -1048,7 +1060,7 @@ function VoiceMode({ state, transcript, reply, error, onStart, onStop, onClose, 
         {/* Quiet, and only once it's worth mentioning — matches the same low-key threshold used
             for the chat message counter, so usage isn't nagging from the first turn. */}
         {!subscribed && turnsLeft <= 3 && (
-          <Mono style={{ color: turnsLeft === 0 ? "#f87171" : "rgba(255,255,255,.5)" }}>
+          <Mono style={{ color: turnsLeft === 0 ? BRIEF.negative : "rgba(255,255,255,.5)" }}>
             {turnsLeft === 0 ? "resets tomorrow" : `${turnsLeft} voice turns left`}
           </Mono>
         )}
@@ -1068,7 +1080,7 @@ function VoiceMode({ state, transcript, reply, error, onStart, onStop, onClose, 
         <div style={{ fontSize:13, fontWeight:600, color:"rgba(255,255,255,.62)", letterSpacing:.4, minHeight:18 }}>{label}</div>
 
         <div style={{ minHeight:96, maxHeight:170, overflowY:"auto", width:"100%", maxWidth:460, textAlign:"center", padding:"0 4px" }}>
-          {error && <div style={{ fontSize:14, color:"#f87171", lineHeight:1.6 }}>{error}</div>}
+          {error && <div style={{ fontSize:14, color:BRIEF.negative, lineHeight:1.6 }}>{error}</div>}
           {!error && transcript && <div style={{ fontSize:17, color:"#fff", lineHeight:1.5, fontWeight:500 }}>{transcript}</div>}
           {!error && !transcript && reply && <div ref={replyEndRef} style={{ fontSize:15, color:"rgba(255,255,255,.78)", lineHeight:1.7, textAlign:"left" }}>{reply}</div>}
           {!error && !transcript && !reply && state === "idle" && (
