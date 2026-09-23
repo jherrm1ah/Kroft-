@@ -13,7 +13,9 @@
 // Exact Gemini model IDs change over time (Google periodically retires older ones) — override
 // via GEMINI_MODEL in Vercel if this default 404s by the time you deploy; check
 // https://ai.google.dev/gemini-api/docs/models for the current list.
-const DEFAULT_MODEL = "gemini-2.5-flash";
+// gemini-2.5-flash was retired ("no longer available to new users"); Google's own 404 error
+// pointed at gemini-3.6-flash as its replacement.
+const DEFAULT_MODEL = "gemini-3.6-flash";
 
 function jsonResponse(body, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });

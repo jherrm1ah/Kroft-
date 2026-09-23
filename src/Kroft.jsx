@@ -87,6 +87,7 @@ const ANIM = `
 @keyframes tabPop{0%{transform:scale(.85)}50%{transform:scale(1.12)}100%{transform:scale(1)}}
 @keyframes celebratePop{0%{transform:scale(.3);opacity:0}45%{transform:scale(1.2);opacity:1}70%{transform:scale(.92)}100%{transform:scale(1);opacity:1}}
 @keyframes confettiFall{0%{transform:translate(0,-10px) rotate(0deg);opacity:1}100%{transform:translate(var(--drift,0px),100vh) rotate(var(--spin,540deg));opacity:0}}
+@keyframes alarmPulse{0%,100%{transform:scale(1);opacity:.7}50%{transform:scale(1.12);opacity:1}}
 `;
 
 // Uses Intl's native currency formatting instead of a hand-maintained symbol map, so any
@@ -138,6 +139,35 @@ const uid = () => Date.now() + Math.random();
 // browsers throw (rather than just no-op) calling vibrate() from certain contexts (e.g. an
 // iframe without the right permissions-policy).
 const haptic = pattern => { try { navigator.vibrate?.(pattern); } catch {} };
+// Synthesizes a short two-tone beep via the Web Audio API rather than shipping an audio file —
+// no asset to host, and it does the job for "something needs your attention right now." Reuses
+// one AudioContext across calls (creating a new one per beep is wasteful, and some browsers cap
+// how many can exist). Like any other audio in this app, browser autoplay policy means this only
+// reliably plays once the page has already seen at least one user interaction this session.
+let alarmAudioCtx = null;
+const playAlarmBeep = () => {
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return;
+    if (!alarmAudioCtx) alarmAudioCtx = new Ctx();
+    const ctx = alarmAudioCtx;
+    if (ctx.state === "suspended") ctx.resume().catch(() => {});
+    const now = ctx.currentTime;
+    [0, 0.22].forEach(offset => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.value = 880;
+      gain.gain.setValueAtTime(0, now + offset);
+      gain.gain.linearRampToValueAtTime(0.25, now + offset + 0.02);
+      gain.gain.linearRampToValueAtTime(0, now + offset + 0.18);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now + offset);
+      osc.stop(now + offset + 0.2);
+    });
+  } catch {}
+};
 const todayISO = () => new Date().toISOString().slice(0, 10);
 const fmtDate = iso => { if (!iso) return ""; const d = new Date(iso + "T00:00:00"); return isNaN(d) ? iso : d.toLocaleDateString("en-US", { month:"short", day:"numeric", year:"numeric" }); };
 // Advances an ISO date string forward by one occurrence of the given repeat cadence. Used to
@@ -621,12 +651,16 @@ const requestNotifyPermission = async () => {
   try { return await Notification.requestPermission(); } catch { return "denied"; }
 };
 
-const sendNotification = (title, body, tag) => {
+const sendNotification = (title, body, tag, opts = {}) => {
   if (!notifySupported() || Notification.permission !== "granted") return false;
   try {
     // The tag collapses repeats: re-firing the same reminder replaces the old notification
-    // instead of stacking a second copy in the tray.
-    const n = new Notification(title, { body, tag, badge:undefined, icon:undefined });
+    // instead of stacking a second copy in the tray. requireInteraction (reminders only, so far)
+    // keeps it pinned until dismissed instead of auto-vanishing after a few seconds — the
+    // closest a background/closed-tab notification can get to "won't let you ignore it", since
+    // sound and a full-screen takeover (see ReminderAlarmScreen) only work while the app itself
+    // is open.
+    const n = new Notification(title, { body, tag, badge:undefined, icon:undefined, requireInteraction: !!opts.requireInteraction });
     n.onclick = () => { window.focus(); n.close(); };
     return true;
   } catch { return false; }
@@ -1042,6 +1076,34 @@ function IncomingCallScreen({ call, onAnswer, onDecline }) {
       <div style={{ display:"flex", gap:28, alignItems:"center" }}>
         <button onClick={onDecline} aria-label="Decline call" style={{ width:64, height:64, borderRadius:"50%", border:"none", background:BRIEF.negative, color:"#fff", fontSize:22, cursor:"pointer" }}>✕</button>
         <button onClick={onAnswer} aria-label="Answer call" style={{ width:64, height:64, borderRadius:"50%", border:"none", background:BRIEF.positive, color:"#fff", fontSize:22, cursor:"pointer" }}>✓</button>
+      </div>
+    </div>
+  );
+}
+
+// Full-screen alarm-style takeover for a smart reminder. Reminders used to only ever produce a
+// quiet, easy-to-miss OS notification (or nothing, without permission granted) — this mirrors
+// IncomingCallScreen's "can't miss it" pattern instead: a full-screen overlay with a pulsing
+// icon that stays up until explicitly dismissed or snoozed, paired with the looping tone and
+// vibration driven from the reminder-check effect below (kept there, not here, so the sound
+// keeps going even if this component re-renders).
+function ReminderAlarmScreen({ reminder, onDismiss, onSnooze }) {
+  const ref = useModalA11y(onDismiss);
+  return (
+    <div ref={ref} role="dialog" aria-modal="true" aria-label={`Reminder: ${reminder.text}`} tabIndex={-1}
+      style={{ position:"fixed", inset:0, zIndex:1300, background:"#000", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"space-between", padding:"14vh 24px calc(40px + env(safe-area-inset-bottom))" }}>
+      <div style={{ textAlign:"center" }}>
+        <Mono style={{ color:"rgba(255,255,255,.5)", display:"block", marginBottom:8 }}>Reminder</Mono>
+        <div style={{ fontSize:22, fontWeight:700, color:"#fff", letterSpacing:-.4, lineHeight:1.4, maxWidth:320 }}>{reminder.text}</div>
+      </div>
+      <div style={{ width:140, height:140, borderRadius:"50%", background:"rgba(255,255,255,.08)", display:"flex", alignItems:"center", justifyContent:"center", animation:"alarmPulse 1.2s ease-in-out infinite" }}>
+        <div style={{ width:80, height:80, borderRadius:"50%", background:"rgba(255,255,255,.15)", display:"flex", alignItems:"center", justifyContent:"center" }}>
+          <NavIcon id="reminders" size={34} color="#fff" />
+        </div>
+      </div>
+      <div style={{ display:"flex", gap:14, width:"100%", maxWidth:340 }}>
+        <Btn v="outline" full onClick={onSnooze} style={{ borderColor:"rgba(255,255,255,.3)", color:"#fff" }}>Snooze 10 min</Btn>
+        <Btn full onClick={onDismiss}>Dismiss</Btn>
       </div>
     </div>
   );
@@ -2232,6 +2294,10 @@ function KroftApp({ onFullReset } = {}) {
   const [incomingCall, setIncomingCall] = useState(null);
   const callTimeoutRef = useRef(null);
   const callNotifiedRef = useRef({}); // ids already pushed as a system notification, so ringing doesn't re-notify every tick
+  // The reminder currently taking over the screen (see ReminderAlarmScreen) — null when none is
+  // ringing. alarmLoopRef holds the setInterval driving the repeating beep+vibrate while it's up.
+  const [ringingReminder, setRingingReminder] = useState(null);
+  const alarmLoopRef = useRef(null);
 
 
   // Workspace — Contacts (KROFT's own address book, separate from the phone's real contacts —
@@ -3844,6 +3910,35 @@ function KroftApp({ onFullReset } = {}) {
     return () => { if (callTimeoutRef.current) clearTimeout(callTimeoutRef.current); };
   }, [incomingCall]);
 
+  // Drives the reminder alarm's repeating beep + vibration while ReminderAlarmScreen is up —
+  // this is what actually makes it read as "an alarm" rather than a one-off ping. Capped at 2
+  // minutes of sound (the screen itself stays up regardless, until dismissed or snoozed) so a
+  // reminder nobody's near doesn't buzz a background tab forever.
+  useEffect(() => {
+    if (alarmLoopRef.current) { clearInterval(alarmLoopRef.current); alarmLoopRef.current = null; }
+    if (!ringingReminder) return;
+    const ring = () => { playAlarmBeep(); haptic([250, 120, 250]); };
+    ring();
+    let elapsed = 0;
+    alarmLoopRef.current = setInterval(() => {
+      elapsed += 1500;
+      if (elapsed >= 120000) { clearInterval(alarmLoopRef.current); alarmLoopRef.current = null; return; }
+      ring();
+    }, 1500);
+    return () => { if (alarmLoopRef.current) { clearInterval(alarmLoopRef.current); alarmLoopRef.current = null; } };
+  }, [ringingReminder]);
+
+  const dismissReminderAlarm = () => setRingingReminder(null);
+  // Re-rings the same reminder in 10 minutes rather than touching its stored `when` — a snooze
+  // is about right now, not a change to when this was actually supposed to happen.
+  const snoozeReminderAlarm = () => {
+    const r = ringingReminder;
+    if (!r) return;
+    setRingingReminder(null);
+    toast(`Snoozed — "${r.text}" again in 10 minutes.`);
+    setTimeout(() => setRingingReminder(prev => prev ? prev : r), 10 * 60000);
+  };
+
   const answerCall = () => {
     const call = incomingCall;
     if (!call) return;
@@ -4118,7 +4213,7 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
   const runKroftCompletion = async (messages, { onDelta, signal, usageType = "chat" } = {}) => {
     const recent = messages.slice(-historyLimit());
     const body = {
-      model:"gemini-2.5-flash",
+      model:"gemini-3.6-flash",
       max_tokens:2048,
       system:krofSysPrompt(),
       messages:recent.map(m => ({ role:m.role, content:m.content })),
@@ -4367,7 +4462,7 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
     const nearBudget = budgetStatus().filter(b => b.pct >= 0.8 && b.pct < 1);
     const context = `Today: ${today}. Appointments today: ${todays.length ? todays.map(a=>`${a.title} at ${a.time}`).join("; ") : "none"}. Open tasks: ${openTasks.length}. Budgets over limit: ${overBudget.length ? overBudget.map(b=>b.cat).join(", ") : "none"}. Budgets close to limit: ${nearBudget.length ? nearBudget.map(b=>b.cat).join(", ") : "none"}. Name: ${user.name||"there"}.`;
     try {
-      const res = await aiFetch("/api/chat", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ model:"gemini-2.5-flash", max_tokens:80, system:"Write exactly one short sentence greeting the user by name and flagging the single most useful thing about their day from the context — a tight schedule, a budget issue, or an open task count if nothing else stands out. Never state a specific dollar amount, even if one seems implied — this reads out loud on a lock screen others may see. Plain text, no preamble, no quotes, under 22 words.", messages:[{ role:"user", content:context }] }) });
+      const res = await aiFetch("/api/chat", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ model:"gemini-3.6-flash", max_tokens:80, system:"Write exactly one short sentence greeting the user by name and flagging the single most useful thing about their day from the context — a tight schedule, a budget issue, or an open task count if nothing else stands out. Never state a specific dollar amount, even if one seems implied — this reads out loud on a lock screen others may see. Plain text, no preamble, no quotes, under 22 words.", messages:[{ role:"user", content:context }] }) });
       const data = await res.json();
       const text = data.content?.map(b=>b.text||"").join("").trim();
       return (res.ok && text) || `Good morning, ${firstNameOf(user.name)||"there"} — ${openTasks.length} tasks open today.`;
@@ -4386,9 +4481,9 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
       const mins = now.getHours() * 60 + now.getMinutes();
       const fired = {};
 
-      const send = (key, title, body) => {
+      const send = (key, title, body, opts) => {
         if (notifSent[key]) return;
-        if (sendNotification(title, body, key)) fired[key] = true;
+        if (sendNotification(title, body, key, opts)) fired[key] = true;
       };
 
       // Fires once, in a fixed morning window, so it reads as "today's brief" rather than
@@ -4422,7 +4517,7 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
           if (!m) return;
           const target = Number(m[1]) * 60 + Number(m[2]);
           if (mins >= target && mins - target < 30) {
-            send(`rem:${today}:${r.id}`, "Reminder", r.text);
+            send(`rem:${today}:${r.id}`, "Reminder", r.text, { requireInteraction: true });
           }
         });
       }
@@ -4466,6 +4561,34 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
     check();
     return heartbeat(check);
   }, [dataLoaded, subscribed, scheduledCalls]);
+
+  // Reminder alarm takeover (ReminderAlarmScreen) — kept independent of notifPermission for the
+  // same reason as scheduledCalls just above: the in-app screen, sound and vibration don't need
+  // OS notification permission at all, only the separate system notification (sent by the
+  // permission-gated effect above, via the same `rem:${today}:${id}` key) does. Sharing that key
+  // in notifSent means whichever of the two effects runs first marks it, so neither re-fires the
+  // same occurrence on a later heartbeat tick regardless of which order they happen to run in.
+  useEffect(() => {
+    if (!dataLoaded) return;
+    const check = () => {
+      if (!notifPrefs.reminders) return;
+      const now = new Date();
+      const today = todayISO();
+      const mins = now.getHours() * 60 + now.getMinutes();
+      smartReminders.filter(r => !r.done && r.when).forEach(r => {
+        const m = String(r.when).match(/(\d{1,2}):(\d{2})/);
+        if (!m) return;
+        const target = Number(m[1]) * 60 + Number(m[2]);
+        if (mins < target || mins - target >= 30) return;
+        const key = `rem:${today}:${r.id}`;
+        if (notifSent[key]) return;
+        setNotifSent(p => (p[key] ? p : { ...p, [key]: true }));
+        setRingingReminder(prev => prev ? prev : r);
+      });
+    };
+    check();
+    return heartbeat(check);
+  }, [dataLoaded, notifPrefs, smartReminders, notifSent]);
 
   // Notification keys accumulate forever otherwise. Anything not from today is dropped once a
   // day — the keys are date-scoped, so old ones can never match again.
@@ -4828,7 +4951,7 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
     if (!spendAiExtra()) return;
     toast("KROFT is drafting a reply…");
     try {
-      const res = await aiFetch("/api/chat", { method:"POST", headers:{"Content-Type":"application/json","X-Kroft-Usage-Type":"extra"}, body:JSON.stringify({ model:"gemini-2.5-flash", max_tokens:400, messages:[{ role:"user", content:`Draft a concise professional reply (under 5 sentences). From: ${email.from}, Subject: ${email.subject}, Body: "${email.body}"` }] }) });
+      const res = await aiFetch("/api/chat", { method:"POST", headers:{"Content-Type":"application/json","X-Kroft-Usage-Type":"extra"}, body:JSON.stringify({ model:"gemini-3.6-flash", max_tokens:400, messages:[{ role:"user", content:`Draft a concise professional reply (under 5 sentences). From: ${email.from}, Subject: ${email.subject}, Body: "${email.body}"` }] }) });
       const data = await res.json();
       const body = data.content?.map(b=>b.text||"").join("").trim();
       if (!res.ok || !body) { toast("Draft failed — try again."); return; }
@@ -4846,7 +4969,7 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
     setSuggestingReminder(true);
     const context = `Appointments: ${appts.length>0 ? appts.map(a=>`${a.title} at ${a.time} on ${a.date}`).join("; ") : "none"}. Tasks: ${tasks.length>0 ? tasks.filter(t=>!t.done).map(t=>t.title).join("; ") : "none"}. Mood: ${mood}.`;
     try {
-      const res = await aiFetch("/api/chat", { method:"POST", headers:{"Content-Type":"application/json","X-Kroft-Usage-Type":"extra"}, body:JSON.stringify({ model:"gemini-2.5-flash", max_tokens:120, system:"Suggest exactly ONE short, genuinely useful reminder for this user based on their context. Reply with ONLY the reminder text itself — no preamble, no quotes, under 15 words.", messages:[{ role:"user", content:context }] }) });
+      const res = await aiFetch("/api/chat", { method:"POST", headers:{"Content-Type":"application/json","X-Kroft-Usage-Type":"extra"}, body:JSON.stringify({ model:"gemini-3.6-flash", max_tokens:120, system:"Suggest exactly ONE short, genuinely useful reminder for this user based on their context. Reply with ONLY the reminder text itself — no preamble, no quotes, under 15 words.", messages:[{ role:"user", content:context }] }) });
       const data = await res.json();
       const suggestion = data.content?.map(b=>b.text||"").join("").trim();
       if (!res.ok || !suggestion) { toast("Couldn't get a suggestion — try again."); }
@@ -4879,7 +5002,7 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
     setGeneratingReport(true);
     const context = `Month: ${monthLabel(now.toISOString().slice(0,10))}. Income entries: ${monthInc.length} totaling ${fmtCur(incTotal,user.currency)}. Expense entries: ${monthExp.length} totaling ${fmtCur(expTotal,user.currency)}. Net: ${fmtCur(net,user.currency)}. Top expense categories: ${topCats.length>0?topCats.map(([c,v])=>`${c} (${fmtCur(v,user.currency)})`).join(", "):"none"}. Business: ${user.businessName||"not set"} (${user.businessType||""}).`;
     try {
-      const res = await aiFetch("/api/chat", { method:"POST", headers:{"Content-Type":"application/json","X-Kroft-Usage-Type":"report"}, body:JSON.stringify({ model:"gemini-2.5-flash", max_tokens:400, system:"You are KROFT, a bookkeeping assistant. Given a user's monthly income/expense summary, write a short end-of-month summary: 2-3 sentences on what the numbers show, then 2-3 practical observations about their own spending patterns. Describe what happened in their data — do not recommend financial products, investments, tax positions, borrowing, or anything requiring a licensed advisor. Frame observations as prompts to consider, not instructions. No preamble, no headers, plain text only.", messages:[{ role:"user", content:context }] }) });
+      const res = await aiFetch("/api/chat", { method:"POST", headers:{"Content-Type":"application/json","X-Kroft-Usage-Type":"report"}, body:JSON.stringify({ model:"gemini-3.6-flash", max_tokens:400, system:"You are KROFT, a bookkeeping assistant. Given a user's monthly income/expense summary, write a short end-of-month summary: 2-3 sentences on what the numbers show, then 2-3 practical observations about their own spending patterns. Describe what happened in their data — do not recommend financial products, investments, tax positions, borrowing, or anything requiring a licensed advisor. Frame observations as prompts to consider, not instructions. No preamble, no headers, plain text only.", messages:[{ role:"user", content:context }] }) });
       const data = await res.json();
       const advice = (res.ok && data.content?.map(b=>b.text||"").join("").trim()) || "Couldn't generate advice right now — try again shortly.";
       setMonthlyReport({ month:monthLabel(now.toISOString().slice(0,10)), incTotal, expTotal, net, topCats, advice, generatedAt:Date.now() });
@@ -5052,7 +5175,7 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
         const res = await aiFetch("/api/chat", {
           method:"POST", headers:{"Content-Type":"application/json","X-Kroft-Usage-Type":"extra"},
           body:JSON.stringify({
-            model:"gemini-2.5-flash", max_tokens:60,
+            model:"gemini-3.6-flash", max_tokens:60,
             system:"Convert the user's request into a single short search term (2-4 words max) suitable for a places search API, such as 'coffee shop', 'pharmacy open now', 'budget hotel', or 'ATM'. Reply with ONLY the search term, nothing else.",
             messages:[{ role:"user", content:categoryOrQuery }],
           }),
@@ -5603,6 +5726,7 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
         />
       )}
       {incomingCall && <IncomingCallScreen call={incomingCall} onAnswer={answerCall} onDecline={declineCall} />}
+      {ringingReminder && <ReminderAlarmScreen reminder={ringingReminder} onDismiss={dismissReminderAlarm} onSnooze={snoozeReminderAlarm} />}
       {voiceOpen && (
         <VoiceMode
           state={voiceState}
