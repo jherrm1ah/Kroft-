@@ -8062,7 +8062,11 @@ ${voiceMode
           return (
           <div style={{ animation:"fadeUp .4s ease" }}>
             <h2 style={{ fontSize:22, fontWeight:700, color:C.white, letterSpacing:-1, marginBottom:18 }}>Wellness</h2>
-            <Card style={{ marginBottom:14, border:`1px solid ${wColor}55` }}>
+            {/* A flat white card with a thin colored border read as "boxy" — a soft full wash of
+                the score's own tone (the same positiveBg/accentBg/warningBg tokens already used
+                for tags elsewhere, just applied as a real background here) and a rounder radius
+                make the color something felt across the whole card, not a hairline accent. */}
+            <Card style={{ marginBottom:14, background:{positive:C.positiveBg,accent:C.accentBg,warning:C.warningBg}[wTone], border:`1px solid ${wColor}33`, borderRadius:26 }}>
               <div style={{ display:"flex", justifyContent:"center", alignItems:"center", gap:10, marginBottom:14 }}>
                 <Mono style={{ color:wColor, letterSpacing:.8 }}>Wellness score today</Mono>
                 {/* Real streak — days with an actual mood check-in, not just the app being open
@@ -8080,7 +8084,7 @@ ${voiceMode
                   "this one is about you" the way a progress ring does. */}
               <div style={{ position:"relative", width:132, height:132, margin:"0 auto 16px" }}>
                 <svg viewBox="0 0 132 132" style={{ width:132, height:132, transform:"rotate(-90deg)" }}>
-                  <circle cx="66" cy="66" r="56" fill="none" stroke={C.surface} strokeWidth="11" />
+                  <circle cx="66" cy="66" r="56" fill="none" stroke={C.card} strokeWidth="11" />
                   <circle cx="66" cy="66" r="56" fill="none" stroke={wColor} strokeWidth="11" strokeLinecap="round"
                     strokeDasharray={2*Math.PI*56} strokeDashoffset={2*Math.PI*56*(1-wellness/100)}
                     style={{ transition:"stroke-dashoffset .8s ease" }} />
@@ -8097,8 +8101,9 @@ ${voiceMode
                 <Btn sm v="outline" onClick={() => { speak(`Wellness score: ${wellness} out of 100.`); toast("Reading score…"); }} style={{ flex:1 }}>Read score</Btn>
               </div>
               {/* Icon tiles instead of plain outlined pills — matching the quick-access language
-                  used elsewhere (Overview/Finance/Workspace) — and filled with the score's own
-                  color once logged, so progress is visible at a glance, not just in the label. */}
+                  used elsewhere (Overview/Finance/Workspace). Colored from the start rather than
+                  staying neutral gray until maxed — "wellness colors you actually feel" meant
+                  color shouldn't be something you only earn, just something that deepens. */}
               <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:9 }}>
                 {[
                   { id:"coffee", key:"breaks", label:"Took a break", done:"Breaks logged", bonus:5 },
@@ -8107,9 +8112,9 @@ ${voiceMode
                   const count = selfCare[a.key], cap = SELF_CARE_CAP[a.key], maxed = count >= cap;
                   return (
                     <button key={a.key} disabled={maxed} onClick={() => { setWellness(s=>Math.min(100,s+a.bonus)); setSelfCare(c=>({...c, [a.key]:c[a.key]+1})); toast(`${a.label==="Took a break"?"Break":"Water"} logged. Wellness +${a.bonus}`); }}
-                      style={{ background:maxed?wColor+"18":C.surface, border:`1px solid ${maxed?wColor+"66":C.cardB}`, borderRadius:14, padding:"12px 10px", cursor:maxed?"not-allowed":"pointer", textAlign:"left" }}>
-                      <div style={{ width:30, height:30, borderRadius:"50%", background:maxed?wColor+"22":C.card, border:`1px solid ${maxed?wColor:C.cardB}`, display:"flex", alignItems:"center", justifyContent:"center", marginBottom:8 }}>
-                        <NavIcon id={a.id} size={14} color={maxed?wColor:C.text} />
+                      style={{ background:C.card, border:`1px solid ${maxed?wColor+"77":wColor+"2a"}`, borderRadius:16, padding:"12px 10px", cursor:maxed?"not-allowed":"pointer", textAlign:"left" }}>
+                      <div style={{ width:30, height:30, borderRadius:"50%", background:maxed?wColor+"30":wColor+"16", display:"flex", alignItems:"center", justifyContent:"center", marginBottom:8 }}>
+                        <NavIcon id={a.id} size={14} color={wColor} />
                       </div>
                       <div style={{ fontSize:12, fontWeight:700, color:C.white, marginBottom:2 }}>{maxed?a.done:a.label}</div>
                       <Mono style={{ color:C.muted, fontSize:10 }}>{count}/{cap}{maxed?" ✓":""}</Mono>
@@ -8122,7 +8127,7 @@ ${voiceMode
                 this week is actually trending up or down, only whatever day happened to be
                 showing. wellnessHistory records each day's score right before it rolls over. */}
             {wellnessTrend.length > 1 && (
-              <Card style={{ marginBottom:14 }}>
+              <Card style={{ marginBottom:14, borderRadius:22 }}>
                 <Mono style={{ display:"block", color:C.muted, marginBottom:12, letterSpacing:.8 }}>Score · last {wellnessTrend.length} days</Mono>
                 {/* Bars instead of a line — today solid, every earlier day a lighter tint of the
                     same color, so "which one is now" reads at a glance instead of needing to
@@ -8140,7 +8145,7 @@ ${voiceMode
                 </ResponsiveContainer>
               </Card>
             )}
-            <Card style={{ marginBottom:14 }}>
+            <Card style={{ marginBottom:14, borderRadius:22 }}>
               <Mono style={{ display:"block", color:C.muted, letterSpacing:.8, marginBottom:13 }}>Mood log</Mono>
               {moodLog.length===0 ? <Mono style={{ color:C.soft, display:"block", padding:"8px 0" }}>No mood entries yet. Set your mood from the Overview tab.</Mono> : (() => {
                 // Grouped by day, newest first. A flat list of times alone was ambiguous once
@@ -8169,7 +8174,7 @@ ${voiceMode
                               toast("Mood entry deleted.", () => setMoodLog(prev));
                             }}],
                           }))}
-                          style={{ display:"flex", alignItems:"center", gap:12, padding:"7px 0", borderBottom:`1px solid ${C.div}`, WebkitTouchCallout:"none", WebkitUserSelect:"none", userSelect:"none" }}>
+                          style={{ display:"flex", alignItems:"center", gap:12, padding:"8px 10px", marginBottom:6, borderRadius:12, background:mColor+"12", WebkitTouchCallout:"none", WebkitUserSelect:"none", userSelect:"none" }}>
                           <Dot color={mColor} />
                           <Mono style={{ color:C.muted, minWidth:60 }}>{m.time}</Mono>
                           <Tag tone={mTone}>{m.mood}</Tag>
@@ -8188,10 +8193,10 @@ ${voiceMode
                 ];
               })()}
             </Card>
-            <Card>
+            <Card style={{ borderRadius:22 }}>
               <Mono style={{ display:"block", color:C.muted, letterSpacing:.8, marginBottom:13 }}>Daily recommendations</Mono>
               {wellnessTips().map((r,i) => (
-                <div key={i} className="row" style={{ display:"flex", alignItems:"flex-start", gap:12, padding:"11px 4px", borderBottom:`1px solid ${C.div}`, borderRadius:6 }}>
+                <div key={i} className="row" style={{ display:"flex", alignItems:"flex-start", gap:12, padding:"11px 10px", marginBottom:6, borderRadius:12, background:C.surface }}>
                   <div style={{ flex:1, minWidth:0 }}>
                     <div style={{ fontSize:12.5, color:C.text, lineHeight:1.6 }}>{r.text}</div>
                     {/* Says why this appeared, so it reads as a response to their day rather
