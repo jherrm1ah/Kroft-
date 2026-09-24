@@ -21,12 +21,33 @@ function jsonResponse(body, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
 
+// A message's content is normally a plain string, but Kroft.jsx's chat attach feature (see
+// buildMessageContent there) sends Anthropic-shaped content BLOCKS instead when the message
+// carries an image: [{type:"text",text}, {type:"image",source:{type:"base64",media_type,data}}].
+// Text blocks become Gemini's {text} part; image blocks become {inlineData}, Gemini's own
+// inline-image-in-a-turn shape — a real image part the model actually sees, not a text mention
+// of one. An unrecognized block type is skipped rather than crashing the request.
+function toGeminiParts(content) {
+  if (typeof content === "string" || content == null) return [{ text: String(content ?? "") }];
+  if (!Array.isArray(content)) return [{ text: String(content) }];
+  return content
+    .map((block) => {
+      if (block.type === "image" && block.source?.data) {
+        return { inlineData: { mimeType: block.source.media_type || "application/octet-stream", data: block.source.data } };
+      }
+      if (block.type === "text" || typeof block.text === "string") return { text: block.text || "" };
+      return null;
+    })
+    .filter(Boolean);
+}
+
 function toGeminiRequest(anthropicBody) {
   const contents = (anthropicBody.messages || []).map((m) => ({
     // Anthropic's roles are "user"/"assistant"; Gemini's are "user"/"model" for the exact same
-    // two turns — everything else about a message (just a role + text) carries over untouched.
+    // two turns — everything else about a message (just a role + text/image parts) carries over
+    // untouched.
     role: m.role === "assistant" ? "model" : "user",
-    parts: [{ text: String(m.content ?? "") }],
+    parts: toGeminiParts(m.content),
   }));
   const body = {
     contents,
