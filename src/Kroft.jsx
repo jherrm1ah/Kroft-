@@ -873,6 +873,14 @@ const NavIcon = ({ id, size=20, color="currentColor" }) => {
       return <svg viewBox="0 0 24 24" style={s}><path d="M4.5 12a7.5 7.5 0 0 1 12.6-5.5M19.5 12a7.5 7.5 0 0 1-12.6 5.5" {...p} /><path d="M17.5 3.5v3.5H14" {...p} /><path d="M6.5 20.5V17H10" {...p} /></svg>;
     case "mic":
       return <svg viewBox="0 0 24 24" style={s}><rect x="9" y="3" width="6" height="11" rx="3" {...p} /><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0" {...p} /><path d="M12 18v3" {...p} /></svg>;
+    case "plus":
+      return <svg viewBox="0 0 24 24" style={s}><path d="M12 5v14M5 12h14" {...p} /></svg>;
+    case "trendUp":
+      return <svg viewBox="0 0 24 24" style={s}><path d="M4 16l6-6 4 4 6-8" {...p} /><path d="M15 6h5v5" {...p} /></svg>;
+    case "trendDown":
+      return <svg viewBox="0 0 24 24" style={s}><path d="M4 8l6 6 4-4 6 8" {...p} /><path d="M15 18h5v-5" {...p} /></svg>;
+    case "waveform":
+      return <svg viewBox="0 0 24 24" style={s}><path d="M3 10v4M8 7v10M12 4v16M16 7v10M21 10v4" {...p} /></svg>;
     case "send":
       return <svg viewBox="0 0 24 24" style={s}><path d="M4.5 12h14" {...p} /><path d="M12.5 5.5 19 12l-6.5 6.5" {...p} /></svg>;
     case "edit":
@@ -2387,6 +2395,7 @@ function KroftApp({ onFullReset } = {}) {
   const [showChatHistory, setShowChatHistory] = useState(false);
   const [chatHistorySearch, setChatHistorySearch] = useState("");
   const [aiInput, setAiInput] = useState("");
+  const [aiInputFocused, setAiInputFocused] = useState(false);
   const [aiLoading, setAiLoading] = useState(false);
   // Drives the floating "scroll to bottom" button — shown only once someone has actually
   // scrolled up to re-read earlier messages, not on every render.
@@ -6130,16 +6139,32 @@ ${voiceMode
 
         {tab==="home" && homeSection==="overview" && (
           <div style={{ animation:"fadeUp .4s ease" }}>
-            <div style={{ marginBottom:20 }}>
-              <h1 style={{ fontSize:24, fontWeight:700, color:C.white, letterSpacing:-1 }}>{greeting()}, {user.name}</h1>
-              <Mono style={{ color:C.muted, marginTop:4 }}>{dateStr()}</Mono>
+            <div style={{ marginBottom:16 }}>
+              <h1 style={{ fontSize:21, fontWeight:700, color:C.white, letterSpacing:-.8, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>Hi, {firstNameOf(user.name)||"there"} 👋</h1>
             </div>
-            <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:11, marginBottom:16 }}>
-              {[{l:"Income",v:fmtCur(totalIncome,user.currency),sub:income.length>0?`${income.length} entries`:"Add income",tone:income.length>0?"positive":undefined},{l:"Expenses",v:fmtCur(totalExpenses,user.currency),sub:expenses.length>0?`${expenses.length} entries`:"Add expense",tone:expenses.length>0?"negative":undefined},{l:"Net Profit",v:fmtCur(netProfit,user.currency),sub:totalIncome>0?`${((netProfit/totalIncome)*100).toFixed(1)}% margin`:"No data yet",tone:totalIncome>0?(netProfit>=0?"positive":"negative"):undefined}].map(k => (
-                <Card key={k.l} level="raised" onClick={() => setHomeSection("finance")} style={{ borderColor:k.tone?{positive:C.positive,negative:C.negative}[k.tone]+"55":C.cardB, minWidth:0 }}>
-                  <Mono style={{ display:"block", color:C.muted, marginBottom:8, fontSize:11, whiteSpace:"normal", lineHeight:1.3 }}>{k.l}</Mono>
-                  <div style={{ fontSize:22, fontWeight:700, color:k.tone?{positive:C.positive,negative:C.negative}[k.tone]:C.white, letterSpacing:-.8, marginBottom:6, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{k.v}</div>
-                  <Tag tone={k.tone} style={{ display:"block", whiteSpace:"normal", maxWidth:"100%", boxSizing:"border-box", lineHeight:1.4 }}>{k.sub}</Tag>
+            <Mono style={{ display:"block", color:C.muted, marginBottom:16 }}>{dateStr()}</Mono>
+            {/* Net profit as one glanceable "how am I doing" pill, the way a smart-home dashboard
+                leads with total energy used rather than burying it in a device grid — the
+                Income/Expenses breakdown below stays as the detail view underneath it. */}
+            <button onClick={() => setHomeSection("finance")} style={{ width:"100%", display:"flex", alignItems:"center", gap:12, background:C.text, border:"none", borderRadius:999, padding:"10px 14px", cursor:"pointer", marginBottom:16, textAlign:"left", boxSizing:"border-box" }}>
+              <div style={{ width:36, height:36, borderRadius:"50%", background:C.card, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+                <NavIcon id={netProfit>=0?"trendUp":"trendDown"} size={16} color={netProfit>=0?C.positive:C.negative} />
+              </div>
+              <div style={{ flex:1, minWidth:0 }}>
+                <div style={{ fontSize:16, fontWeight:700, color:C.card, letterSpacing:-.5, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{fmtCur(netProfit,user.currency)}</div>
+                <Mono style={{ color:C.card, opacity:.65 }}>Net profit this month</Mono>
+              </div>
+              <Mono style={{ color:C.card, opacity:.65, flexShrink:0 }}>›</Mono>
+            </button>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:11, marginBottom:16 }}>
+              {[{l:"Income",v:fmtCur(totalIncome,user.currency),sub:income.length>0?`${income.length} entries`:"Add income",icon:"trendUp",tone:"positive"},{l:"Expenses",v:fmtCur(totalExpenses,user.currency),sub:expenses.length>0?`${expenses.length} entries`:"Add expense",icon:"trendDown",tone:"negative"}].map(k => (
+                <Card key={k.l} level="raised" onClick={() => setHomeSection("finance")} style={{ minWidth:0 }}>
+                  <div style={{ width:32, height:32, borderRadius:"50%", background:C.surface, border:`1px solid ${C.cardB}`, display:"flex", alignItems:"center", justifyContent:"center", marginBottom:10 }}>
+                    <NavIcon id={k.icon} size={15} color={k.tone==="positive"?C.positive:C.negative} />
+                  </div>
+                  <Mono style={{ display:"block", color:C.muted, marginBottom:6, fontSize:11 }}>{k.l}</Mono>
+                  <div style={{ fontSize:18, fontWeight:700, color:C.white, letterSpacing:-.6, marginBottom:4, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{k.v}</div>
+                  <Mono style={{ color:C.muted, fontSize:10 }}>{k.sub}</Mono>
                 </Card>
               ))}
             </div>
@@ -6305,16 +6330,20 @@ ${voiceMode
             {(income.length>0||expenses.length>0) && (
               <>
                 <div style={{ fontSize:12, fontWeight:600, color:C.muted, marginBottom:11 }}>Summary</div>
-                <Card hi style={{ border:`1px solid ${C.soft}`, marginBottom:14 }}>
-                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:10 }}>
-                    <div style={{ minWidth:0 }}>
-                      <Mono style={{ display:"block", color:C.white, marginBottom:4, letterSpacing:.8 }}>Net profit</Mono>
-                      <div style={{ fontSize:32, fontWeight:700, color:netProfit>=0?C.positive:C.negative, letterSpacing:-1.5, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{fmtCur(netProfit,user.currency)}</div>
-                      {totalIncome>0 && <Mono style={{ color:C.soft, marginTop:4, display:"block" }}>Margin: {((netProfit/totalIncome)*100).toFixed(1)}% · {user.currency}</Mono>}
-                    </div>
-                    <Tag tone={netProfit>=0?"positive":"negative"}>{netProfit>=0?"PROFIT":"DEFICIT"}</Tag>
+                {/* Same black-pill hero treatment as the Overview screen's net-profit banner —
+                    landing here from that pill should feel like the same number, not a
+                    differently-styled one. */}
+                <div style={{ display:"flex", alignItems:"center", gap:14, background:C.text, borderRadius:24, padding:"16px 18px", marginBottom:14, boxSizing:"border-box" }}>
+                  <div style={{ width:44, height:44, borderRadius:"50%", background:C.card, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+                    <NavIcon id={netProfit>=0?"trendUp":"trendDown"} size={19} color={netProfit>=0?C.positive:C.negative} />
                   </div>
-                </Card>
+                  <div style={{ flex:1, minWidth:0 }}>
+                    <Mono style={{ display:"block", color:C.card, opacity:.65, marginBottom:2 }}>Net profit</Mono>
+                    <div style={{ fontSize:26, fontWeight:700, color:C.card, letterSpacing:-1.2, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{fmtCur(netProfit,user.currency)}</div>
+                    {totalIncome>0 && <Mono style={{ display:"block", color:C.card, opacity:.55, marginTop:3 }}>Margin: {((netProfit/totalIncome)*100).toFixed(1)}% · {user.currency}</Mono>}
+                  </div>
+                  <Tag tone={netProfit>=0?"positive":"negative"}>{netProfit>=0?"PROFIT":"DEFICIT"}</Tag>
+                </div>
               </>
             )}
             {/* Spending by category. The monthly report already surfaces a top-3 list, but only
@@ -6821,7 +6850,9 @@ ${voiceMode
           const ToolCard = ({ t }) => (
             <Card key={t.k} onClick={() => { setWorkspaceSection(t.k); setWorkspaceSearch(""); }} style={{ cursor:"pointer", minWidth:0 }}>
               <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:8 }}>
-                <div style={{ width:36, height:36, borderRadius:12, background:t.tone?toneBgs[t.tone]:C.surface, border:`1px solid ${t.tone?toneColors[t.tone]+"55":C.cardB}`, display:"flex", alignItems:"center", justifyContent:"center", marginBottom:10, flexShrink:0 }}>
+                {/* Circular, matching the icon badges on Overview/Finance now — this grid was
+                    the one place still using a rounded-square badge. */}
+                <div style={{ width:36, height:36, borderRadius:"50%", background:t.tone?toneBgs[t.tone]:C.surface, border:`1px solid ${t.tone?toneColors[t.tone]+"55":C.cardB}`, display:"flex", alignItems:"center", justifyContent:"center", marginBottom:10, flexShrink:0 }}>
                   <NavIcon id={t.k} size={17} color={t.tone?toneColors[t.tone]:C.white} />
                 </div>
                 {t.count>0 && <Tag tone={t.tone} style={{ whiteSpace:"normal", textAlign:"right", maxWidth:"70%", boxSizing:"border-box", lineHeight:1.4 }}>{t.count} {t.sub}</Tag>}
@@ -8121,17 +8152,21 @@ ${voiceMode
                 {aiMessages.length > 1 && (
                   <button onClick={startNewChat} className="hbtn" aria-label="Start a new conversation" title="New chat" style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:8, padding:"6px 12px", cursor:"pointer", color:C.soft, fontSize:11, fontWeight:700 }}>New chat</button>
                 )}
+                {/* No separate header "Voice" button anymore — the input bar's own black
+                    circular button already opens voice mode when the field is empty, so this
+                    was a second way to do the exact same thing. */}
                 <button onClick={() => setShowBriefing(true)} className="hbtn" style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:8, padding:"6px 12px", cursor:"pointer", color:C.soft, fontSize:11, fontWeight:700 }}>Brief</button>
-                <button onClick={() => { setVoiceOpen(true); setVoiceState("idle"); setVoiceError(""); }} className="hbtn" style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:8, padding:"6px 12px", cursor:"pointer", display:"flex", alignItems:"center", gap:6, color:C.soft, fontSize:11, fontWeight:700 }}>
-                  <NavIcon id="mic" size={13} color={C.soft} />Voice
-                </button>
               </div>
             </div>
             <div style={{ flex:1, minHeight:0, position:"relative" }}>
               <div ref={chatScrollRef} onScroll={e => {
                 const box = e.currentTarget;
                 setChatNearBottom(box.scrollHeight - box.scrollTop - box.clientHeight < 120);
-              }} style={{ position:"absolute", inset:0, overflowY:"auto", padding:"16px", display:"flex", flexDirection:"column", gap:12 }}>
+              }} style={{ position:"absolute", inset:0, overflowY:"auto", padding:"16px", display:"flex", flexDirection:"column", gap:12,
+                // Top-aligned once a real conversation exists (messages stack down, scroll takes
+                // over), but centered while it's just the one welcome message — top-aligning that
+                // alone left a large dead gap below it before the suggestion chips underneath.
+                justifyContent: aiMessages.length <= 1 ? "center" : "flex-start" }}>
                 {aiMessages.map((m,i) => (
                   <div key={m.id || i} style={{ display:"flex", flexDirection:"column", alignItems:m.role==="user"?"flex-end":"flex-start", animation:"fadeUp .3s ease" }}>
                     <div style={{ background:m.role==="user"?C.white:C.surface, border:`1px solid ${m.role==="user"?C.soft:C.cardB}`, borderRadius:m.role==="user"?"14px 14px 3px 14px":"14px 14px 14px 3px", padding:"10px 14px", maxWidth:"80%" }}>
@@ -8179,7 +8214,7 @@ ${voiceMode
                       )}
                     </div>
                     {m.role==="assistant" && !m.streaming && (
-                      <div style={{ display:"flex", gap:2, marginTop:5, alignItems:"center" }}>
+                      <div style={{ display:"flex", gap:8, marginTop:5, alignItems:"center" }}>
                         {[
                           { id:"copy", label:"Copy", onClick:() => copyMsg(m.content) },
                           { id:"share", label:"Share", onClick:() => shareMsg(m.content) },
@@ -8193,7 +8228,7 @@ ${voiceMode
                           ...(i === aiMessages.length - 1 ? [{ id:"retry", label:"Retry", onClick:() => regenerateReply(i), disabled:aiLoading }] : []),
                         ].map(a => (
                           <button key={a.id} onClick={a.onClick} disabled={a.disabled} title={a.label} aria-label={a.label}
-                            style={{ background:"none", border:"none", padding:6, borderRadius:8, cursor:a.disabled?"not-allowed":"pointer", opacity:a.disabled?.4:1, display:"flex", alignItems:"center", justifyContent:"center" }}>
+                            style={{ background:"none", border:"none", padding:8, borderRadius:8, cursor:a.disabled?"not-allowed":"pointer", opacity:a.disabled?.4:1, display:"flex", alignItems:"center", justifyContent:"center" }}>
                             <NavIcon id={a.id} size={14} color={a.active?C.accent:C.muted} />
                           </button>
                         ))}
@@ -8244,7 +8279,17 @@ ${voiceMode
                 </Mono>
               </div>
             )}
-            <div style={{ borderTop:`1px solid ${C.cardB}`, padding:"12px 16px calc(12px + env(safe-area-inset-bottom))", display:"flex", gap:8, alignItems:"center", flexShrink:0, background:C.bg }}>
+            <div style={{ borderTop:`1px solid ${C.cardB}`, padding:"12px 16px calc(12px + env(safe-area-inset-bottom))", flexShrink:0, background:C.bg }}>
+              {/* One rounded card holding both the textarea and its controls, instead of a
+                  bare input row — the focus ring moves to this outer card (the textarea itself
+                  has no border of its own now) so typing and the button row read as one control,
+                  not two stacked ones. */}
+              <div style={{
+                background:C.surface, borderRadius:22, padding:"10px 10px 8px",
+                border:`1px solid ${aiInputFocused ? C.accent : C.cardB}`,
+                boxShadow:aiInputFocused ? `0 0 0 3px ${C.accentBg}` : "none",
+                transition:"border-color .18s, box-shadow .18s",
+              }}>
                 {/* A plain single-line <Inp> couldn't hold more than one line at all — pasting
                     or composing anything longer just scrolled the text sideways out of view.
                     This grows with the content (capped at ~5 lines, then scrolls internally)
@@ -8262,30 +8307,52 @@ ${voiceMode
                   onKeyDown={e => { if (e.key==="Enter" && !e.shiftKey) { e.preventDefault(); askKroft(); } }}
                   placeholder="Message KROFT…"
                   rows={1}
-                  style={{ flex:1, fontSize:13, fontFamily:"'Space Grotesk',sans-serif", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 14px", color:C.text, outline:"none", resize:"none", maxHeight:120, overflowY:"auto", lineHeight:1.4, boxSizing:"border-box", transition:"border-color .18s" }}
-                  onFocus={e => { e.target.style.borderColor=C.accent; e.target.style.boxShadow=`0 0 0 3px ${C.accentBg}`; }}
-                  onBlur={e => { e.target.style.borderColor=C.cardB; e.target.style.boxShadow="none"; }}
+                  style={{ width:"100%", fontSize:13, fontFamily:"'Space Grotesk',sans-serif", background:"transparent", border:"none", padding:"4px 6px", color:C.text, outline:"none", resize:"none", maxHeight:120, overflowY:"auto", lineHeight:1.4, boxSizing:"border-box" }}
+                  onFocus={() => setAiInputFocused(true)}
+                  onBlur={() => setAiInputFocused(false)}
                 />
-                {/* One button in one place: the mic sits there until you start typing, then it
-                    becomes Send. Showing both at once meant a permanently greyed-out Send
-                    taking up space next to a mic you'd use far more often. */}
-                {aiLoading ? (
-                  <button onClick={stopReply} aria-label="Stop generating" title="Stop"
-                    style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:"50%", width:44, height:44, flexShrink:0, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>
-                    <span style={{ width:12, height:12, borderRadius:3, background:C.text, display:"block" }} />
+                <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginTop:2 }}>
+                  {/* Reuses the existing "start over" action — there's no separate attach/upload
+                      feature to put here, and a dead "+" would be worse than none at all. */}
+                  <button onClick={startNewChat} aria-label="Start a new conversation" title="New chat"
+                    style={{ background:C.card, border:`1px solid ${C.cardB}`, borderRadius:"50%", width:34, height:34, flexShrink:0, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>
+                    <NavIcon id="plus" size={16} color={C.text} />
                   </button>
-                ) : aiInput.trim() ? (
-                  <button onClick={() => askKroft()} aria-label="Send message" title="Send"
-                    style={{ background:C.text, border:"none", borderRadius:"50%", width:44, height:44, flexShrink:0, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", animation:"pop .18s ease" }}>
-                    <NavIcon id="send" size={19} color={C.card} />
-                  </button>
-                ) : (
-                  <button onClick={() => { setVoiceOpen(true); setVoiceState("idle"); setVoiceError(""); }} aria-label="Open voice mode" title="Voice mode"
-                    style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:"50%", width:44, height:44, flexShrink:0, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>
-                    <NavIcon id="mic" size={19} color={C.text} />
-                  </button>
-                )}
+                  <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                    {/* Dictate-and-review: unlike the black button's live voice mode (a spoken
+                        back-and-forth conversation), this records one utterance, transcribes it
+                        into the text field via the same toggleListen already used elsewhere
+                        (Notes' own Voice button), and stops there — reviewing before Send stays
+                        possible, rather than sending the instant speech recognition finishes. */}
+                    {SRSupported && !aiLoading && (
+                      <button onClick={toggleListen} aria-label={listening ? "Stop recording" : "Dictate a message"} title={listening ? "Stop recording" : "Dictate a message"}
+                        style={{ background:listening?C.accentBg:C.card, border:`1px solid ${listening?C.accent:C.cardB}`, borderRadius:"50%", width:36, height:36, flexShrink:0, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>
+                        <NavIcon id="mic" size={16} color={listening?C.accent:C.text} />
+                      </button>
+                    )}
+                    {/* One button in one place: the mic sits there until you start typing, then it
+                        becomes Send. Showing both at once meant a permanently greyed-out Send
+                        taking up space next to a mic you'd use far more often. */}
+                    {aiLoading ? (
+                      <button onClick={stopReply} aria-label="Stop generating" title="Stop"
+                        style={{ background:C.text, border:"none", borderRadius:"50%", width:36, height:36, flexShrink:0, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>
+                        <span style={{ width:11, height:11, borderRadius:3, background:C.card, display:"block" }} />
+                      </button>
+                    ) : aiInput.trim() ? (
+                      <button onClick={() => askKroft()} aria-label="Send message" title="Send"
+                        style={{ background:C.text, border:"none", borderRadius:"50%", width:36, height:36, flexShrink:0, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", animation:"pop .18s ease" }}>
+                        <NavIcon id="send" size={17} color={C.card} />
+                      </button>
+                    ) : (
+                      <button onClick={() => { setVoiceOpen(true); setVoiceState("idle"); setVoiceError(""); }} aria-label="Open voice mode" title="Voice mode"
+                        style={{ background:C.text, border:"none", borderRadius:"50%", width:36, height:36, flexShrink:0, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>
+                        <NavIcon id="waveform" size={17} color={C.card} />
+                      </button>
+                    )}
+                  </div>
+                </div>
               </div>
+            </div>
           </div>
         )}
 
