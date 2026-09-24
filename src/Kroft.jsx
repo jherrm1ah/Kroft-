@@ -7253,7 +7253,11 @@ ${voiceMode
                   </div>
                 </Card>
               ) : (
-              <Card key={t.id} {...longPress(() => setActionSheet(holdActions({ title:t.title, subtitle:t.done ? "Completed" : t.priority, onEdit:() => setEditingTask({...t}), list:tasks, setList:setTasks, id:t.id, deletedLabel:"Task deleted." })))} style={{ marginBottom:9, opacity:t.done?.55:1, WebkitTouchCallout:"none", WebkitUserSelect:"none", userSelect:"none", }}>
+              // Urgent/High tasks get a soft tint of their own priority color — the same
+              // "color that means something" treatment as Wellness's mood chips — so the eye
+              // lands on what's actually pressing in a long list, not just its Tag text color.
+              (() => { const tColor = t.priority==="Urgent"?C.negative:t.priority==="High"?C.warning:null; const tinted = tColor && !t.done; return (
+              <Card key={t.id} {...longPress(() => setActionSheet(holdActions({ title:t.title, subtitle:t.done ? "Completed" : t.priority, onEdit:() => setEditingTask({...t}), list:tasks, setList:setTasks, id:t.id, deletedLabel:"Task deleted." })))} style={{ marginBottom:9, opacity:t.done?.55:1, borderRadius:16, background:tinted?tColor+"0d":C.card, border:`1px solid ${tinted?tColor+"33":C.cardB}`, WebkitTouchCallout:"none", WebkitUserSelect:"none", userSelect:"none", }}>
                 <div style={{ display:"flex", alignItems:"center", gap:12 }}>
                   <button key={`${t.id}-cb-${t.done}`} onClick={() => {
                     const completingThis = !t.done;
@@ -7294,8 +7298,8 @@ ${voiceMode
                   <Btn sm v="outline" onClick={() => setEditingTask({...t})}>Edit</Btn>
                 </div>
               </Card>
-              )
-            ))}
+              ); })()
+            )))}
           </div>
         )}
 
