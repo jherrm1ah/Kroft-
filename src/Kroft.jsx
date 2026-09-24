@@ -1032,7 +1032,7 @@ function VoiceOrb({ size = 300 }) {
   return (
     <div style={{
       width: size, height: size, borderRadius: "50%", background: "#050505", flexShrink: 0,
-      boxShadow: `0 0 ${size*0.4}px ${size*0.1}px rgba(255,255,255,.18), 0 0 ${size*0.16}px ${size*0.03}px rgba(255,255,255,.3)`,
+      boxShadow: `0 0 ${size*0.45}px ${size*0.14}px rgba(255,255,255,.32), 0 0 ${size*0.18}px ${size*0.04}px rgba(255,255,255,.48)`,
     }} />
   );
 }
