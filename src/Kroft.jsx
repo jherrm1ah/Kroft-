@@ -879,6 +879,8 @@ const NavIcon = ({ id, size=20, color="currentColor" }) => {
       return <svg viewBox="0 0 24 24" style={s}><path d="M4 16l6-6 4 4 6-8" {...p} /><path d="M15 6h5v5" {...p} /></svg>;
     case "trendDown":
       return <svg viewBox="0 0 24 24" style={s}><path d="M4 8l6 6 4-4 6 8" {...p} /><path d="M15 18h5v-5" {...p} /></svg>;
+    case "waveform":
+      return <svg viewBox="0 0 24 24" style={s}><path d="M3 10v4M8 7v10M12 4v16M16 7v10M21 10v4" {...p} /></svg>;
     case "send":
       return <svg viewBox="0 0 24 24" style={s}><path d="M4.5 12h14" {...p} /><path d="M12.5 5.5 19 12l-6.5 6.5" {...p} /></svg>;
     case "edit":
@@ -8332,7 +8334,7 @@ ${voiceMode
                   ) : (
                     <button onClick={() => { setVoiceOpen(true); setVoiceState("idle"); setVoiceError(""); }} aria-label="Open voice mode" title="Voice mode"
                       style={{ background:C.text, border:"none", borderRadius:"50%", width:36, height:36, flexShrink:0, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>
-                      <NavIcon id="mic" size={17} color={C.card} />
+                      <NavIcon id="waveform" size={17} color={C.card} />
                     </button>
                   )}
                 </div>
