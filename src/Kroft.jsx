@@ -6328,16 +6328,20 @@ ${voiceMode
             {(income.length>0||expenses.length>0) && (
               <>
                 <div style={{ fontSize:12, fontWeight:600, color:C.muted, marginBottom:11 }}>Summary</div>
-                <Card hi style={{ border:`1px solid ${C.soft}`, marginBottom:14 }}>
-                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:10 }}>
-                    <div style={{ minWidth:0 }}>
-                      <Mono style={{ display:"block", color:C.white, marginBottom:4, letterSpacing:.8 }}>Net profit</Mono>
-                      <div style={{ fontSize:32, fontWeight:700, color:netProfit>=0?C.positive:C.negative, letterSpacing:-1.5, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{fmtCur(netProfit,user.currency)}</div>
-                      {totalIncome>0 && <Mono style={{ color:C.soft, marginTop:4, display:"block" }}>Margin: {((netProfit/totalIncome)*100).toFixed(1)}% · {user.currency}</Mono>}
-                    </div>
-                    <Tag tone={netProfit>=0?"positive":"negative"}>{netProfit>=0?"PROFIT":"DEFICIT"}</Tag>
+                {/* Same black-pill hero treatment as the Overview screen's net-profit banner —
+                    landing here from that pill should feel like the same number, not a
+                    differently-styled one. */}
+                <div style={{ display:"flex", alignItems:"center", gap:14, background:C.text, borderRadius:24, padding:"16px 18px", marginBottom:14, boxSizing:"border-box" }}>
+                  <div style={{ width:44, height:44, borderRadius:"50%", background:C.card, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+                    <NavIcon id={netProfit>=0?"trendUp":"trendDown"} size={19} color={netProfit>=0?C.positive:C.negative} />
                   </div>
-                </Card>
+                  <div style={{ flex:1, minWidth:0 }}>
+                    <Mono style={{ display:"block", color:C.card, opacity:.65, marginBottom:2 }}>Net profit</Mono>
+                    <div style={{ fontSize:26, fontWeight:700, color:C.card, letterSpacing:-1.2, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{fmtCur(netProfit,user.currency)}</div>
+                    {totalIncome>0 && <Mono style={{ display:"block", color:C.card, opacity:.55, marginTop:3 }}>Margin: {((netProfit/totalIncome)*100).toFixed(1)}% · {user.currency}</Mono>}
+                  </div>
+                  <Tag tone={netProfit>=0?"positive":"negative"}>{netProfit>=0?"PROFIT":"DEFICIT"}</Tag>
+                </div>
               </>
             )}
             {/* Spending by category. The monthly report already surfaces a top-3 list, but only
@@ -6844,7 +6848,9 @@ ${voiceMode
           const ToolCard = ({ t }) => (
             <Card key={t.k} onClick={() => { setWorkspaceSection(t.k); setWorkspaceSearch(""); }} style={{ cursor:"pointer", minWidth:0 }}>
               <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:8 }}>
-                <div style={{ width:36, height:36, borderRadius:12, background:t.tone?toneBgs[t.tone]:C.surface, border:`1px solid ${t.tone?toneColors[t.tone]+"55":C.cardB}`, display:"flex", alignItems:"center", justifyContent:"center", marginBottom:10, flexShrink:0 }}>
+                {/* Circular, matching the icon badges on Overview/Finance now — this grid was
+                    the one place still using a rounded-square badge. */}
+                <div style={{ width:36, height:36, borderRadius:"50%", background:t.tone?toneBgs[t.tone]:C.surface, border:`1px solid ${t.tone?toneColors[t.tone]+"55":C.cardB}`, display:"flex", alignItems:"center", justifyContent:"center", marginBottom:10, flexShrink:0 }}>
                   <NavIcon id={t.k} size={17} color={t.tone?toneColors[t.tone]:C.white} />
                 </div>
                 {t.count>0 && <Tag tone={t.tone} style={{ whiteSpace:"normal", textAlign:"right", maxWidth:"70%", boxSizing:"border-box", lineHeight:1.4 }}>{t.count} {t.sub}</Tag>}
