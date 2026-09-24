@@ -4656,7 +4656,10 @@ ${voiceMode
     const nearBudget = budgetStatus().filter(b => b.pct >= 0.8 && b.pct < 1);
     const context = `Today: ${today}. Appointments today: ${todays.length ? todays.map(a=>`${a.title} at ${a.time}`).join("; ") : "none"}. Open tasks: ${openTasks.length}. Budgets over limit: ${overBudget.length ? overBudget.map(b=>b.cat).join(", ") : "none"}. Budgets close to limit: ${nearBudget.length ? nearBudget.map(b=>b.cat).join(", ") : "none"}. Name: ${user.name||"there"}.`;
     try {
-      const res = await aiFetch("/api/chat", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ model:"gemini-3.6-flash", max_tokens:80, system:"Write exactly one short sentence greeting the user by name and flagging the single most useful thing about their day from the context — a tight schedule, a budget issue, or an open task count if nothing else stands out. Never state a specific dollar amount, even if one seems implied — this reads out loud on a lock screen others may see. Plain text, no preamble, no quotes, under 22 words.", messages:[{ role:"user", content:context }] }) });
+      // Tagged "background_ai", not the default "chat": this runs on a timer, unprompted, and
+      // should never eat into the user's real chat quota (api/chat.js falls back to "chat" for
+      // any call with no usage-type header, which this used to hit silently).
+      const res = await aiFetch("/api/chat", { method:"POST", headers:{"Content-Type":"application/json","X-Kroft-Usage-Type":"background_ai"}, body:JSON.stringify({ model:"gemini-3.6-flash", max_tokens:80, system:"Write exactly one short sentence greeting the user by name and flagging the single most useful thing about their day from the context — a tight schedule, a budget issue, or an open task count if nothing else stands out. Never state a specific dollar amount, even if one seems implied — this reads out loud on a lock screen others may see. Plain text, no preamble, no quotes, under 22 words.", messages:[{ role:"user", content:context }] }) });
       const data = await res.json();
       const text = data.content?.map(b=>b.text||"").join("").trim();
       return (res.ok && text) || `Good morning, ${firstNameOf(user.name)||"there"} — ${openTasks.length} tasks open today.`;
@@ -4724,14 +4727,13 @@ ${voiceMode
 
   // Keeps the server's scheduled_notifications index in sync with real, upcoming appointments so
   // a push can still reach this person 10 minutes before one starts even with the app fully
-  // closed — the in-app version just above only ever fires while a tab is open. Deliberately only
-  // appointments for now: they have a simple, static, already-known title/time/location, unlike
-  // reminders (recur daily until marked done — a done-state the server-side index can't see, kv_
-  // store being client-managed) or the Daily Brief (its text is generated fresh, not something to
-  // precompute and push later). This is a full reconcile, not an incremental add/remove per
-  // appointment — sending the complete current set on every change means a missed edge case can
-  // never leave a stale entry behind; the server just deletes anything under the "appt:" prefix
-  // that isn't in this list any more (see api/push/schedule.js).
+  // closed — the in-app version just above only ever fires while a tab is open. Appointments have
+  // a simple, static, already-known title/time/location, so this is a straightforward full
+  // reconcile, not an incremental add/remove per appointment — sending the complete current set on
+  // every change means a missed edge case can never leave a stale entry behind; the server just
+  // deletes anything under the "appt:" prefix that isn't in this list any more (see
+  // api/push/schedule.js). See the reminders version of this same idea just below, which needs one
+  // extra wrinkle for the same push-only-when-closed behavior.
   useEffect(() => {
     if (!dataLoaded || !isSupabaseConfigured) return;
     const now = Date.now();
@@ -4755,6 +4757,41 @@ ${voiceMode
     }, 1500);
     return () => clearTimeout(t);
   }, [dataLoaded, appts]);
+
+  // Same idea, for reminders. The one real difference from appointments: an open reminder here
+  // re-arms daily at the same time until marked done (see the in-app version above — same HH:MM-
+  // in-`when` parsing, matched exactly), and re-deriving "is it still open" needs kv_store data the
+  // cron job deliberately never reads (that's what keeps it a thin index instead of a second copy
+  // of the whole reminder). So this schedules a push for whichever occurrence is next — today's, if
+  // its time hasn't passed yet, otherwise tomorrow's — and relies on this same effect re-running
+  // (any time smartReminders changes, which includes marking one done) to roll the schedule forward
+  // a day at a time. A reminder dismissed while the app is closed cancels correctly the next time
+  // the app opens, before its next push would otherwise fire; if the app stays closed for more than
+  // one full day past a reminder's time, only that first occurrence is guaranteed to have pushed —
+  // the same real limitation any reminder app has without a server that also owns the reminder's
+  // own done-state, which this one deliberately doesn't take on.
+  useEffect(() => {
+    if (!dataLoaded || !isSupabaseConfigured) return;
+    const now = new Date();
+    const items = smartReminders
+      .map(r => {
+        if (r.done) return null;
+        const m = String(r.when || "").match(/(\d{1,2}):(\d{2})/);
+        if (!m) return null;
+        const fires = new Date();
+        fires.setHours(Number(m[1]), Number(m[2]), 0, 0);
+        if (fires.getTime() <= now.getTime()) fires.setDate(fires.getDate() + 1);
+        return { clientKey:`reminder:${r.id}`, firesAt:fires.toISOString(), title:"Reminder", body:r.text };
+      })
+      .filter(Boolean);
+    const t = setTimeout(() => {
+      authedFetch("/api/push/schedule", { method:"POST", body:JSON.stringify({ prefix:"reminder:", items }) }).catch(() => {
+        // Best-effort — the in-app/OS notification path above (while the app is open) is
+        // unaffected either way, and the next smartReminders change retries this automatically.
+      });
+    }, 1500);
+    return () => clearTimeout(t);
+  }, [dataLoaded, smartReminders]);
 
   // Plus: scheduled calls. Kept independent of notifPermission — the in-app ringing overlay
   // doesn't need OS notification permission at all, only the accompanying system notification
@@ -5394,7 +5431,7 @@ ${voiceMode
 
   const reverseGeocode = async (lat, lng) => {
     try {
-      const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}`);
+      const res = await fetch(`/api/places?mode=reverse&lat=${lat}&lon=${lng}`);
       const data = await res.json();
       const city = data.address?.city || data.address?.town || data.address?.village || data.address?.county || "";
       const label = [city, data.address?.state, data.address?.country].filter(Boolean).join(", ");
@@ -5408,9 +5445,26 @@ ${voiceMode
     }
   };
 
-  const searchNearby = async (categoryOrQuery, isNaturalLanguage=false) => {
+  const searchNearby = async (categoryOrQuery, { isNaturalLanguage=false, categoryKey=null } = {}) => {
     if (!userCoords) { requestLocation(); return; }
     setAroundLoading(true); setAroundError(""); setAroundSearched(true); setAroundResults([]);
+
+    // Category browsing (the CATEGORIES grid, and "Feeling hungry?") goes straight to Overpass via
+    // the proxy, not Nominatim's free-text search — see api/places.js's comment for why a category
+    // label like "Restaurants" doesn't actually find real nearby restaurants there.
+    if (categoryKey) {
+      try {
+        const res = await fetch(`/api/places?mode=category&category=${encodeURIComponent(categoryKey)}&lat=${userCoords.lat}&lon=${userCoords.lng}`);
+        const data = await res.json();
+        const results = data.results || [];
+        setAroundResults(results);
+        if (results.length === 0) setAroundError(`No ${categoryOrQuery.toLowerCase()} found nearby. Try a different category or search.`);
+      } catch {
+        setAroundError("Couldn't reach the places service. Check your connection and try again.");
+      }
+      setAroundLoading(false);
+      return;
+    }
 
     let searchTerm = categoryOrQuery;
     if (isNaturalLanguage) {
@@ -5436,7 +5490,7 @@ ${voiceMode
 
     try {
       const viewbox = `${userCoords.lng-0.05},${userCoords.lat+0.05},${userCoords.lng+0.05},${userCoords.lat-0.05}`;
-      const res = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&q=${encodeURIComponent(searchTerm)}&viewbox=${viewbox}&bounded=1&limit=12`);
+      const res = await fetch(`/api/places?mode=search&q=${encodeURIComponent(searchTerm)}&viewbox=${encodeURIComponent(viewbox)}`);
       const data = await res.json();
       const results = (data||[]).map(p => ({
         id:p.place_id,
@@ -7771,35 +7825,40 @@ ${voiceMode
             {!hungry ? (
               <Card style={{ marginBottom:16, border:`1px solid ${C.soft}` }} hi>
                 <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:12 }}>
-                  <div><div style={{ fontWeight:700, fontSize:14, color:C.white, marginBottom:3 }}>Feeling hungry?</div><Mono style={{ color:C.soft }}>KROFT suggests what to eat based on your schedule.</Mono></div>
-                  <Btn onClick={() => { setHungry(true); if (voiceReplies) speak(`Hey ${firstNameOf(user.name)||"there"}, I'd suggest the Harvest Bowl from Sweetgreen. Light, healthy, just 0.1 miles away.`); toast("KROFT pick: Harvest Bowl at Sweetgreen"); }}>Yes, I'm hungry</Btn>
+                  <div><div style={{ fontWeight:700, fontSize:14, color:C.white, marginBottom:3 }}>Feeling hungry?</div><Mono style={{ color:C.soft }}>Find a real restaurant near you right now.</Mono></div>
+                  <Btn onClick={() => { setHungry(true); setAroundCategory("restaurant"); setAroundQuery(""); searchNearby("Restaurants", { categoryKey:"restaurant" }); }}>Yes, I'm hungry</Btn>
                 </div>
               </Card>
             ) : (
               <Card style={{ marginBottom:14, border:`1px solid ${C.soft}` }} hi>
-                <Mono style={{ display:"block", color:C.white, marginBottom:5, letterSpacing:.8 }}>KROFT'S TOP PICK</Mono>
-                <div style={{ fontSize:16, fontWeight:700, color:C.white, marginBottom:4 }}>Harvest Bowl · Sweetgreen</div>
-                <div style={{ fontSize:13, color:C.soft, lineHeight:1.6, marginBottom:12 }}>Light, energising, 0.1 mi away. High protein, no post-lunch crash.</div>
-                <div style={{ display:"flex", gap:8 }}><Btn sm onClick={() => setUberDest({name:"Sweetgreen",dist:"0.1 mi"})}>Uber there</Btn><Btn sm v="outline" onClick={() => setHungry(false)}>Reset</Btn></div>
+                <Mono style={{ display:"block", color:C.white, marginBottom:5, letterSpacing:.8 }}>NEARBY PICK</Mono>
+                {/* Grounded in the same real Nominatim search "Nearby places" uses below — no
+                    fabricated name, rating, cuisine, or "suggested dish", since none of that is
+                    data KROFT actually has. */}
+                {aroundLoading ? (
+                  <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+                    <Spinner size={16} color={C.white} thickness={2} />
+                    <Mono style={{ color:C.soft }}>Finding something nearby…</Mono>
+                  </div>
+                ) : aroundResults.length > 0 ? (
+                  <>
+                    <div style={{ fontSize:16, fontWeight:700, color:C.white, marginBottom:4 }}>{aroundResults[0].name}</div>
+                    <div style={{ fontSize:13, color:C.soft, lineHeight:1.6, marginBottom:12 }}>{aroundResults[0].address} · {distanceFrom(aroundResults[0].lat, aroundResults[0].lng)} away</div>
+                    <div style={{ display:"flex", gap:8 }}>
+                      <Btn sm onClick={() => setUberDest({ name:aroundResults[0].name, location:aroundResults[0].address })}>Uber there</Btn>
+                      <Btn sm v="outline" onClick={() => setHungry(false)}>Reset</Btn>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <Mono style={{ display:"block", color:C.muted, marginBottom:12 }}>
+                      {locationStatus!=="granted" ? "Turn on location below to find something nearby." : "Nothing found nearby right now."}
+                    </Mono>
+                    <Btn sm v="outline" onClick={() => setHungry(false)}>Reset</Btn>
+                  </>
+                )}
               </Card>
             )}
-            {[{id:1,name:"Sweetgreen",cuisine:"Healthy Bowls",dist:"0.1 mi",rating:"4.5",suggest:"Harvest Bowl",why:"Light energy before any meeting."},{id:2,name:"The Capital Grille",cuisine:"Steakhouse",dist:"0.3 mi",rating:"4.8",suggest:"Filet Mignon",why:"Great for client dinners."},{id:3,name:"Nobu",cuisine:"Japanese Fusion",dist:"0.5 mi",rating:"4.9",suggest:"Black Cod Miso",why:"Celebrate a great week."}].map(r => (
-              <Card key={r.id} style={{ marginBottom:11 }}>
-                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", flexWrap:"wrap", gap:10 }}>
-                  <div>
-                    <div style={{ display:"flex", alignItems:"center", gap:9, marginBottom:5 }}><span style={{ fontWeight:700, fontSize:14, color:C.white }}>{r.name}</span><Tag tone="positive">{r.rating}</Tag></div>
-                    <Mono style={{ display:"block", color:C.soft, marginBottom:3 }}>{r.cuisine} · {r.dist}</Mono>
-                    <div style={{ fontSize:12, color:C.soft }}>Suggested: <span style={{ color:C.white, fontWeight:700 }}>{r.suggest}</span></div>
-                    <Mono style={{ display:"block", color:C.soft, marginTop:2, fontStyle:"italic" }}>{r.why}</Mono>
-                  </div>
-                  <div style={{ display:"flex", gap:7, flexWrap:"wrap" }}>
-                    <Btn sm onClick={() => { if (voiceReplies) speak(`${r.suggest} at ${r.name}. ${r.why}`); toast(`KROFT: ${r.why}`); }}>Suggest</Btn>
-                    <Btn sm v="outline" onClick={() => setUberDest({name:r.name,dist:r.dist})}>Uber</Btn>
-                    <Btn sm v="outline" onClick={() => { setTab("nova"); setAiInput(`Tell me about ${r.name} and what I should order`); }}>Ask</Btn>
-                  </div>
-                </div>
-              </Card>
-            ))}
 
             <Mono style={{ display:"block", color:C.soft, margin:"22px 0 9px", letterSpacing:.8 }}>Nearby places</Mono>
 
@@ -7846,10 +7905,10 @@ ${voiceMode
                 placeholder="Search nearby places…"
                 value={aroundQuery}
                 onChange={e => setAroundQuery(e.target.value)}
-                onKeyDown={e => { if (e.key==="Enter" && aroundQuery.trim()) searchNearby(aroundQuery, true); }}
+                onKeyDown={e => { if (e.key==="Enter" && aroundQuery.trim()) searchNearby(aroundQuery, { isNaturalLanguage:true }); }}
                 style={{ flex:1 }}
               />
-              <Btn onClick={() => aroundQuery.trim() && searchNearby(aroundQuery, true)} disabled={!aroundQuery.trim() || aroundLoading}>Search</Btn>
+              <Btn onClick={() => aroundQuery.trim() && searchNearby(aroundQuery, { isNaturalLanguage:true })} disabled={!aroundQuery.trim() || aroundLoading}>Search</Btn>
             </div>
 
             {/* Category grid */}
@@ -7858,7 +7917,7 @@ ${voiceMode
               {CATEGORIES.map(c => (
                 <button
                   key={c.key}
-                  onClick={() => { setAroundCategory(c.key); setAroundQuery(""); searchNearby(c.label); }}
+                  onClick={() => { setAroundCategory(c.key); setAroundQuery(""); searchNearby(c.label, { categoryKey:c.key }); }}
                   style={{
                     background: aroundCategory===c.key ? C.white : C.card,
                     border:`1px solid ${aroundCategory===c.key ? C.white : C.cardB}`,
@@ -7879,7 +7938,7 @@ ${voiceMode
             <Mono style={{ display:"block", color:C.soft, marginBottom:8, letterSpacing:.8 }}>Or ask naturally</Mono>
             <div style={{ display:"flex", flexWrap:"wrap", gap:7, marginBottom:22 }}>
               {["Find restaurants near me","Nearest pharmacy open now","Best café for remote work","Closest ATM","Nearby supermarkets","Hotels near me"].map(q => (
-                <button key={q} onClick={() => { setAroundQuery(q); searchNearby(q, true); }}
+                <button key={q} onClick={() => { setAroundQuery(q); searchNearby(q, { isNaturalLanguage:true }); }}
                   style={{ background:C.card, border:`1px solid ${C.cardB}`, borderRadius:7, padding:"6px 12px", cursor:"pointer", color:C.soft, fontSize:11, fontFamily:"'Space Grotesk',sans-serif" }}
                   onMouseEnter={e=>{e.target.style.borderColor=C.soft;e.target.style.color=C.white;}}
                   onMouseLeave={e=>{e.target.style.borderColor=C.cardB;e.target.style.color=C.border;}}>
