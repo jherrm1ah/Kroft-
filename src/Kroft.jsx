@@ -3791,6 +3791,7 @@ function KroftApp({ onFullReset } = {}) {
       raw = await runKroftCompletion(convo, {
         signal: controller.signal,
         usageType: "voice",
+        voiceMode: true,
         onDelta: partial => {
           if (!voiceOpenRef.current) return;
           latest = partial;
@@ -3824,7 +3825,7 @@ function KroftApp({ onFullReset } = {}) {
     if (!raw) { setVoiceState("idle"); return; }
 
     const { clean, action: aiAction } = extractAction(raw);
-    const actionResult = aiAction ? applyAiAction(aiAction) : null;
+    const actionResult = aiAction ? applyAutoAction(aiAction) : null;
     setAiMessages(p => [...p, { role:"assistant", content:clean }]);
     if (actionResult) toast(actionResult.label, actionResult.undo);
     setVoiceReply(clean);
@@ -4003,7 +4004,7 @@ function KroftApp({ onFullReset } = {}) {
   // of appointment titles — so the assistant couldn't answer "what's on today?", "what's due
   // this week?" or "where is my money going?", which is most of what a personal assistant is
   // for. Everything is capped and summarised rather than dumped, so context stays affordable.
-  const krofSysPrompt = () => {
+  const krofSysPrompt = (voiceMode = false) => {
     const now = new Date();
     const today = todayISO();
     const cur = user.currency;
@@ -4068,8 +4069,8 @@ ${list(projects, 8, p => `${p.name} — ${p.status}${p.deadline?`, due ${p.deadl
 
 NOTES (${notes.length}): ${list(notes, 8, n => n.title || "untitled")}
 DOCUMENTS (${documents.length}): ${list(documents, 8, d => d.title || "untitled")}
-CONTACTS (${contacts.length}): ${list(contacts, 12, c => `${c.name} (${c.category})`)}
-EMAIL: ${unread.length} unread${unread.length?` — latest: ${unread[0].subject} from ${unread[0].from}`:""}
+CONTACTS (${contacts.length}): ${list(contacts, 12, c => `${c.name}${c.email?` <${c.email}>`:""} (${c.category})`)}
+EMAIL: ${unread.length} unread${unread.length?` — recent: ${list(unread, 5, m => `"${m.subject}" from ${m.from}`)}`:""}
 
 STYLE
 Talk like a sharp, genuinely warm human assistant who knows this person well — never like an AI describing itself. Never say things like "As an AI," "I don't have personal experiences," or any other AI-disclaimer or meta-commentary about what you are — just answer, the way a person would. Use contractions and plain, natural sentences; vary how you open a reply instead of starting the same way every time. Address ${firstName||"them"} by their first name every so often — a greeting, good news, a heads-up — not stapled onto every single reply, which reads as scripted rather than natural. Keep answers tight — a couple of short paragraphs unless asked for depth. Prefer plain sentences over headings and bullet lists; replies are often read aloud.
@@ -4078,7 +4079,7 @@ LIMITS
 You are a bookkeeping and organisation assistant, not a licensed financial adviser. You can describe what is in their records, do arithmetic on it, and point out patterns. Do not recommend investments, tax positions, borrowing, insurance or financial products, and do not tell them what to do with their money. If asked for that, say plainly that it needs a qualified accountant or adviser, then offer what you can — the relevant figures from their own records.
 
 ACTIONS
-When ${user.name||"the user"} asks you to record, add, log or schedule something, actually do it by appending ONE action block to the very end of your reply, after your normal sentence confirming it:
+When ${user.name||"the user"} asks you to record, add, schedule, change or remove something, actually do it by appending ONE action block to the very end of your reply, after your normal sentence:
 <action>{"type":"...","...":"..."}</action>
 Valid types and their fields:
 {"type":"add_task","title":"string","priority":"High|Medium|Low"}
@@ -4089,7 +4090,17 @@ Valid types and their fields:
 {"type":"add_reminder","text":"string","when":"string"}
 {"type":"complete_task","title":"string"}
 {"type":"edit_appointment","title":"string","date":"YYYY-MM-DD","time":"HH:MM"}
-Rules: amounts are positive numbers with no currency symbol. Resolve relative dates ("tomorrow", "next Friday") against the current date above and emit an absolute YYYY-MM-DD. Expense categories to prefer: ${expenseCats.join(", ")}. Income categories to prefer: ${incomeCats.join(", ")}. Emit at most one action per reply, only when clearly asked to save something — never for a question like "how much did I spend?". complete_task and edit_appointment match an EXISTING item by title against the TASKS/SCHEDULE lists above — use the shortest distinctive wording from that list, not a paraphrase, so the match is unambiguous. edit_appointment only needs the field(s) actually changing (e.g. just "time" to only move the time). You still cannot delete anything or send anything on the user's behalf — if asked for that, say it has to be done by hand.`;
+{"type":"delete_task","title":"string"}
+{"type":"delete_expense","label":"string"}
+{"type":"delete_income","label":"string"}
+{"type":"delete_appointment","title":"string"}
+{"type":"delete_reminder","text":"string"}
+{"type":"delete_note","title":"string"}
+{"type":"send_email","to":"string","subject":"string","body":"string"}
+Rules: amounts are positive numbers with no currency symbol. Resolve relative dates ("tomorrow", "next Friday") against the current date above and emit an absolute YYYY-MM-DD. Expense categories to prefer: ${expenseCats.join(", ")}. Income categories to prefer: ${incomeCats.join(", ")}. Emit at most one action per reply, only when clearly asked to save, change or remove something — never for a question like "how much did I spend?". complete_task, edit_appointment, and every delete_* type match an EXISTING item by its title/label/text against the lists above — use the shortest distinctive wording from that list, not a paraphrase, so the match is unambiguous. edit_appointment only needs the field(s) actually changing (e.g. just "time" to only move the time). Only set send_email's "to" to an address that actually appears in CONTACTS or EMAIL above — never guess or construct one; if you don't have a real address for who they mean, say so and ask for it instead of emitting the action.
+${voiceMode
+  ? `You're in a spoken voice conversation right now. Never emit a delete_* or send_email action block here — that confirmation step needs a screen this voice UI doesn't have. If asked to delete or send something, say you'll get it ready but they'll need to confirm it in the app, and leave out the action block entirely.`
+  : `delete_* and send_email are NOT executed immediately — the app shows a confirm/cancel step first, so word your sentence as an offer ("I'll have that ready to send — just confirm it") rather than a completed fact. Every other action type above already happened by the time your reply is read, so word those as done.`}`;
   };
 
   // Pulls the action block out of a reply. The block is stripped before the text is shown or
@@ -4185,6 +4196,129 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
     }
   };
 
+  // Action types that never execute immediately — a delete can't be reversed by an undo tap the
+  // way an add can (the item might have been referenced elsewhere by the time someone taps undo),
+  // and a sent email genuinely can't be unsent. Both get a real confirm/cancel step instead.
+  const CONFIRM_ACTION_TYPES = new Set(["delete_task","delete_expense","delete_income","delete_appointment","delete_reminder","delete_note","send_email"]);
+
+  // Safety net for voice mode: krofSysPrompt(true) already tells the model never to emit a
+  // confirm-gated action while speaking, since there's no screen there to confirm on — but a
+  // model can still not follow an instruction perfectly. This makes that failure mode inert: a
+  // confirm-gated action reaching here is ignored rather than silently executed with no one able
+  // to confirm it. Only voiceAnswer uses this; the text chat's own confirm/cancel card is the
+  // real gate for everyone else.
+  const applyAutoAction = action => (action && CONFIRM_ACTION_TYPES.has(action.type)) ? null : applyAiAction(action);
+
+  const findBy = (list, field, value) => list.find(x => (x[field]||"").toLowerCase().includes(value.toLowerCase()));
+
+  // Validates a confirm-gated action WITHOUT touching any data, so the confirm/cancel card can
+  // show exactly what's about to happen. Mirrors applyAiAction's own miss-handling: a target
+  // that can't be found returns a reason instead of quietly proceeding, since the model's reply
+  // already framed this as something about to happen.
+  const describePendingAction = action => {
+    if (!action || typeof action !== "object") return { ok:false };
+    const str = v => (typeof v === "string" ? v.trim() : "");
+    const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    switch (action.type) {
+      case "delete_task": {
+        const title = str(action.title); if (!title) return { ok:false };
+        const match = findByTitle(tasks, title);
+        if (!match) return { ok:false, reason:`Couldn't find a task matching "${title}" to delete.` };
+        return { ok:true, summary:`Delete task "${match.title}"?` };
+      }
+      case "delete_expense":
+      case "delete_income": {
+        const isInc = action.type === "delete_income";
+        const label = str(action.label); if (!label) return { ok:false };
+        const match = findBy(isInc ? income : expenses, "label", label);
+        if (!match) return { ok:false, reason:`Couldn't find ${isInc?"income":"an expense"} matching "${label}" to delete.` };
+        return { ok:true, summary:`Delete ${isInc?"income":"expense"} "${match.label}" (${fmtCur(match.amount,user.currency)})?` };
+      }
+      case "delete_appointment": {
+        const title = str(action.title); if (!title) return { ok:false };
+        const match = findByTitle(appts, title);
+        if (!match) return { ok:false, reason:`Couldn't find an appointment matching "${title}" to delete.` };
+        return { ok:true, summary:`Delete appointment "${match.title}" on ${match.date}?` };
+      }
+      case "delete_reminder": {
+        const text = str(action.text); if (!text) return { ok:false };
+        const match = findBy(smartReminders, "text", text);
+        if (!match) return { ok:false, reason:`Couldn't find a reminder matching "${text}" to delete.` };
+        return { ok:true, summary:`Delete reminder "${match.text}"?` };
+      }
+      case "delete_note": {
+        const title = str(action.title); if (!title) return { ok:false };
+        const match = findByTitle(notes, title);
+        if (!match) return { ok:false, reason:`Couldn't find a note matching "${title}" to delete.` };
+        return { ok:true, summary:`Delete note "${match.title}"?` };
+      }
+      case "send_email": {
+        const to = str(action.to), subject = str(action.subject), body = str(action.body);
+        // The model was told to only use an address that actually appeared in CONTACTS/EMAIL —
+        // this doesn't re-verify that (nothing here has that list to check against a name), but
+        // it does refuse anything that isn't even a plausible address, so a hallucinated or
+        // malformed "to" fails closed instead of reaching the send card at all.
+        if (!EMAIL_RE.test(to)) return { ok:false, reason:`I don't have a real email address for that — try naming a saved contact or a recent email sender.` };
+        if (!subject && !body) return { ok:false };
+        return { ok:true, summary:`Send to ${to}`, to, subject, body };
+      }
+      default: return { ok:false };
+    }
+  };
+
+  // Runs a confirm-gated action — only ever called from the confirm/cancel card's Confirm
+  // button, never automatically. Deletes still get an undo toast afterward (the removed item is
+  // captured before it's spliced out): confirmed-then-undoable is a safer combination than
+  // either alone. send_email has no undo once it's sent — that's exactly why it needs the
+  // confirm step in the first place, unlike everything else in this file.
+  const executeConfirmedAction = async action => {
+    switch (action.type) {
+      case "delete_task": {
+        const match = findByTitle(tasks, action.title);
+        if (!match) return { label:"That task is already gone." };
+        setTasks(p => p.filter(x => x.id !== match.id));
+        return { label:`Deleted task: ${match.title}`, undo:() => setTasks(p => [match, ...p]) };
+      }
+      case "delete_expense":
+      case "delete_income": {
+        const isInc = action.type === "delete_income";
+        const setList = isInc ? setIncome : setExpenses;
+        const match = findBy(isInc ? income : expenses, "label", action.label);
+        if (!match) return { label:"That entry is already gone." };
+        setList(p => p.filter(x => x.id !== match.id));
+        return { label:`Deleted ${isInc?"income":"expense"}: ${match.label}`, undo:() => setList(p => [...p, match]) };
+      }
+      case "delete_appointment": {
+        const match = findByTitle(appts, action.title);
+        if (!match) return { label:"That appointment is already gone." };
+        setAppts(p => p.filter(x => x.id !== match.id));
+        return { label:`Deleted appointment: ${match.title}`, undo:() => setAppts(p => [...p, match]) };
+      }
+      case "delete_reminder": {
+        const match = findBy(smartReminders, "text", action.text);
+        if (!match) return { label:"That reminder is already gone." };
+        setSmartReminders(p => p.filter(x => x.id !== match.id));
+        return { label:`Deleted reminder: ${match.text}`, undo:() => setSmartReminders(p => [match, ...p]) };
+      }
+      case "delete_note": {
+        const match = findByTitle(notes, action.title);
+        if (!match) return { label:"That note is already gone." };
+        setNotes(p => p.filter(x => x.id !== match.id));
+        return { label:`Deleted note: ${match.title}`, undo:() => setNotes(p => [match, ...p]) };
+      }
+      case "send_email": {
+        try {
+          const res = await authedFetch("/api/mail/send", { method:"POST", body:JSON.stringify({ to:action.to, subject:action.subject, body:action.body }) });
+          if (!res.ok) return { label:"Couldn't send that email — try again from the Emails tab." };
+          return { label:`Sent to ${action.to}` };
+        } catch {
+          return { label:"Couldn't send that email — check your connection and try again." };
+        }
+      }
+      default: return null;
+    }
+  };
+
   // Only the most recent slice of the conversation is sent. The full history stays on screen,
   // but shipping all of it on every turn means replies get slower and more expensive the longer
   // a session runs, and eventually the request exceeds the model's context window and fails
@@ -4208,12 +4342,12 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
   // onDelta streams tokens as they arrive; without it the call resolves with the full text.
   // Streaming matters most here because replies are long enough that a spinner-then-dump feels
   // broken, and because the first sentence can start being read aloud while the rest arrives.
-  const runKroftCompletion = async (messages, { onDelta, signal, usageType = "chat" } = {}) => {
+  const runKroftCompletion = async (messages, { onDelta, signal, usageType = "chat", voiceMode = false } = {}) => {
     const recent = messages.slice(-historyLimit());
     const body = {
       model:"gemini-3.6-flash",
       max_tokens:2048,
-      system:krofSysPrompt(),
+      system:krofSysPrompt(voiceMode),
       messages:recent.map(m => ({ role:m.role, content:m.content })),
       ...(onDelta ? { stream:true } : {}),
     };
@@ -4406,8 +4540,20 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
         onDelta: partial => setAiMessages(p => p.map(m => m.id === streamId ? { ...m, content:partial } : m)),
       });
       const { clean, action } = extractAction(raw);
-      const result = action ? applyAiAction(action) : null;
-      setAiMessages(p => p.map(m => m.id === streamId ? { ...m, content:clean, streaming:false, contactAction } : m));
+      // Confirm-gated actions (delete_*, send_email) never execute here — describePendingAction
+      // only validates and previews. A valid one is attached to this message as a card the
+      // person has to actually tap Confirm on (see confirmPendingAction below); an invalid one
+      // (nothing matched) surfaces the same way a failed complete_task/edit_appointment does —
+      // a toast explaining why, since the reply text already framed it as about to happen.
+      let pending = null, result = null;
+      if (action && CONFIRM_ACTION_TYPES.has(action.type)) {
+        const preview = describePendingAction(action);
+        if (preview.ok) pending = { action, summary: preview.summary };
+        else if (preview.reason) result = { label: preview.reason };
+      } else if (action) {
+        result = applyAiAction(action);
+      }
+      setAiMessages(p => p.map(m => m.id === streamId ? { ...m, content:clean, streaming:false, contactAction, pendingAction:pending } : m));
       if (result) toast(result.label, result.undo);
       if (voiceReplies && !voiceOpenRef.current) speak(clean);
     } catch (err) {
@@ -4427,6 +4573,23 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
   };
 
   const stopReply = () => { aiAbortRef.current?.abort(); aiAbortRef.current = null; };
+
+  // Handlers for the confirm/cancel card streamReply attaches to a message's pendingAction.
+  // Confirm actually runs the action and turns the card into a plain outcome line; Cancel just
+  // discards it — either way the card stops being tappable, so it can't fire twice.
+  const confirmPendingAction = async messageId => {
+    const msg = aiMessages.find(m => m.id === messageId);
+    if (!msg?.pendingAction || msg.pendingAction.done) return;
+    const { action } = msg.pendingAction;
+    setAiMessages(p => p.map(m => m.id === messageId ? { ...m, pendingAction:{ ...m.pendingAction, confirming:true } } : m));
+    const result = await executeConfirmedAction(action);
+    setAiMessages(p => p.map(m => m.id === messageId ? { ...m, pendingAction:{ ...m.pendingAction, confirming:false, done:true, outcome:result?.label || "Done." } } : m));
+    if (result?.undo) toast(result.label, result.undo);
+  };
+  const cancelPendingAction = messageId => {
+    setAiMessages(p => p.map(m => m.id === messageId && !m.pendingAction?.done
+      ? { ...m, pendingAction:{ ...m.pendingAction, done:true, outcome:"Cancelled." } } : m));
+  };
 
   // Plus: an unprompted daily notification — the one thing a free account structurally can't
   // get, since it requires KROFT to initiate rather than respond. Built from the same real data
@@ -7777,6 +7940,33 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
                             runContactAction(m.contactAction);
                             setAiMessages(p => p.map(x => x.id===m.id ? {...x, contactActionResolved:true} : x));
                           }}>{{ email:`Email ${m.contactAction.contact.name}`, call:`Call ${m.contactAction.contact.name}`, text:`Text ${m.contactAction.contact.name}` }[m.contactAction.type]}</Btn>
+                        </div>
+                      )}
+                      {/* The confirm/cancel card for a confirm-gated action streamReply
+                          proposed (a delete, or send_email). Nothing behind this executes until
+                          Confirm is actually tapped — for send_email that means showing the real
+                          subject/body about to go out, not just a name, so review here means
+                          something. */}
+                      {m.pendingAction && !m.streaming && (
+                        <div style={{ marginTop:10, padding:"10px 12px", background:C.accentBg, border:`1px solid ${C.accent}44`, borderRadius:10 }}>
+                          {m.pendingAction.done ? (
+                            <Mono style={{ color:C.soft }}>{m.pendingAction.outcome}</Mono>
+                          ) : (
+                            <>
+                              <div style={{ fontSize:12.5, fontWeight:600, color:C.text, marginBottom:m.pendingAction.action.type==="send_email"?6:10 }}>{m.pendingAction.summary}</div>
+                              {m.pendingAction.action.type === "send_email" && (
+                                <Mono style={{ display:"block", color:C.muted, lineHeight:1.6, marginBottom:10, whiteSpace:"pre-wrap" }}>
+                                  Subject: {m.pendingAction.action.subject}{"\n"}{m.pendingAction.action.body}
+                                </Mono>
+                              )}
+                              <div style={{ display:"flex", gap:8 }}>
+                                <Btn sm disabled={m.pendingAction.confirming} onClick={() => confirmPendingAction(m.id)}>
+                                  {m.pendingAction.confirming ? <Spinner size={12} color={C.black} thickness={2} /> : "Confirm"}
+                                </Btn>
+                                <Btn sm v="outline" disabled={m.pendingAction.confirming} onClick={() => cancelPendingAction(m.id)}>Cancel</Btn>
+                              </div>
+                            </>
+                          )}
                         </div>
                       )}
                     </div>
