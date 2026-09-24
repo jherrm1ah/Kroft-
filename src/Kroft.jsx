@@ -6230,7 +6230,10 @@ ${voiceMode
       {showBriefing && <Briefing user={user} income={totalIncome} expenses={totalExpenses} emails={emails} appts={appts} onClose={() => setShowBriefing(false)} />}
       {showChatHistory && (() => {
         const q = chatHistorySearch.trim().toLowerCase();
-        const filtered = q ? chatHistory.filter(c => c.title.toLowerCase().includes(q)) : chatHistory;
+        // Title alone used to miss anything that isn't literally in the auto-generated title —
+        // searching for a word actually discussed, not just the topic it got titled after, is
+        // the more useful case for a conversation search.
+        const filtered = q ? chatHistory.filter(c => c.title.toLowerCase().includes(q) || (c.messages||[]).some(m => (m.content||"").toLowerCase().includes(q))) : chatHistory;
         return (
           <div role="dialog" aria-modal="true" aria-label="Chat history" style={{ position:"fixed", inset:0, zIndex:310, background:C.bg, display:"flex", flexDirection:"column" }}>
             <div style={{ display:"flex", alignItems:"center", gap:10, padding:"12px 16px", borderBottom:`1px solid ${C.cardB}`, flexShrink:0 }}>
@@ -7105,13 +7108,17 @@ ${voiceMode
           // the section it lives in so tapping it opens the right screen.
           const hit = (s, ...fields) => fields.some(f => (f||"").toLowerCase().includes(s));
           const contentHits = !searching ? [] : [
-            ...notes.filter(n => hit(q, n.title, n.body)).map(n => ({ id:"note"+n.id, section:"notes", kind:"Note", label:n.title || "Untitled note", detail:(n.body||"").slice(0,60) })),
+            // A checklist note's real content lives in its items, not `body` (empty for those) —
+            // search both so "milk" finds the shopping-list note it's actually in, not just notes
+            // where it happens to be in the title.
+            ...notes.filter(n => hit(q, n.title, n.body, (n.checklist||[]).map(i=>i.text).join(" "))).map(n => ({ id:"note"+n.id, section:"notes", kind:"Note", label:n.title || "Untitled note", detail: n.checklist ? `${n.checklist.filter(i=>i.done).length}/${n.checklist.length} items` : (n.body||"").slice(0,60) })),
             ...tasks.filter(t => hit(q, t.title)).map(t => ({ id:"task"+t.id, section:"tasks", kind:"Task", label:t.title, detail:t.done?"Done":t.priority })),
             ...appts.filter(a => hit(q, a.title, a.location, a.notes)).map(a => ({ id:"appt"+a.id, section:"calendar", kind:"Appointment", label:a.title, detail:[a.time, fmtDate(a.date)].filter(Boolean).join(", ") })),
             ...contacts.filter(c => hit(q, c.name, c.email, c.phone)).map(c => ({ id:"contact"+c.id, section:"contacts", kind:"Contact", label:c.name, detail:c.email || c.phone })),
             ...smartReminders.filter(r => hit(q, r.text)).map(r => ({ id:"rem"+r.id, section:"reminders", kind:"Reminder", label:r.text, detail:r.when })),
             ...documents.filter(d => hit(q, d.title, d.body)).map(d => ({ id:"doc"+d.id, section:"documents", kind:"Document", label:d.title || "Untitled", detail:(d.body||"").slice(0,60) })),
-            ...projects.filter(p => hit(q, p.name, p.description)).map(p => ({ id:"proj"+p.id, section:"projects", kind:"Project", label:p.name, detail:p.status })),
+            // Same reasoning as notes above — a project's milestone titles are real content too.
+            ...projects.filter(p => hit(q, p.name, p.description, (p.milestones||[]).map(m=>m.title).join(" "))).map(p => ({ id:"proj"+p.id, section:"projects", kind:"Project", label:p.name, detail:p.status })),
             ...files.filter(f => hit(q, f.name)).map(f => ({ id:"file"+f.id, section:"files", kind:"File", label:f.name, detail:f.date })),
             ...emails.filter(e => hit(q, e.subject, e.from, e.body)).map(e => ({ id:"mail"+e.id, section:"email", kind:"Email", label:e.subject, detail:e.from })),
             ...voiceMemos.filter(m => hit(q, m.title, m.transcript)).map(m => ({ id:"memo"+m.id, section:"memos", kind:"Voice memo", label:m.title || "Untitled memo", detail:(m.transcript||"").slice(0,60) })),
