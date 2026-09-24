@@ -6137,16 +6137,8 @@ ${voiceMode
 
         {tab==="home" && homeSection==="overview" && (
           <div style={{ animation:"fadeUp .4s ease" }}>
-            {/* Avatar + two-line greeting reads warmer than a bare "Good morning, Name" — and
-                gives the header somewhere for a face to eventually go, once accounts have one. */}
-            <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:16 }}>
-              <div style={{ width:44, height:44, borderRadius:"50%", background:C.card, border:`1px solid ${C.cardB}`, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
-                <span style={{ fontSize:16, fontWeight:700, color:C.text }}>{(firstNameOf(user.name)||"K").charAt(0).toUpperCase()}</span>
-              </div>
-              <div style={{ flex:1, minWidth:0 }}>
-                <Mono style={{ display:"block", color:C.muted, marginBottom:1 }}>Hi, {firstNameOf(user.name)||"there"} 👋</Mono>
-                <h1 style={{ fontSize:21, fontWeight:700, color:C.white, letterSpacing:-.8, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{greeting()}</h1>
-              </div>
+            <div style={{ marginBottom:16 }}>
+              <h1 style={{ fontSize:21, fontWeight:700, color:C.white, letterSpacing:-.8, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>Hi, {firstNameOf(user.name)||"there"} 👋</h1>
             </div>
             <Mono style={{ display:"block", color:C.muted, marginBottom:16 }}>{dateStr()}</Mono>
             {/* Net profit as one glanceable "how am I doing" pill, the way a smart-home dashboard
