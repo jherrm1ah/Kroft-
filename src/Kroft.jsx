@@ -4656,7 +4656,10 @@ ${voiceMode
     const nearBudget = budgetStatus().filter(b => b.pct >= 0.8 && b.pct < 1);
     const context = `Today: ${today}. Appointments today: ${todays.length ? todays.map(a=>`${a.title} at ${a.time}`).join("; ") : "none"}. Open tasks: ${openTasks.length}. Budgets over limit: ${overBudget.length ? overBudget.map(b=>b.cat).join(", ") : "none"}. Budgets close to limit: ${nearBudget.length ? nearBudget.map(b=>b.cat).join(", ") : "none"}. Name: ${user.name||"there"}.`;
     try {
-      const res = await aiFetch("/api/chat", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ model:"gemini-3.6-flash", max_tokens:80, system:"Write exactly one short sentence greeting the user by name and flagging the single most useful thing about their day from the context — a tight schedule, a budget issue, or an open task count if nothing else stands out. Never state a specific dollar amount, even if one seems implied — this reads out loud on a lock screen others may see. Plain text, no preamble, no quotes, under 22 words.", messages:[{ role:"user", content:context }] }) });
+      // Tagged "background_ai", not the default "chat": this runs on a timer, unprompted, and
+      // should never eat into the user's real chat quota (api/chat.js falls back to "chat" for
+      // any call with no usage-type header, which this used to hit silently).
+      const res = await aiFetch("/api/chat", { method:"POST", headers:{"Content-Type":"application/json","X-Kroft-Usage-Type":"background_ai"}, body:JSON.stringify({ model:"gemini-3.6-flash", max_tokens:80, system:"Write exactly one short sentence greeting the user by name and flagging the single most useful thing about their day from the context — a tight schedule, a budget issue, or an open task count if nothing else stands out. Never state a specific dollar amount, even if one seems implied — this reads out loud on a lock screen others may see. Plain text, no preamble, no quotes, under 22 words.", messages:[{ role:"user", content:context }] }) });
       const data = await res.json();
       const text = data.content?.map(b=>b.text||"").join("").trim();
       return (res.ok && text) || `Good morning, ${firstNameOf(user.name)||"there"} — ${openTasks.length} tasks open today.`;
