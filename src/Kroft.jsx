@@ -2294,6 +2294,11 @@ function KroftApp({ onFullReset } = {}) {
   const [openProject, setOpenProject] = useState(null);
   const [editingProject, setEditingProject] = useState(null);
   const [linkPicker, setLinkPicker] = useState(null); // { projectId, kind:"taskIds"|"noteIds"|"fileIds" }
+  // Quick-add a task straight from inside a project, instead of forcing a trip to the Tasks
+  // screen and back just to link it — addingTaskToProject holds which project's inline field
+  // is open (only one at a time, same as linkPicker above).
+  const [addingTaskToProject, setAddingTaskToProject] = useState(null);
+  const [projectTaskDraft, setProjectTaskDraft] = useState("");
 
   // Workspace — Voice Memos
   const [voiceMemos, setVoiceMemos] = useState([]);
@@ -7433,14 +7438,14 @@ ${voiceMode
                 <div style={{ display:"flex", flexDirection:"column", gap:9 }}>
                   <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
                     <Inp placeholder="Project name" value={newProject.name} onChange={e=>setNewProject(v=>({...v,name:e.target.value}))} style={{ flex:2, minWidth:140 }} />
-                    <Inp placeholder="Deadline e.g. Aug 15" value={newProject.deadline} onChange={e=>setNewProject(v=>({...v,deadline:e.target.value}))} style={{ flex:1, minWidth:120 }} />
+                    <input type="date" value={newProject.deadline} onChange={e=>setNewProject(v=>({...v,deadline:e.target.value}))} style={{ flex:1, minWidth:120, background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 12px", color:newProject.deadline?C.text:C.muted, fontSize:13, fontFamily:"'Space Grotesk',sans-serif", outline:"none", colorScheme:theme }} />
                   </div>
                   <Inp placeholder="What's this project about? (optional)" value={newProject.description} onChange={e=>setNewProject(v=>({...v,description:e.target.value}))} />
                   <div style={{ display:"flex", gap:8, alignItems:"center" }}>
                     <select value={newProject.status} onChange={e=>setNewProject(v=>({...v,status:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"10px 12px", color:C.text, fontSize:12, fontFamily:"'Space Grotesk',sans-serif", outline:"none" }}>
                       {["Not Started","In Progress","On Hold","Completed"].map(s => <option key={s}>{s}</option>)}
                     </select>
-                    <Btn onClick={() => { if (!newProject.name.trim()) return; setProjects(p=>[{id:uid(),...newProject,taskIds:[],noteIds:[],fileIds:[],documentIds:[]},...p]); setNewProject({name:"",deadline:"",description:"",status:"Not Started"}); setShowAddProject(false); toast("Project created."); }}>Create</Btn>
+                    <Btn onClick={() => { if (!newProject.name.trim()) return; setProjects(p=>[{id:uid(),...newProject,taskIds:[],noteIds:[],fileIds:[],documentIds:[],expenseIds:[],incomeIds:[],contactIds:[]},...p]); setNewProject({name:"",deadline:"",description:"",status:"Not Started"}); setShowAddProject(false); toast("Project created."); }}>Create</Btn>
                   </div>
                 </div>
               </Card>
@@ -7452,18 +7457,37 @@ ${voiceMode
                 <Btn sm onClick={() => setShowAddProject(true)}>Create Project</Btn>
               </Card>
             )}
-            {projects.map(pr => {
+            {/* Completed projects sink to the bottom, same as done tasks. Among the rest, one
+                past its own deadline outranks anything else — that's the one actually slipping —
+                then soonest deadline first; undated projects sort last within their tier. */}
+            {[...projects].sort((a,b) => {
+              const aDone = a.status==="Completed", bDone = b.status==="Completed";
+              if (aDone !== bDone) return aDone ? 1 : -1;
+              const today = todayISO();
+              const aOverdue = a.deadline && a.deadline < today && !aDone;
+              const bOverdue = b.deadline && b.deadline < today && !bDone;
+              if (aOverdue !== bOverdue) return aOverdue ? -1 : 1;
+              if (a.deadline && b.deadline) return a.deadline.localeCompare(b.deadline);
+              return a.deadline ? -1 : b.deadline ? 1 : 0;
+            }).map(pr => {
               const linkedTasks = tasks.filter(t => (pr.taskIds||[]).includes(t.id));
               const doneCount = linkedTasks.filter(t=>t.done).length;
               const progress = linkedTasks.length>0 ? Math.round((doneCount/linkedTasks.length)*100) : 0;
               const linkedNotes = notes.filter(n => (pr.noteIds||[]).includes(n.id));
               const linkedFiles = files.filter(f => (pr.fileIds||[]).includes(f.id));
               const linkedDocuments = documents.filter(d => (pr.documentIds||[]).includes(d.id));
+              const linkedExpenses = expenses.filter(x => (pr.expenseIds||[]).includes(x.id));
+              const linkedIncome = income.filter(x => (pr.incomeIds||[]).includes(x.id));
+              const linkedContacts = contacts.filter(c => (pr.contactIds||[]).includes(c.id));
+              const totalSpent = linkedExpenses.reduce((s,x)=>s+x.amount,0);
+              const totalEarned = linkedIncome.reduce((s,x)=>s+x.amount,0);
               const isEditing = editingProject && editingProject.id===pr.id;
+              const isOverdue = pr.deadline && pr.status!=="Completed" && pr.deadline < todayISO();
               // Same "color that means something" treatment as Tasks/Wellness — a project's
               // status already drives its Tag color below, so the card background echoes it
-              // rather than introducing a second, unrelated color language.
-              const pColor = pr.status==="In Progress"?C.accent:pr.status==="Completed"?C.positive:pr.status==="On Hold"?C.warning:null;
+              // rather than introducing a second, unrelated color language. A blown deadline
+              // outranks status here, same as an overdue task outranking its own priority color.
+              const pColor = isOverdue?C.negative:pr.status==="In Progress"?C.accent:pr.status==="Completed"?C.positive:pr.status==="On Hold"?C.warning:null;
               return (
               <Card key={pr.id} {...longPress(() => setActionSheet(holdActions({ title:pr.name, subtitle:pr.status, onEdit:() => setEditingProject({...pr}), list:projects, setList:setProjects, id:pr.id, deletedLabel:"Project deleted." })))} style={{ marginBottom:10, borderRadius:16, background:pColor?pColor+"0d":C.card, border:`1px solid ${pColor?pColor+"33":C.cardB}`, WebkitTouchCallout:"none", WebkitUserSelect:"none", userSelect:"none", }}>
                 {isEditing ? (
@@ -7471,7 +7495,7 @@ ${voiceMode
                     <Mono style={{ display:"block", color:C.white, letterSpacing:.8 }}>Edit project</Mono>
                     <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
                       <Inp placeholder="Project name" value={editingProject.name} onChange={e=>setEditingProject(v=>({...v,name:e.target.value}))} style={{ flex:2, minWidth:140 }} />
-                      <Inp placeholder="Deadline" value={editingProject.deadline} onChange={e=>setEditingProject(v=>({...v,deadline:e.target.value}))} style={{ flex:1, minWidth:120 }} />
+                      <input type="date" value={editingProject.deadline||""} onChange={e=>setEditingProject(v=>({...v,deadline:e.target.value}))} style={{ flex:1, minWidth:120, background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 12px", color:C.text, fontSize:13, fontFamily:"'Space Grotesk',sans-serif", outline:"none", colorScheme:theme }} />
                     </div>
                     <Inp placeholder="Description" value={editingProject.description||""} onChange={e=>setEditingProject(v=>({...v,description:e.target.value}))} />
                     <select value={editingProject.status} onChange={e=>setEditingProject(v=>({...v,status:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"10px 12px", color:C.text, fontSize:12, fontFamily:"'Space Grotesk',sans-serif", outline:"none" }}>
@@ -7489,9 +7513,10 @@ ${voiceMode
                     <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap", marginBottom:4 }}>
                       <span style={{ fontWeight:700, fontSize:14, color:C.white }}>{pr.name}</span>
                       <Tag tone={pr.status==="In Progress"?"accent":pr.status==="Completed"?"positive":pr.status==="On Hold"?"warning":undefined}>{pr.status||"Not Started"}</Tag>
+                      {isOverdue && <Tag tone="negative">Overdue</Tag>}
                     </div>
                     {pr.description && <div style={{ fontSize:12, color:C.soft, marginBottom:6, lineHeight:1.5 }}>{pr.description}</div>}
-                    {pr.deadline && <Mono style={{ color:C.soft }}>Due {pr.deadline}</Mono>}
+                    {pr.deadline && <Mono style={{ color:isOverdue?C.negative:C.soft }}>Due {fmtDate(pr.deadline)}</Mono>}
                   </div>
                   <div style={{ display:"flex", gap:6, flexShrink:0 }}>
                     <Btn sm v="outline" onClick={e=>{e.stopPropagation();setEditingProject({...pr});}}>Edit</Btn>
@@ -7507,15 +7532,44 @@ ${voiceMode
                 )}
                 {openProject===pr.id && (
                   <div style={{ marginTop:12, paddingTop:12, borderTop:`1px solid ${C.div}`, display:"flex", flexDirection:"column", gap:14 }}>
+                    {/* Real numbers only — pulled from Finance entries actually linked below, never
+                        estimated. Hidden entirely until something's linked, same as every other
+                        section here, so an untouched project doesn't show a false $0 budget. */}
+                    {(linkedExpenses.length>0 || linkedIncome.length>0) && (
+                      <div style={{ display:"flex", gap:16, flexWrap:"wrap" }}>
+                        {linkedIncome.length>0 && <div><Mono style={{ display:"block", color:C.muted, marginBottom:2 }}>EARNED</Mono><div style={{ fontSize:15, fontWeight:700, color:C.positive }}>{fmtCur(totalEarned,user.currency)}</div></div>}
+                        {linkedExpenses.length>0 && <div><Mono style={{ display:"block", color:C.muted, marginBottom:2 }}>SPENT</Mono><div style={{ fontSize:15, fontWeight:700, color:C.negative }}>{fmtCur(totalSpent,user.currency)}</div></div>}
+                        {linkedIncome.length>0 && linkedExpenses.length>0 && <div><Mono style={{ display:"block", color:C.muted, marginBottom:2 }}>NET</Mono><div style={{ fontSize:15, fontWeight:700, color:(totalEarned-totalSpent)>=0?C.positive:C.negative }}>{fmtCur(totalEarned-totalSpent,user.currency)}</div></div>}
+                      </div>
+                    )}
                     {[{kind:"taskIds",label:"Tasks",items:linkedTasks,pool:tasks,render:t=>t.title},
                       {kind:"noteIds",label:"Notes",items:linkedNotes,pool:notes,render:n=>n.title||"Untitled note"},
                       {kind:"fileIds",label:"Files",items:linkedFiles,pool:files,render:f=>f.name},
-                      {kind:"documentIds",label:"Documents",items:linkedDocuments,pool:documents,render:d=>d.title}].map(sec => (
+                      {kind:"documentIds",label:"Documents",items:linkedDocuments,pool:documents,render:d=>d.title},
+                      {kind:"contactIds",label:"Team",items:linkedContacts,pool:contacts,render:c=>c.name},
+                      {kind:"expenseIds",label:"Expenses",items:linkedExpenses,pool:expenses,render:x=>`${x.label} — ${fmtCur(x.amount,x.cur||user.currency)}`},
+                      {kind:"incomeIds",label:"Income",items:linkedIncome,pool:income,render:x=>`${x.label} — ${fmtCur(x.amount,x.cur||user.currency)}`}].map(sec => (
                       <div key={sec.kind}>
                         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:7 }}>
                           <Mono style={{ color:C.white, letterSpacing:.8 }}>{sec.label.toUpperCase()} ({sec.items.length})</Mono>
-                          <button onClick={() => setLinkPicker(linkPicker&&linkPicker.projectId===pr.id&&linkPicker.kind===sec.kind ? null : {projectId:pr.id,kind:sec.kind})} style={{ background:"none", border:"none", color:C.soft, cursor:"pointer", fontSize:11, fontFamily:"'Space Grotesk',sans-serif", textDecoration:"underline" }}>+ Link</button>
+                          <div style={{ display:"flex", gap:10 }}>
+                            {sec.kind==="taskIds" && <button onClick={() => { setAddingTaskToProject(addingTaskToProject===pr.id?null:pr.id); setProjectTaskDraft(""); }} style={{ background:"none", border:"none", color:C.soft, cursor:"pointer", fontSize:11, fontFamily:"'Space Grotesk',sans-serif", textDecoration:"underline" }}>+ New</button>}
+                            <button onClick={() => setLinkPicker(linkPicker&&linkPicker.projectId===pr.id&&linkPicker.kind===sec.kind ? null : {projectId:pr.id,kind:sec.kind})} style={{ background:"none", border:"none", color:C.soft, cursor:"pointer", fontSize:11, fontFamily:"'Space Grotesk',sans-serif", textDecoration:"underline" }}>+ Link</button>
+                          </div>
                         </div>
+                        {sec.kind==="taskIds" && addingTaskToProject===pr.id && (
+                          <div style={{ display:"flex", gap:7, marginBottom:8 }}>
+                            <Inp placeholder="New task title" value={projectTaskDraft} onChange={e=>setProjectTaskDraft(e.target.value)} style={{ flex:1 }} />
+                            <Btn sm onClick={() => {
+                              if (!projectTaskDraft.trim()) return;
+                              const item = { id:uid(), title:projectTaskDraft.trim(), priority:"Normal", repeat:"none", contactId:null, dueDate:"", done:false };
+                              setTasks(p=>[item,...p]);
+                              toggleProjectLink(pr.id, "taskIds", item.id);
+                              setProjectTaskDraft(""); setAddingTaskToProject(null);
+                              toast("Task added to project.");
+                            }}>Add</Btn>
+                          </div>
+                        )}
                         {sec.items.length===0 ? (
                           <Mono style={{ color:C.soft, display:"block" }}>Nothing linked yet.</Mono>
                         ) : sec.items.map(it => (
