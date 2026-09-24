@@ -33,6 +33,10 @@ const DARK = {
   // screen with a heavy shadow and a large radius each reads as a pile of distinct boxes rather
   // than one calm layout.
   shadowRaised:"0 8px 22px rgba(0,0,0,.4)", shadowBase:"0 1px 5px rgba(0,0,0,.3)",
+  // RGB triplet (not hex) so VoiceOrb can build an rgba() glow at a variable opacity — a light
+  // glow reads as a corona against dark mode's black voice screen, but the same white glow would
+  // vanish against light mode's off-white one, so this flips to a dark glow there instead.
+  glowRGB:"255,255,255",
 };
 const LIGHT = {
   bg:"#f4f2ee", card:"#ffffff", cardB:"#e6e2da", surface:"#ffffff",
@@ -52,6 +56,7 @@ const LIGHT = {
   accent:"#4f5389", accentBg:"rgba(79,83,137,.10)",
   fill:"rgba(10,10,10,.04)", fillStrong:"rgba(10,10,10,.07)",
   shadowRaised:"0 8px 22px rgba(40,36,28,.10)", shadowBase:"0 1px 3px rgba(40,36,28,.05)",
+  glowRGB:"10,10,10",
 };
 // The Briefing plays over an always-dark scrim for focus, so it reads its colors from DARK
 // regardless of the active theme. Without this it inherits light tokens and renders a
@@ -1018,12 +1023,6 @@ function ActionSheet({ title, subtitle, actions, onClose }) {
   );
 }
 
-// Particle orb for voice mode — a deforming sphere of dots, rendered on a canvas because a
-// few thousand DOM nodes would stutter on a phone. Points are laid out with a Fibonacci
-// spiral (even coverage, no clumping at the poles the way lat/long grids do), then the radius
-// is displaced by summed sine waves so the surface rolls organically instead of pulsing as a
-// rigid ball. Live mic level pushes that displacement further, so the shape reacts to the
-// voice rather than animating on a fixed loop.
 // A static eclipse-style disc — solid black, with a soft glow halo behind it — replacing the
 // earlier spinning particle-sphere animation, which read as "just an animation, no real use." The
 // one exception: while actually listening, the glow breathes with the real mic input level
@@ -1043,8 +1042,8 @@ function VoiceOrb({ state, levelRef, size = 300 }) {
       const target = stateRef.current === "listening" ? (levelRef?.current ?? 0) : 0;
       smooth += (target - smooth) * 0.15;
       el.style.boxShadow =
-        `0 0 ${base.blur + smooth*size*0.25}px ${base.spread + smooth*size*0.08}px rgba(255,255,255,${(base.alpha + smooth*0.35).toFixed(2)}), ` +
-        `0 0 ${base.blur2 + smooth*size*0.1}px ${base.spread2 + smooth*size*0.04}px rgba(255,255,255,${(base.alpha2 + smooth*0.4).toFixed(2)})`;
+        `0 0 ${base.blur + smooth*size*0.25}px ${base.spread + smooth*size*0.08}px rgba(${C.glowRGB},${(base.alpha + smooth*0.35).toFixed(2)}), ` +
+        `0 0 ${base.blur2 + smooth*size*0.1}px ${base.spread2 + smooth*size*0.04}px rgba(${C.glowRGB},${(base.alpha2 + smooth*0.4).toFixed(2)})`;
       raf = requestAnimationFrame(tick);
     };
     tick();
@@ -1066,11 +1065,11 @@ function IncomingCallScreen({ call, onAnswer, onDecline }) {
   const size = Math.min(260, (typeof window !== "undefined" ? window.innerWidth : 360) - 100);
   return (
     <div ref={ref} role="dialog" aria-modal="true" aria-label={`Incoming call: ${call.title}`} tabIndex={-1}
-      style={{ position:"fixed", inset:0, zIndex:1300, background:"#000", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"space-between", padding:"14vh 24px calc(40px + env(safe-area-inset-bottom))" }}>
+      style={{ position:"fixed", inset:0, zIndex:1300, background:C.bg, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"space-between", padding:"14vh 24px calc(40px + env(safe-area-inset-bottom))" }}>
       <div style={{ textAlign:"center" }}>
-        <Mono style={{ color:"rgba(255,255,255,.5)", display:"block", marginBottom:8 }}>Incoming call</Mono>
-        <div style={{ fontSize:22, fontWeight:700, color:"#fff", letterSpacing:-.4 }}>KROFT</div>
-        <div style={{ fontSize:14, color:"rgba(255,255,255,.65)", marginTop:6 }}>{call.title}</div>
+        <Mono style={{ color:C.muted, display:"block", marginBottom:8 }}>Incoming call</Mono>
+        <div style={{ fontSize:22, fontWeight:700, color:C.text, letterSpacing:-.4 }}>KROFT</div>
+        <div style={{ fontSize:14, color:C.soft, marginTop:6 }}>{call.title}</div>
       </div>
 
       <VoiceOrb state="thinking" levelRef={{ current:0 }} size={size} />
@@ -1119,14 +1118,14 @@ function VoiceMode({ state, transcript, reply, error, onStart, onStop, onClose, 
   const size = Math.min(320, (typeof window !== "undefined" ? window.innerWidth : 360) - 60);
   const ref = useModalA11y(onClose);
   return (
-    <div ref={ref} role="dialog" aria-modal="true" aria-label="Voice conversation" tabIndex={-1} style={{ position:"fixed", inset:0, zIndex:1200, background:"#000", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"space-between", padding:"22px 20px calc(28px + env(safe-area-inset-bottom))" }}>
+    <div ref={ref} role="dialog" aria-modal="true" aria-label="Voice conversation" tabIndex={-1} style={{ position:"fixed", inset:0, zIndex:1200, background:C.bg, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"space-between", padding:"22px 20px calc(28px + env(safe-area-inset-bottom))" }}>
       {/* Left-aligned so it doesn't sit under the toast stack, which now renders above this overlay. */}
       <div style={{ width:"100%", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-        <button onClick={onClose} aria-label="Close voice mode" style={{ background:"rgba(255,255,255,.08)", border:"none", borderRadius:"50%", width:40, height:40, color:"#fff", fontSize:17, cursor:"pointer" }}>✕</button>
+        <button onClick={onClose} aria-label="Close voice mode" style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:"50%", width:40, height:40, color:C.text, fontSize:17, cursor:"pointer" }}>✕</button>
         {/* Quiet, and only once it's worth mentioning — matches the same low-key threshold used
             for the chat message counter, so usage isn't nagging from the first turn. */}
         {!subscribed && turnsLeft <= 3 && (
-          <Mono style={{ color: turnsLeft === 0 ? BRIEF.negative : "rgba(255,255,255,.5)" }}>
+          <Mono style={{ color: turnsLeft === 0 ? C.negative : C.muted }}>
             {turnsLeft === 0 ? "resets tomorrow" : `${turnsLeft} voice turns left`}
           </Mono>
         )}
@@ -1143,14 +1142,14 @@ function VoiceMode({ state, transcript, reply, error, onStart, onStop, onClose, 
           <VoiceOrb state={state} levelRef={levelRef} size={size} />
         </div>
 
-        <div style={{ fontSize:13, fontWeight:600, color:"rgba(255,255,255,.62)", letterSpacing:.4, minHeight:18 }}>{label}</div>
+        <div style={{ fontSize:13, fontWeight:600, color:C.muted, letterSpacing:.4, minHeight:18 }}>{label}</div>
 
         <div style={{ minHeight:96, maxHeight:170, overflowY:"auto", width:"100%", maxWidth:460, textAlign:"center", padding:"0 4px" }}>
-          {error && <div style={{ fontSize:14, color:BRIEF.negative, lineHeight:1.6 }}>{error}</div>}
-          {!error && transcript && <div style={{ fontSize:17, color:"#fff", lineHeight:1.5, fontWeight:500 }}>{transcript}</div>}
-          {!error && !transcript && reply && <div ref={replyEndRef} style={{ fontSize:15, color:"rgba(255,255,255,.78)", lineHeight:1.7, textAlign:"left" }}>{reply}</div>}
+          {error && <div style={{ fontSize:14, color:C.negative, lineHeight:1.6 }}>{error}</div>}
+          {!error && transcript && <div style={{ fontSize:17, color:C.text, lineHeight:1.5, fontWeight:500 }}>{transcript}</div>}
+          {!error && !transcript && reply && <div ref={replyEndRef} style={{ fontSize:15, color:C.soft, lineHeight:1.7, textAlign:"left" }}>{reply}</div>}
           {!error && !transcript && !reply && state === "idle" && (
-            <div style={{ fontSize:14, color:"rgba(255,255,255,.42)", lineHeight:1.7 }}>
+            <div style={{ fontSize:14, color:C.muted, lineHeight:1.7 }}>
               {!supported
                 ? "This browser can't do live speech recognition. Chrome or Edge on Android and desktop work best."
                 : primed
@@ -1166,8 +1165,8 @@ function VoiceMode({ state, transcript, reply, error, onStart, onStop, onClose, 
 
       <div style={{ width:"100%", maxWidth:460, display:"flex", gap:10 }}>
         {state === "idle"
-          ? <button onClick={onStart} disabled={!supported} style={{ flex:1, minHeight:52, borderRadius:16, border:"none", background:supported?"#fff":"rgba(255,255,255,.14)", color:supported?"#000":"rgba(255,255,255,.4)", fontSize:15, fontWeight:700, fontFamily:"'Space Grotesk',sans-serif", cursor:supported?"pointer":"not-allowed" }}>{primed ? "Start talking" : "Allow microphone"}</button>
-          : <button onClick={onStop} style={{ flex:1, minHeight:52, borderRadius:16, border:"1px solid rgba(255,255,255,.28)", background:"transparent", color:"#fff", fontSize:15, fontWeight:700, fontFamily:"'Space Grotesk',sans-serif", cursor:"pointer" }}>{state==="speaking" ? "Interrupt" : state==="thinking" ? "Cancel" : "Stop"}</button>}
+          ? <button onClick={onStart} disabled={!supported} style={{ flex:1, minHeight:52, borderRadius:16, border:"none", background:supported?C.text:C.surface, color:supported?C.card:C.muted, fontSize:15, fontWeight:700, fontFamily:"'Space Grotesk',sans-serif", cursor:supported?"pointer":"not-allowed" }}>{primed ? "Start talking" : "Allow microphone"}</button>
+          : <button onClick={onStop} style={{ flex:1, minHeight:52, borderRadius:16, border:`1px solid ${C.border}`, background:"transparent", color:C.text, fontSize:15, fontWeight:700, fontFamily:"'Space Grotesk',sans-serif", cursor:"pointer" }}>{state==="speaking" ? "Interrupt" : state==="thinking" ? "Cancel" : "Stop"}</button>}
       </div>
     </div>
   );
