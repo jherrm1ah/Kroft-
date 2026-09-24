@@ -875,6 +875,10 @@ const NavIcon = ({ id, size=20, color="currentColor" }) => {
       return <svg viewBox="0 0 24 24" style={s}><rect x="9" y="3" width="6" height="11" rx="3" {...p} /><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0" {...p} /><path d="M12 18v3" {...p} /></svg>;
     case "plus":
       return <svg viewBox="0 0 24 24" style={s}><path d="M12 5v14M5 12h14" {...p} /></svg>;
+    case "trendUp":
+      return <svg viewBox="0 0 24 24" style={s}><path d="M4 16l6-6 4 4 6-8" {...p} /><path d="M15 6h5v5" {...p} /></svg>;
+    case "trendDown":
+      return <svg viewBox="0 0 24 24" style={s}><path d="M4 8l6 6 4-4 6 8" {...p} /><path d="M15 18h5v-5" {...p} /></svg>;
     case "send":
       return <svg viewBox="0 0 24 24" style={s}><path d="M4.5 12h14" {...p} /><path d="M12.5 5.5 19 12l-6.5 6.5" {...p} /></svg>;
     case "edit":
@@ -6133,16 +6137,40 @@ ${voiceMode
 
         {tab==="home" && homeSection==="overview" && (
           <div style={{ animation:"fadeUp .4s ease" }}>
-            <div style={{ marginBottom:20 }}>
-              <h1 style={{ fontSize:24, fontWeight:700, color:C.white, letterSpacing:-1 }}>{greeting()}, {user.name}</h1>
-              <Mono style={{ color:C.muted, marginTop:4 }}>{dateStr()}</Mono>
+            {/* Avatar + two-line greeting reads warmer than a bare "Good morning, Name" — and
+                gives the header somewhere for a face to eventually go, once accounts have one. */}
+            <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:16 }}>
+              <div style={{ width:44, height:44, borderRadius:"50%", background:C.card, border:`1px solid ${C.cardB}`, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+                <span style={{ fontSize:16, fontWeight:700, color:C.text }}>{(firstNameOf(user.name)||"K").charAt(0).toUpperCase()}</span>
+              </div>
+              <div style={{ flex:1, minWidth:0 }}>
+                <Mono style={{ display:"block", color:C.muted, marginBottom:1 }}>Hi, {firstNameOf(user.name)||"there"} 👋</Mono>
+                <h1 style={{ fontSize:21, fontWeight:700, color:C.white, letterSpacing:-.8, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{greeting()}</h1>
+              </div>
             </div>
-            <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:11, marginBottom:16 }}>
-              {[{l:"Income",v:fmtCur(totalIncome,user.currency),sub:income.length>0?`${income.length} entries`:"Add income",tone:income.length>0?"positive":undefined},{l:"Expenses",v:fmtCur(totalExpenses,user.currency),sub:expenses.length>0?`${expenses.length} entries`:"Add expense",tone:expenses.length>0?"negative":undefined},{l:"Net Profit",v:fmtCur(netProfit,user.currency),sub:totalIncome>0?`${((netProfit/totalIncome)*100).toFixed(1)}% margin`:"No data yet",tone:totalIncome>0?(netProfit>=0?"positive":"negative"):undefined}].map(k => (
-                <Card key={k.l} level="raised" onClick={() => setHomeSection("finance")} style={{ borderColor:k.tone?{positive:C.positive,negative:C.negative}[k.tone]+"55":C.cardB, minWidth:0 }}>
-                  <Mono style={{ display:"block", color:C.muted, marginBottom:8, fontSize:11, whiteSpace:"normal", lineHeight:1.3 }}>{k.l}</Mono>
-                  <div style={{ fontSize:22, fontWeight:700, color:k.tone?{positive:C.positive,negative:C.negative}[k.tone]:C.white, letterSpacing:-.8, marginBottom:6, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{k.v}</div>
-                  <Tag tone={k.tone} style={{ display:"block", whiteSpace:"normal", maxWidth:"100%", boxSizing:"border-box", lineHeight:1.4 }}>{k.sub}</Tag>
+            <Mono style={{ display:"block", color:C.muted, marginBottom:16 }}>{dateStr()}</Mono>
+            {/* Net profit as one glanceable "how am I doing" pill, the way a smart-home dashboard
+                leads with total energy used rather than burying it in a device grid — the
+                Income/Expenses breakdown below stays as the detail view underneath it. */}
+            <button onClick={() => setHomeSection("finance")} style={{ width:"100%", display:"flex", alignItems:"center", gap:12, background:C.text, border:"none", borderRadius:999, padding:"10px 14px", cursor:"pointer", marginBottom:16, textAlign:"left", boxSizing:"border-box" }}>
+              <div style={{ width:36, height:36, borderRadius:"50%", background:C.card, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+                <NavIcon id={netProfit>=0?"trendUp":"trendDown"} size={16} color={netProfit>=0?C.positive:C.negative} />
+              </div>
+              <div style={{ flex:1, minWidth:0 }}>
+                <div style={{ fontSize:16, fontWeight:700, color:C.card, letterSpacing:-.5, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{fmtCur(netProfit,user.currency)}</div>
+                <Mono style={{ color:C.card, opacity:.65 }}>Net profit this month</Mono>
+              </div>
+              <Mono style={{ color:C.card, opacity:.65, flexShrink:0 }}>›</Mono>
+            </button>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:11, marginBottom:16 }}>
+              {[{l:"Income",v:fmtCur(totalIncome,user.currency),sub:income.length>0?`${income.length} entries`:"Add income",icon:"trendUp",tone:"positive"},{l:"Expenses",v:fmtCur(totalExpenses,user.currency),sub:expenses.length>0?`${expenses.length} entries`:"Add expense",icon:"trendDown",tone:"negative"}].map(k => (
+                <Card key={k.l} level="raised" onClick={() => setHomeSection("finance")} style={{ minWidth:0 }}>
+                  <div style={{ width:32, height:32, borderRadius:"50%", background:C.surface, border:`1px solid ${C.cardB}`, display:"flex", alignItems:"center", justifyContent:"center", marginBottom:10 }}>
+                    <NavIcon id={k.icon} size={15} color={k.tone==="positive"?C.positive:C.negative} />
+                  </div>
+                  <Mono style={{ display:"block", color:C.muted, marginBottom:6, fontSize:11 }}>{k.l}</Mono>
+                  <div style={{ fontSize:18, fontWeight:700, color:C.white, letterSpacing:-.6, marginBottom:4, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{k.v}</div>
+                  <Mono style={{ color:C.muted, fontSize:10 }}>{k.sub}</Mono>
                 </Card>
               ))}
             </div>
