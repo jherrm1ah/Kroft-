@@ -4413,14 +4413,36 @@ ${voiceMode
       messages:recent.map(m => ({ role:m.role, content:m.content })),
       ...(onDelta ? { stream:true } : {}),
     };
+
+    // Neither the initial request nor an in-progress stream is guaranteed to ever resolve on its
+    // own — a stalled auth/quota check server-side, or Gemini's own stream stopping mid-reply
+    // without properly closing the connection, otherwise leaves every await below pending
+    // forever. That's exactly what voice mode's "Thinking" state looked like happening live: no
+    // error, no timeout, just stuck. An idle timer (reset on every real chunk of progress, not a
+    // flat ceiling — a long real reply shouldn't get killed for taking a while) guarantees SOME
+    // outcome no matter where the pipeline actually stalls: success, the caller's own abort
+    // (voice mode's barge-in), or a clear timeout error — never a silent hang.
+    const IDLE_MS = 25000;
+    const combined = new AbortController();
+    let timedOut = false, idleTimer;
+    const armIdleTimer = () => { clearTimeout(idleTimer); idleTimer = setTimeout(() => { timedOut = true; combined.abort(); }, IDLE_MS); };
+    const onExternalAbort = () => { clearTimeout(idleTimer); combined.abort(); };
+    signal?.addEventListener("abort", onExternalAbort);
+    const cleanup = () => { clearTimeout(idleTimer); signal?.removeEventListener("abort", onExternalAbort); };
+    armIdleTimer();
+
     let res;
     try {
-      res = await aiFetch("/api/chat", { method:"POST", headers:{"Content-Type":"application/json","X-Kroft-Usage-Type":usageType}, body:JSON.stringify(body), signal });
+      res = await aiFetch("/api/chat", { method:"POST", headers:{"Content-Type":"application/json","X-Kroft-Usage-Type":usageType}, body:JSON.stringify(body), signal: combined.signal });
     } catch (e) {
+      cleanup();
+      if (timedOut) throw new KroftError("That took too long to respond. Try again.");
       if (e.name === "AbortError") throw e;
       throw new KroftError("I can't reach the network right now. Check your connection and try again.");
     }
+    armIdleTimer();
     if (!res.ok) {
+      cleanup();
       // api/chat.js's own server-side quota check (the real, unspoofable enforcement — see its
       // comments) returns a distinct quota_exceeded body on 429, separate from an upstream AI
       // provider rate limit — surfaced with its own message rather than friendlyError's generic
@@ -4445,6 +4467,7 @@ ${voiceMode
 
     if (!onDelta) {
       const data = await res.json();
+      cleanup();
       const text = data.content?.map(b => b.text||"").join("");
       if (!text) throw new KroftError("I got an empty response. Try asking again.");
       return text;
@@ -4456,8 +4479,20 @@ ${voiceMode
     const decoder = new TextDecoder();
     let buffer = "", full = "";
     while (true) {
-      const { done, value } = await reader.read();
+      let done, value;
+      try {
+        ({ done, value } = await reader.read());
+      } catch (e) {
+        cleanup();
+        if (timedOut) throw new KroftError("That took too long to respond. Try again.");
+        if (e.name === "AbortError") throw e;
+        throw new KroftError("Lost connection while KROFT was replying. Try again.");
+      }
       if (done) break;
+      // Real progress — a chunk actually arrived — so the idle clock resets. A genuinely long
+      // reply keeps resetting this every chunk and never times out; only a true stall (nothing
+      // for a full IDLE_MS straight) trips it.
+      armIdleTimer();
       buffer += decoder.decode(value, { stream:true });
       const lines = buffer.split("\n");
       buffer = lines.pop() || "";
@@ -4486,6 +4521,7 @@ ${voiceMode
         } catch { /* partial JSON across chunk boundary — the buffer picks it up next round */ }
       }
     }
+    cleanup();
     if (!full) throw new KroftError("I got an empty response. Try asking again.");
     return full;
   };
