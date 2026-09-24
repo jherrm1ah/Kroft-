@@ -5915,7 +5915,7 @@ ${voiceMode
             {!isSupabaseConfigured && (
               <Mono style={{ display:"block", color:C.muted, fontSize:10, marginBottom:9 }}>Sign in with a real account (Supabase isn't configured) to connect an email or calendar provider.</Mono>
             )}
-            <div style={{ display:"flex", flexDirection:"column", gap:9 }}>
+            <div style={{ display:"flex", flexDirection:"column" }}>
               {/* Gmail+Calendar share one Google OAuth grant, and Outlook Mail+Calendar share
                   one Microsoft grant (both scopes requested together in api/google/start.js
                   and api/microsoft/start.js respectively) — so linking or unlinking either row
@@ -5925,18 +5925,27 @@ ${voiceMode
                   inbox/calendar rather than needing separate views per provider. Uber isn't
                   listed here at all: its ride-request deep link (see UberModal/
                   buildUberDeepLink above) needs no account connection or API key — it works
-                  the same for every user the moment they tap "Uber" anywhere in the app. */}
+                  the same for every user the moment they tap "Uber" anywhere in the app.
+                  Plain divided rows rather than a bordered box per account — four boxes back to
+                  back on an already-boxy signup flow just reads as clutter; the "Link"/"Unlink"
+                  button and a positive-tinted "Linked" label carry the state instead. */}
               {[
                 { k:"gmail", n:"Gmail", d:"Read & send real emails", linked:googleStatus.gmail, linking:googleLinking, connect:connectGoogle, disconnect:disconnectGoogle },
                 { k:"googleCalendar", n:"Google Calendar", d:"Sync appointments", linked:googleStatus.calendar, linking:googleLinking, connect:connectGoogle, disconnect:disconnectGoogle },
                 { k:"outlookMail", n:"Outlook Mail", d:"Read & send real emails", linked:microsoftStatus.mail, linking:microsoftLinking, connect:connectMicrosoft, disconnect:disconnectMicrosoft },
                 { k:"outlookCalendar", n:"Outlook Calendar", d:"Sync appointments", linked:microsoftStatus.calendar, linking:microsoftLinking, connect:connectMicrosoft, disconnect:disconnectMicrosoft },
-              ].map(a => (
-                <div key={a.k} style={{ background:a.linked?C.fillStrong:C.card, border:`1px solid ${a.linked?C.soft:C.cardB}`, borderRadius:10, padding:"11px 14px", display:"flex", alignItems:"center", gap:12 }}>
-                  <div style={{ flex:1 }}><div style={{ fontWeight:700, fontSize:13, color:C.white, marginBottom:1 }}>{a.n}</div><Mono style={{ color:C.muted, fontSize:10 }}>{a.d}</Mono></div>
-                  <Btn sm v={a.linked?"solid":"outline"} disabled={!isSupabaseConfigured||a.linking}
+              ].map((a, i, arr) => (
+                <div key={a.k} style={{ display:"flex", alignItems:"center", gap:12, padding:"12px 2px", borderBottom:i<arr.length-1?`1px solid ${C.cardB}`:"none" }}>
+                  <div style={{ flex:1 }}>
+                    <div style={{ display:"flex", alignItems:"center", gap:7 }}>
+                      <div style={{ fontWeight:700, fontSize:13, color:C.white }}>{a.n}</div>
+                      {a.linked && <Mono style={{ color:C.positive, fontSize:9, fontWeight:700, letterSpacing:.5 }}>LINKED</Mono>}
+                    </div>
+                    <Mono style={{ color:C.muted, fontSize:10 }}>{a.d}</Mono>
+                  </div>
+                  <Btn sm v={a.linked?"outline":"solid"} disabled={!isSupabaseConfigured||a.linking}
                     onClick={() => a.linked ? a.disconnect() : a.connect()}>
-                    {a.linking ? <Spinner size={14} color={a.linked?C.black:C.soft} thickness={2} /> : a.linked ? "Unlink" : "Link"}
+                    {a.linking ? <Spinner size={14} color={a.linked?C.soft:C.black} thickness={2} /> : a.linked ? "Unlink" : "Link"}
                   </Btn>
                 </div>
               ))}
@@ -5959,10 +5968,12 @@ ${voiceMode
             <div style={{ marginBottom:10 }}><Tag hi>Account Ready</Tag></div>
             <h2 style={{ fontSize:28, fontWeight:800, color:C.white, letterSpacing:-1, marginBottom:7, marginTop:12 }}>Ready, {user.name}.</h2>
             <Mono style={{ display:"block", color:C.muted, marginBottom:26, lineHeight:1.8 }}>Your KROFT account is set up.<br />Your personal AI assistant is ready.</Mono>
-            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:9, marginBottom:26, textAlign:"left" }}>
-              {[{k:"Name",v:user.name},{k:"Email",v:user.email||"—"},{k:"Business",v:user.businessName||"Not set"},{k:"Currency",v:user.currency},{k:"Apps",v:Object.values(user.connected).filter(Boolean).length+" linked"}].map(r => (
-                <div key={r.k} style={{ background:C.card, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"10px 13px" }}>
-                  <Mono style={{ display:"block", color:C.muted, marginBottom:3, letterSpacing:.8 }}>{r.k.toUpperCase()}</Mono>
+            {/* A plain divided list, not five boxes — the account summary is read once and never
+                touched again, so it doesn't need the visual weight of its own card per field. */}
+            <div style={{ marginBottom:26, textAlign:"left" }}>
+              {[{k:"Name",v:user.name},{k:"Email",v:user.email||"—"},{k:"Business",v:user.businessName||"Not set"},{k:"Currency",v:user.currency},{k:"Apps",v:Object.values(user.connected).filter(Boolean).length+" linked"}].map((r, i, arr) => (
+                <div key={r.k} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:10, padding:"9px 2px", borderBottom:i<arr.length-1?`1px solid ${C.cardB}`:"none" }}>
+                  <Mono style={{ color:C.muted, letterSpacing:.8 }}>{r.k.toUpperCase()}</Mono>
                   <div style={{ fontSize:12, fontWeight:700, color:C.white, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{r.v}</div>
                 </div>
               ))}
@@ -7050,7 +7061,7 @@ ${voiceMode
                   </div>
                 </Card>
               ) : (
-              <Card key={a.id} {...longPress(() => setActionSheet(holdActions({ title:a.title, subtitle:[a.time, fmtDate(a.date)].filter(Boolean).join(", "), onEdit:() => setEditingAppt({...a}), list:appts, setList:setAppts, id:a.id, deletedLabel:"Appointment deleted." })))} style={{ marginBottom:11, border:`1px solid ${a.urgent?C.soft:C.cardB}`, cursor:"pointer", WebkitTouchCallout:"none", WebkitUserSelect:"none", userSelect:"none", }} onClick={() => setOpenAppt(openAppt===a.id?null:a.id)}>
+              <Card key={a.id} {...longPress(() => setActionSheet(holdActions({ title:a.title, subtitle:[a.time, fmtDate(a.date)].filter(Boolean).join(", "), onEdit:() => setEditingAppt({...a}), list:appts, setList:setAppts, id:a.id, deletedLabel:"Appointment deleted." })))} style={{ marginBottom:11, borderRadius:16, background:a.urgent?C.negative+"0d":C.card, border:`1px solid ${a.urgent?C.negative+"33":C.cardB}`, cursor:"pointer", WebkitTouchCallout:"none", WebkitUserSelect:"none", userSelect:"none", }} onClick={() => setOpenAppt(openAppt===a.id?null:a.id)}>
                 <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", flexWrap:"wrap", gap:10 }}>
                   <div style={{ flex:1 }}>
                     <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:6, flexWrap:"wrap" }}>
@@ -7104,7 +7115,7 @@ ${voiceMode
               </Card>
             )}
             {[...emails].sort((a,b)=>(a.read===b.read)?(b.id-a.id):a.read?1:-1).map(e => (
-              <Card key={e.id} className="row" {...longPress(() => setActionSheet(holdActions({ title:e.subject, subtitle:e.from, list:emails, setList:setEmails, id:e.id, deletedLabel:"Email deleted." })))} style={{ marginBottom:10, border:`1px solid ${!e.read?C.soft:C.cardB}`, cursor:"pointer", WebkitTouchCallout:"none", WebkitUserSelect:"none", userSelect:"none", }} onClick={() => { setOpenEmail(openEmail===e.id?null:e.id); if (openEmail!==e.id) setEmails(p=>p.map(x=>x.id===e.id?{...x,read:true}:x)); }}>
+              <Card key={e.id} className="row" {...longPress(() => setActionSheet(holdActions({ title:e.subject, subtitle:e.from, list:emails, setList:setEmails, id:e.id, deletedLabel:"Email deleted." })))} style={{ marginBottom:10, borderRadius:16, background:!e.read?C.accentBg:C.card, border:`1px solid ${!e.read?C.accent+"33":C.cardB}`, cursor:"pointer", WebkitTouchCallout:"none", WebkitUserSelect:"none", userSelect:"none", }} onClick={() => { setOpenEmail(openEmail===e.id?null:e.id); if (openEmail!==e.id) setEmails(p=>p.map(x=>x.id===e.id?{...x,read:true}:x)); }}>
                 <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:11 }}>
                   <div style={{ flex:1, minWidth:0 }}>
                     <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:4, flexWrap:"wrap" }}>
@@ -7449,8 +7460,12 @@ ${voiceMode
               const linkedFiles = files.filter(f => (pr.fileIds||[]).includes(f.id));
               const linkedDocuments = documents.filter(d => (pr.documentIds||[]).includes(d.id));
               const isEditing = editingProject && editingProject.id===pr.id;
+              // Same "color that means something" treatment as Tasks/Wellness — a project's
+              // status already drives its Tag color below, so the card background echoes it
+              // rather than introducing a second, unrelated color language.
+              const pColor = pr.status==="In Progress"?C.accent:pr.status==="Completed"?C.positive:pr.status==="On Hold"?C.warning:null;
               return (
-              <Card key={pr.id} {...longPress(() => setActionSheet(holdActions({ title:pr.name, subtitle:pr.status, onEdit:() => setEditingProject({...pr}), list:projects, setList:setProjects, id:pr.id, deletedLabel:"Project deleted." })))} style={{ marginBottom:10, WebkitTouchCallout:"none", WebkitUserSelect:"none", userSelect:"none", }}>
+              <Card key={pr.id} {...longPress(() => setActionSheet(holdActions({ title:pr.name, subtitle:pr.status, onEdit:() => setEditingProject({...pr}), list:projects, setList:setProjects, id:pr.id, deletedLabel:"Project deleted." })))} style={{ marginBottom:10, borderRadius:16, background:pColor?pColor+"0d":C.card, border:`1px solid ${pColor?pColor+"33":C.cardB}`, WebkitTouchCallout:"none", WebkitUserSelect:"none", userSelect:"none", }}>
                 {isEditing ? (
                   <div style={{ display:"flex", flexDirection:"column", gap:9 }}>
                     <Mono style={{ display:"block", color:C.white, letterSpacing:.8 }}>Edit project</Mono>
