@@ -59,20 +59,44 @@ export async function callGemini(rawBody, apiKey) {
   // something that a single immediate retry usually clears on its own. One retry only, and only
   // for 503/a dropped connection — a 429 is a real rate limit an instant retry won't fix, and
   // every other status (400 malformed, 403 bad key, 404 unknown model) is not transient at all.
+  //
+  // Separately: a Vercel Edge Function must send an initial response within 25s, or the platform
+  // kills it outright with an opaque, non-JSON 504 — no friendly message, nothing Kroft.jsx's own
+  // error handling ever sees, exactly what a live request hit when Gemini was just slow to start
+  // responding (not erroring, just slow — no status code to retry on). Aborting our own fetch at
+  // 20s, before the platform's hard cutoff, turns that into the same clear "AI service having
+  // trouble" JSON response every other failure already gets.
+  const abortController = new AbortController();
+  const abortTimer = setTimeout(() => abortController.abort(), 20000);
+  const startedAt = Date.now();
+
   let upstream;
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      upstream = await fetch(endpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
-        body: JSON.stringify(geminiBody),
-      });
-    } catch {
-      if (attempt === 0) { await new Promise(r => setTimeout(r, 500)); continue; }
-      return jsonResponse({ error: "Could not reach the AI service." }, 502);
+  try {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        upstream = await fetch(endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
+          body: JSON.stringify(geminiBody),
+          signal: abortController.signal,
+        });
+      } catch (e) {
+        if (abortController.signal.aborted) throw e; // handled by the outer catch below
+        if (attempt === 0) { await new Promise(r => setTimeout(r, 500)); continue; }
+        return jsonResponse({ error: "Could not reach the AI service." }, 502);
+      }
+      // Only worth retrying a 503 if there's still real time left in the 20s budget — no point
+      // retrying into a timeout we're about to hit anyway.
+      if (upstream.status === 503 && attempt === 0 && Date.now() - startedAt < 15000) {
+        await new Promise(r => setTimeout(r, 500));
+        continue;
+      }
+      break;
     }
-    if (upstream.status === 503 && attempt === 0) { await new Promise(r => setTimeout(r, 500)); continue; }
-    break;
+  } catch {
+    return jsonResponse({ error: "The AI service is taking too long to respond. Try again in a moment." }, 504);
+  } finally {
+    clearTimeout(abortTimer);
   }
 
   if (!upstream.ok) {
