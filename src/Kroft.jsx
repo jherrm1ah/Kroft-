@@ -317,7 +317,7 @@ function categorizeVoices(vs) {
 // (see categorizeVoices' own comment) — this doesn't pretend otherwise.
 const VOICE_PROFILES = {
   ben: {
-    id:"ben", name:"Ben", emoji:"😊", gender:"male", style:"warm_calm_personal",
+    id:"ben", name:"Ben", gender:"male", style:"warm_calm_personal",
     traits:"Warm • Calm • Personal", isDefault:true,
     previewLine:"Hey, you've got two things coming up today. Want me to help you prioritise them?",
     speed:1.00, pauseMs:90, genderSlot:"male-1",
@@ -327,21 +327,21 @@ const VOICE_PROFILES = {
     providerVoiceId: import.meta.env.VITE_TTS_VOICE_BEN || null,
   },
   atlas: {
-    id:"atlas", name:"Atlas", emoji:"🧠", gender:"male", style:"deep_analytical_professional",
+    id:"atlas", name:"Atlas", gender:"male", style:"deep_analytical_professional",
     traits:"Deep • Professional • Analytical", isDefault:false,
     previewLine:"Your spending is above this month's target. I've identified three areas where you can reduce your expenses.",
     speed:0.87, pauseMs:130, genderSlot:"male-2",
     providerVoiceId: import.meta.env.VITE_TTS_VOICE_ATLAS || null,
   },
   mira: {
-    id:"mira", name:"Mira", emoji:"✨", gender:"female", style:"warm_elegant_reassuring",
+    id:"mira", name:"Mira", gender:"female", style:"warm_elegant_reassuring",
     traits:"Warm • Elegant • Reassuring", isDefault:false,
     previewLine:"Good morning. You've got a busy day ahead, but I've already organised everything for you.",
     speed:0.97, pauseMs:100, genderSlot:"female-1",
     providerVoiceId: import.meta.env.VITE_TTS_VOICE_MIRA || null,
   },
   nova: {
-    id:"nova", name:"Nova", emoji:"⚡", gender:"female", style:"energetic_modern_expressive",
+    id:"nova", name:"Nova", gender:"female", style:"energetic_modern_expressive",
     traits:"Energetic • Modern • Expressive", isDefault:false,
     previewLine:"Alright, you're all set! Your meeting starts in twenty minutes, and I've pulled up everything you'll need.",
     speed:1.12, pauseMs:60, genderSlot:"female-2",
@@ -1655,8 +1655,7 @@ function ProfileSection({ user, onUpdateName, onEditPreferences, onEditBusinessD
             const selected = resolveVoiceId(voicePref)===v.id;
             return (
               <div key={v.id} role="button" tabIndex={0} onClick={() => onSetVoicePref(v.id)} onKeyDown={e => { if (e.key==="Enter"||e.key===" ") { e.preventDefault(); onSetVoicePref(v.id); } }}
-                style={{ display:"flex", alignItems:"center", gap:11, padding:"11px 10px", borderRadius:12, marginBottom:8, cursor:"pointer", background:selected?C.white:C.surface, border:`1px solid ${selected?C.white:C.cardB}` }}>
-                <div style={{ fontSize:21, flexShrink:0 }}>{v.emoji}</div>
+                style={{ display:"flex", alignItems:"center", gap:11, padding:"12px 14px", borderRadius:18, marginBottom:8, cursor:"pointer", background:selected?C.white:C.surface, border:`1px solid ${selected?C.white:C.cardB}` }}>
                 <div style={{ flex:1, minWidth:0 }}>
                   <div style={{ display:"flex", alignItems:"center", gap:7, flexWrap:"wrap" }}>
                     <span style={{ fontWeight:700, fontSize:13, color:selected?C.black:C.text }}>{v.name}</span>
