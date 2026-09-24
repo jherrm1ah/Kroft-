@@ -86,6 +86,7 @@ const ANIM = `
 @keyframes wave{0%,100%{transform:scaleY(.2)}50%{transform:scaleY(1)}}
 @keyframes slideIn{0%{transform:translateX(108%) scale(.9);opacity:0}70%{transform:translateX(-4%) scale(1.03);opacity:1}100%{transform:translateX(0) scale(1);opacity:1}}
 @keyframes stepIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
+@keyframes slideUp{from{opacity:0;transform:translateY(100%)}to{opacity:1;transform:translateY(0)}}
 /* ---- "Fun and haptic" pass: playful, springy feedback on the things people touch a lot ---- */
 @keyframes bouncePop{0%{transform:scale(.4) rotate(-8deg);opacity:0}55%{transform:scale(1.18) rotate(4deg);opacity:1}75%{transform:scale(.92) rotate(-2deg)}100%{transform:scale(1) rotate(0);opacity:1}}
 @keyframes checkPop{0%{transform:scale(1) rotate(0)}35%{transform:scale(1.4) rotate(-10deg)}65%{transform:scale(.88) rotate(6deg)}100%{transform:scale(1) rotate(0)}}
@@ -1187,6 +1188,39 @@ function buildUberDeepLink(address) {
   url.searchParams.set("pickup", "my_location");
   if (address) url.searchParams.set("dropoff[formatted_address]", address);
   return url.toString();
+}
+
+// The Add Income/Add Expense buttons live in the Finance header, but the form itself used to
+// render inline, deep in the page (near the ledger, well below Summary/budgets/charts) — so
+// nothing visibly happened until you scrolled all the way down to find it. A modal that pulls up
+// from the bottom is visible the instant it opens, wherever the page happened to be scrolled to.
+function AddEntryModal({ kind, theme, value, onChange, cats, onAddCategory, onSubmit, onClose }) {
+  const ref = useModalA11y(onClose);
+  return (
+    <div ref={ref} role="dialog" aria-modal="true" aria-label={`New ${kind} entry`} tabIndex={-1}
+      style={{ position:"fixed", inset:0, zIndex:950, background:"rgba(0,0,0,.6)", display:"flex", alignItems:"flex-end", justifyContent:"center" }}
+      onClick={onClose}>
+      <div style={{ background:C.card, borderRadius:"20px 20px 0 0", padding:"20px 20px calc(20px + env(safe-area-inset-bottom))", width:"100%", maxWidth:480, boxSizing:"border-box", animation:"slideUp .25s ease" }} onClick={e => e.stopPropagation()}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14 }}>
+          <Mono style={{ color:C.white, letterSpacing:.8 }}>New {kind} entry</Mono>
+          <button onClick={onClose} aria-label="Close" style={{ background:"none", border:"none", color:C.muted, fontSize:20, cursor:"pointer", padding:4, lineHeight:1 }}>✕</button>
+        </div>
+        <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+          <Inp placeholder="Description" value={value.label} onChange={e => onChange(v=>({...v,label:e.target.value}))} style={{ flex:2, minWidth:120 }} />
+          <Inp placeholder="Amount" value={value.amount} type="number" inputMode="decimal" min="0" step="0.01" onChange={e => onChange(v=>({...v,amount:e.target.value}))} style={{ flex:1, minWidth:80 }} />
+          <input type="date" value={value.date||todayISO()} max={todayISO()} onChange={e => onChange(v=>({...v,date:e.target.value}))} style={{ flex:1, minWidth:130, background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"10px 12px", color:C.text, fontSize:12, fontFamily:"'Space Grotesk',sans-serif", outline:"none", colorScheme:theme }} />
+          <CategorySelect value={value.cat} onChange={c => onChange(v=>({...v,cat:c}))} cats={cats} onAddCategory={onAddCategory} />
+          {/* Turns the entry into a template that re-posts itself on this cadence. */}
+          <select value={value.repeat} onChange={e => onChange(v=>({...v,repeat:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 12px", color:C.text, fontSize:12, fontFamily:"'Space Grotesk',sans-serif", outline:"none" }}>
+            <option value="none">Does not repeat</option>
+            <option value="weekly">Repeats weekly</option>
+            <option value="monthly">Repeats monthly</option>
+          </select>
+          <Btn full onClick={onSubmit}>Add</Btn>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function UberModal({ dest, onClose }) {
@@ -6582,70 +6616,54 @@ ${voiceMode
               <div style={{ fontSize:12, fontWeight:600, color:C.muted, marginBottom:11, marginTop:8 }}>Transactions</div>
             )}
             {showAddInc && (
-              <Card style={{ marginBottom:13, border:`1px solid ${C.border}` }}>
-                <Mono style={{ display:"block", color:C.white, marginBottom:11, letterSpacing:.8 }}>New income entry</Mono>
-                <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
-                  <Inp placeholder="Description" value={newInc.label} onChange={e => setNewInc(v=>({...v,label:e.target.value}))} style={{ flex:2, minWidth:120 }} />
-                  <Inp placeholder="Amount" value={newInc.amount} type="number" inputMode="decimal" min="0" step="0.01" onChange={e => setNewInc(v=>({...v,amount:e.target.value}))} style={{ flex:1, minWidth:80 }} />
-                  <input type="date" value={newInc.date||todayISO()} max={todayISO()} onChange={e => setNewInc(v=>({...v,date:e.target.value}))} style={{ flex:1, minWidth:130, background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"10px 12px", color:C.text, fontSize:12, fontFamily:"'Space Grotesk',sans-serif", outline:"none", colorScheme:theme }} />
-                  <CategorySelect value={newInc.cat} onChange={c => setNewInc(v=>({...v,cat:c}))} cats={incomeCats} onAddCategory={c => setIncomeCats(p=>p.includes(c)?p:[...p,c])} />
-                  {/* Turns the entry into a template that re-posts itself on this cadence. */}
-                  <select value={newInc.repeat} onChange={e => setNewInc(v=>({...v,repeat:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 12px", color:C.text, fontSize:12, fontFamily:"'Space Grotesk',sans-serif", outline:"none" }}>
-                    <option value="none">Does not repeat</option>
-                    <option value="weekly">Repeats weekly</option>
-                    <option value="monthly">Repeats monthly</option>
-                  </select>
-                  <Btn onClick={() => {
-                    if (!newInc.label) return;
-                    const amt = parseAmount(newInc.amount);
-                    if (amt === null) { toast("Enter an amount greater than zero."); return; }
-                    const isFirstEverEntry = income.length === 0 && expenses.length === 0;
-                    {
-                      const base = { id:uid(), ...newInc, amount:amt, date:newInc.date||todayISO(), cur:user.currency };
-                      // A repeating entry counts as its own first posting, so nextDate starts one
-                      // cadence ahead — otherwise the engine would immediately duplicate it.
-                      if (base.repeat && base.repeat !== "none") base.nextDate = advanceRepeatDate(base.date, base.repeat);
-                      setIncome(p => [...p, base]);
-                    }
-                    setNewInc({label:"",amount:"",cat:"Invoice",date:todayISO(),repeat:"none"}); setShowAddInc(false);
-                    if (isFirstEverEntry) { toast("First entry logged — you're on your way."); celebrate(); }
-                    else toast(`Income added: ${fmtCur(amt,user.currency)}`);
-                  }}>Add</Btn>
-                </div>
-              </Card>
+              <AddEntryModal
+                kind="income"
+                theme={theme}
+                value={newInc}
+                onChange={setNewInc}
+                cats={incomeCats}
+                onAddCategory={c => setIncomeCats(p=>p.includes(c)?p:[...p,c])}
+                onClose={() => setShowAddInc(false)}
+                onSubmit={() => {
+                  if (!newInc.label) return;
+                  const amt = parseAmount(newInc.amount);
+                  if (amt === null) { toast("Enter an amount greater than zero."); return; }
+                  const isFirstEverEntry = income.length === 0 && expenses.length === 0;
+                  const base = { id:uid(), ...newInc, amount:amt, date:newInc.date||todayISO(), cur:user.currency };
+                  // A repeating entry counts as its own first posting, so nextDate starts one
+                  // cadence ahead — otherwise the engine would immediately duplicate it.
+                  if (base.repeat && base.repeat !== "none") base.nextDate = advanceRepeatDate(base.date, base.repeat);
+                  setIncome(p => [...p, base]);
+                  setNewInc({label:"",amount:"",cat:"Invoice",date:todayISO(),repeat:"none"}); setShowAddInc(false);
+                  if (isFirstEverEntry) { toast("First entry logged — you're on your way."); celebrate(); }
+                  else toast(`Income added: ${fmtCur(amt,user.currency)}`);
+                }}
+              />
             )}
             {showAddExp && (
-              <Card style={{ marginBottom:13, border:`1px solid ${C.border}` }}>
-                <Mono style={{ display:"block", color:C.white, marginBottom:11, letterSpacing:.8 }}>New expense entry</Mono>
-                <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
-                  <Inp placeholder="Description" value={newExp.label} onChange={e => setNewExp(v=>({...v,label:e.target.value}))} style={{ flex:2, minWidth:120 }} />
-                  <Inp placeholder="Amount" value={newExp.amount} type="number" inputMode="decimal" min="0" step="0.01" onChange={e => setNewExp(v=>({...v,amount:e.target.value}))} style={{ flex:1, minWidth:80 }} />
-                  <input type="date" value={newExp.date||todayISO()} max={todayISO()} onChange={e => setNewExp(v=>({...v,date:e.target.value}))} style={{ flex:1, minWidth:130, background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"10px 12px", color:C.text, fontSize:12, fontFamily:"'Space Grotesk',sans-serif", outline:"none", colorScheme:theme }} />
-                  <CategorySelect value={newExp.cat} onChange={c => setNewExp(v=>({...v,cat:c}))} cats={expenseCats} onAddCategory={c => setExpenseCats(p=>p.includes(c)?p:[...p,c])} />
-                  {/* Turns the entry into a template that re-posts itself on this cadence. */}
-                  <select value={newExp.repeat} onChange={e => setNewExp(v=>({...v,repeat:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 12px", color:C.text, fontSize:12, fontFamily:"'Space Grotesk',sans-serif", outline:"none" }}>
-                    <option value="none">Does not repeat</option>
-                    <option value="weekly">Repeats weekly</option>
-                    <option value="monthly">Repeats monthly</option>
-                  </select>
-                  <Btn onClick={() => {
-                    if (!newExp.label) return;
-                    const amt = parseAmount(newExp.amount);
-                    if (amt === null) { toast("Enter an amount greater than zero."); return; }
-                    const isFirstEverEntry = income.length === 0 && expenses.length === 0;
-                    {
-                      const base = { id:uid(), ...newExp, amount:amt, date:newExp.date||todayISO(), cur:user.currency };
-                      // A repeating entry counts as its own first posting, so nextDate starts one
-                      // cadence ahead — otherwise the engine would immediately duplicate it.
-                      if (base.repeat && base.repeat !== "none") base.nextDate = advanceRepeatDate(base.date, base.repeat);
-                      setExpenses(p => [...p, base]);
-                    }
-                    setNewExp({label:"",amount:"",cat:"Operations",date:todayISO(),repeat:"none"}); setShowAddExp(false);
-                    if (isFirstEverEntry) { toast("First entry logged — you're on your way."); celebrate(); }
-                    else toast(`Expense added: ${fmtCur(amt,user.currency)}`);
-                  }}>Add</Btn>
-                </div>
-              </Card>
+              <AddEntryModal
+                kind="expense"
+                theme={theme}
+                value={newExp}
+                onChange={setNewExp}
+                cats={expenseCats}
+                onAddCategory={c => setExpenseCats(p=>p.includes(c)?p:[...p,c])}
+                onClose={() => setShowAddExp(false)}
+                onSubmit={() => {
+                  if (!newExp.label) return;
+                  const amt = parseAmount(newExp.amount);
+                  if (amt === null) { toast("Enter an amount greater than zero."); return; }
+                  const isFirstEverEntry = income.length === 0 && expenses.length === 0;
+                  const base = { id:uid(), ...newExp, amount:amt, date:newExp.date||todayISO(), cur:user.currency };
+                  // A repeating entry counts as its own first posting, so nextDate starts one
+                  // cadence ahead — otherwise the engine would immediately duplicate it.
+                  if (base.repeat && base.repeat !== "none") base.nextDate = advanceRepeatDate(base.date, base.repeat);
+                  setExpenses(p => [...p, base]);
+                  setNewExp({label:"",amount:"",cat:"Operations",date:todayISO(),repeat:"none"}); setShowAddExp(false);
+                  if (isFirstEverEntry) { toast("First entry logged — you're on your way."); celebrate(); }
+                  else toast(`Expense added: ${fmtCur(amt,user.currency)}`);
+                }}
+              />
             )}
             {income.length===0&&expenses.length===0&&!showAddInc&&!showAddExp && (
               <Card style={{ textAlign:"center", padding:26, marginBottom:14 }}>
