@@ -4724,14 +4724,13 @@ ${voiceMode
 
   // Keeps the server's scheduled_notifications index in sync with real, upcoming appointments so
   // a push can still reach this person 10 minutes before one starts even with the app fully
-  // closed — the in-app version just above only ever fires while a tab is open. Deliberately only
-  // appointments for now: they have a simple, static, already-known title/time/location, unlike
-  // reminders (recur daily until marked done — a done-state the server-side index can't see, kv_
-  // store being client-managed) or the Daily Brief (its text is generated fresh, not something to
-  // precompute and push later). This is a full reconcile, not an incremental add/remove per
-  // appointment — sending the complete current set on every change means a missed edge case can
-  // never leave a stale entry behind; the server just deletes anything under the "appt:" prefix
-  // that isn't in this list any more (see api/push/schedule.js).
+  // closed — the in-app version just above only ever fires while a tab is open. Appointments have
+  // a simple, static, already-known title/time/location, so this is a straightforward full
+  // reconcile, not an incremental add/remove per appointment — sending the complete current set on
+  // every change means a missed edge case can never leave a stale entry behind; the server just
+  // deletes anything under the "appt:" prefix that isn't in this list any more (see
+  // api/push/schedule.js). See the reminders version of this same idea just below, which needs one
+  // extra wrinkle for the same push-only-when-closed behavior.
   useEffect(() => {
     if (!dataLoaded || !isSupabaseConfigured) return;
     const now = Date.now();
@@ -4755,6 +4754,41 @@ ${voiceMode
     }, 1500);
     return () => clearTimeout(t);
   }, [dataLoaded, appts]);
+
+  // Same idea, for reminders. The one real difference from appointments: an open reminder here
+  // re-arms daily at the same time until marked done (see the in-app version above — same HH:MM-
+  // in-`when` parsing, matched exactly), and re-deriving "is it still open" needs kv_store data the
+  // cron job deliberately never reads (that's what keeps it a thin index instead of a second copy
+  // of the whole reminder). So this schedules a push for whichever occurrence is next — today's, if
+  // its time hasn't passed yet, otherwise tomorrow's — and relies on this same effect re-running
+  // (any time smartReminders changes, which includes marking one done) to roll the schedule forward
+  // a day at a time. A reminder dismissed while the app is closed cancels correctly the next time
+  // the app opens, before its next push would otherwise fire; if the app stays closed for more than
+  // one full day past a reminder's time, only that first occurrence is guaranteed to have pushed —
+  // the same real limitation any reminder app has without a server that also owns the reminder's
+  // own done-state, which this one deliberately doesn't take on.
+  useEffect(() => {
+    if (!dataLoaded || !isSupabaseConfigured) return;
+    const now = new Date();
+    const items = smartReminders
+      .map(r => {
+        if (r.done) return null;
+        const m = String(r.when || "").match(/(\d{1,2}):(\d{2})/);
+        if (!m) return null;
+        const fires = new Date();
+        fires.setHours(Number(m[1]), Number(m[2]), 0, 0);
+        if (fires.getTime() <= now.getTime()) fires.setDate(fires.getDate() + 1);
+        return { clientKey:`reminder:${r.id}`, firesAt:fires.toISOString(), title:"Reminder", body:r.text };
+      })
+      .filter(Boolean);
+    const t = setTimeout(() => {
+      authedFetch("/api/push/schedule", { method:"POST", body:JSON.stringify({ prefix:"reminder:", items }) }).catch(() => {
+        // Best-effort — the in-app/OS notification path above (while the app is open) is
+        // unaffected either way, and the next smartReminders change retries this automatically.
+      });
+    }, 1500);
+    return () => clearTimeout(t);
+  }, [dataLoaded, smartReminders]);
 
   // Plus: scheduled calls. Kept independent of notifPermission — the in-app ringing overlay
   // doesn't need OS notification permission at all, only the accompanying system notification
