@@ -23,27 +23,24 @@ export const config = { runtime: "edge" };
 import { callGemini } from "./_lib/gemini.js";
 import { getAuthedUser, supabaseAdmin } from "./_lib/supabaseAdmin.js";
 
-// Mirrors Kroft.jsx's FREE_DAILY_MESSAGE_LIMIT / FREE_DAILY_EXTRAS_LIMIT / FREE_DAILY_VOICE_LIMIT
-// / FREE_MONTHLY_REPORT_LIMIT — those client-side counters live in kv_store, which the account
-// owner can write directly via RLS (see supabase/schema.sql), so they're display-only now. This
-// is the real, unspoofable enforcement: independently counted server-side via the ai_usage table
-// / increment_ai_usage() function, keyed by which of these four pools a request draws from.
-const FREE_LIMITS = { chat: 15, extra: 5, voice: 10, report: 1 };
-const QUOTA_MESSAGES = {
-  chat: "You've used today's free messages. Upgrade to KROFT Plus for unlimited access, or try again once it resets.",
-  extra: "You've used today's free AI drafts and suggestions. Upgrade to KROFT Plus for unlimited access, or try again once it resets.",
-  voice: "You've used today's free voice turns. Upgrade to KROFT Plus for unlimited access, or try again once it resets.",
-  report: "You've used this month's free report. Upgrade to KROFT Plus for unlimited access, or try again next month.",
-};
+// Every AI usage limit is read from the plan_limits table (see supabase/schema.sql) instead of
+// being hardcoded here — that's what lets an allowance change, or a brand-new metered feature
+// turn on, without a code deploy. A usage_type with no row for the caller's plan is unlimited by
+// construction: that's how normal text usage (chat, extra, report) stays genuinely uncapped on
+// every plan, per KROFT's product principle that ordinary text is never the thing being rationed.
+async function getLimitConfig(admin, usageType) {
+  const { data } = await admin.from("plan_limits").select("period, limit_count, label").eq("plan", "free").eq("usage_type", usageType).maybeSingle();
+  return data && data.limit_count != null ? data : null;
+}
 
-// Daily pools reset by UTC calendar day, monthly by UTC calendar month — a deliberate
+// Daily limits reset by UTC calendar day, monthly ones by UTC calendar month — a deliberate
 // simplification versus the client's local-timezone reset (todayISO()/toDateString()), since the
 // server has no reliable notion of the caller's timezone. Worst case this is off by at most the
 // caller's UTC offset from their own local midnight, which only ever affects exactly when a
 // pool refills, never whether the enforced limit itself is correct.
-function currentPeriod(usageType) {
+function currentPeriod(period) {
   const iso = new Date().toISOString();
-  return usageType === "report" ? iso.slice(0, 7) : iso.slice(0, 10);
+  return period === "month" ? iso.slice(0, 7) : iso.slice(0, 10);
 }
 
 function jsonError(body, status) {
@@ -77,23 +74,30 @@ export default async function handler(req) {
 
     if (!isSubscribed) {
       // Kroft.jsx tags each call site with which pool it draws from via this header (see
-      // runKroftCompletion, aiDraftReply, suggestSmartReminder, generateMonthlyReport). Anything
-      // missing or unrecognized defaults to the main "chat" pool rather than skipping enforcement
-      // — a call this endpoint doesn't recognize should never mean "untracked, unlimited".
-      const requestedType = req.headers.get("x-kroft-usage-type");
-      const usageType = Object.prototype.hasOwnProperty.call(FREE_LIMITS, requestedType) ? requestedType : "chat";
-      const period = currentPeriod(usageType);
+      // runKroftCompletion, searchNearby). Anything missing, or naming a usage_type with no
+      // configured limit (including "chat"/"extra"/"report", which have none by design), is
+      // simply unlimited — there's nothing to count or check.
+      const usageType = req.headers.get("x-kroft-usage-type") || "chat";
+      const limit = await getLimitConfig(admin, usageType);
 
-      const { data: newCount, error: quotaError } = await admin.rpc("increment_ai_usage", {
-        p_user_id: user.id,
-        p_usage_type: usageType,
-        p_period: period,
-      });
-      // A genuine DB error checking quota must not be treated as "under limit" — that would let
-      // exactly the abuse this exists to stop through on every transient hiccup. Fails closed.
-      if (quotaError) return jsonError({ error: "quota_check_failed", message: "Couldn't verify your usage limit right now. Try again in a moment." }, 500);
-      if (newCount > FREE_LIMITS[usageType]) {
-        return jsonError({ error: "quota_exceeded", usageType, limit: FREE_LIMITS[usageType], message: QUOTA_MESSAGES[usageType] }, 429);
+      if (limit) {
+        const period = currentPeriod(limit.period);
+        const { data: newCount, error: quotaError } = await admin.rpc("increment_ai_usage", {
+          p_user_id: user.id,
+          p_usage_type: usageType,
+          p_period: period,
+        });
+        // A genuine DB error checking quota must not be treated as "under limit" — that would let
+        // exactly the abuse this exists to stop through on every transient hiccup. Fails closed.
+        if (quotaError) return jsonError({ error: "quota_check_failed", message: "Couldn't verify your usage limit right now. Try again in a moment." }, 500);
+        if (newCount > limit.limit_count) {
+          const periodLabel = limit.period === "month" ? "this month" : "today";
+          // Always names the specific feature and reassures the rest of KROFT — especially
+          // normal text chat — still works, so hitting one limit never reads as the whole
+          // account breaking.
+          const message = `You've reached your free ${limit.label} limit for ${periodLabel}. You can keep chatting with KROFT normally — this limit only applies to ${limit.label}.`;
+          return jsonError({ error: "quota_exceeded", usageType, limit: limit.limit_count, message }, 429);
+        }
       }
     }
   }

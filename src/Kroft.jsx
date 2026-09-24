@@ -666,6 +666,50 @@ const sendNotification = (title, body, tag, opts = {}) => {
   } catch { return false; }
 };
 
+// Web Push's applicationServerKey wants raw bytes, not the base64url string VAPID keys are
+// normally handed around as — this is the standard conversion every Web Push integration needs.
+const urlBase64ToUint8Array = base64String => {
+  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const raw = atob(base64);
+  return Uint8Array.from([...raw].map(c => c.charCodeAt(0)));
+};
+
+// Registers the service worker that turns a Web Push message into a real OS notification while
+// no tab of the app is open (see public/sw.js) — a no-op if the browser doesn't support service
+// workers at all, so this never blocks anything for a browser that simply can't do this.
+const registerServiceWorker = async () => {
+  if (!("serviceWorker" in navigator)) return null;
+  try { return await navigator.serviceWorker.register("/sw.js"); }
+  catch { return null; }
+};
+
+// Subscribes this browser to Web Push and tells the server about it, so push delivery (currently:
+// appointment reminders — see the scheduled-notifications sync effect below) can reach this
+// device later, including while it's fully closed. Silently does nothing without a real account
+// or a configured VAPID key, rather than surfacing an error for a gap the person can't act on.
+const subscribeToPush = async authedFetch => {
+  if (!isSupabaseConfigured || !("PushManager" in window)) return;
+  const vapidKey = import.meta.env.VITE_VAPID_PUBLIC_KEY;
+  if (!vapidKey) return;
+  try {
+    const registration = await registerServiceWorker();
+    if (!registration) return;
+    let subscription = await registration.pushManager.getSubscription();
+    if (!subscription) {
+      subscription = await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(vapidKey),
+      });
+    }
+    const json = subscription.toJSON();
+    await authedFetch("/api/push/subscribe", { method:"POST", body:JSON.stringify({ endpoint:json.endpoint, keys:json.keys }) });
+  } catch {
+    // Best-effort — push is a bonus delivery channel, not something any existing feature depends
+    // on working. In-app/OS notifications while the app is open are unaffected either way.
+  }
+};
+
 // Placeholder blocks shown while stored data is still loading. Without these the app renders
 // its empty states first — a finance app briefly announcing "No financial data yet" to someone
 // who has months of records is alarming, and indistinguishable from real data loss.
@@ -1467,7 +1511,7 @@ function ProfileSwitch({ value, onChange }) {
   );
 }
 
-function ProfileSection({ user, onUpdateName, onEditPreferences, onEditBusinessDetails, onSignOut, theme, onToggleTheme, toast, subscribed, subscriptionStatus, autoRenews, billingLoading, onUpgrade, onManageBilling, dailyMessageCount, freeLimit, usageStats, voiceReplies, onSetVoiceReplies, proactiveInsights, onSetProactiveInsights, voicePref, onSetVoicePref, onSetupBiometric, onRemoveBiometric, onExportData, onImportData, notifPermission, notifPrefs, onEnableNotifications, onSetNotifPref, onTestNotification, aiExtrasCount, extrasLimit, monthlyReportCount, reportLimit, reportsLeftThisMonth, voiceTurnsCount, voiceLimit }) {
+function ProfileSection({ user, onUpdateName, onEditPreferences, onEditBusinessDetails, onSignOut, theme, onToggleTheme, toast, subscribed, subscriptionStatus, autoRenews, billingLoading, onUpgrade, onManageBilling, usageStats, voiceReplies, onSetVoiceReplies, proactiveInsights, onSetProactiveInsights, voicePref, onSetVoicePref, onSetupBiometric, onRemoveBiometric, onExportData, onImportData, notifPermission, notifPrefs, onEnableNotifications, onSetNotifPref, onTestNotification, voiceTurnsCount, voiceLimit }) {
   // null = main hub. Otherwise one of: "ai" | "productivity" | "privacy" | "subscription" | "support"
   const [screen, setScreen] = useState(null);
   const [openRow, setOpenRow] = useState(null);
@@ -1686,30 +1730,24 @@ function ProfileSection({ user, onUpdateName, onEditPreferences, onEditBusinessD
           <div style={{ fontSize:16, fontWeight:800, color:C.white }}>{subscribed ? "KROFT Plus" : "Free Plan"}</div>
           <Tag tone={subscribed?"positive":undefined}>{subscribed ? "Active" : "Current"}</Tag>
         </div>
-        {/* Three real usage pools shown as meters, not one vague "limit." Each is a genuinely
-            different habit — chatting a lot, drafting a handful of emails, generating one report
-            a month — so a person can see exactly what's actually constrained rather than a single
-            number that hides which of three different things they're running low on. */}
-        {!subscribed && [
-          { label:"AI chat", used:dailyMessageCount, limit:freeLimit },
-          { label:"Voice mode", used:voiceTurnsCount, limit:voiceLimit },
-          { label:"AI drafts & suggestions", used:aiExtrasCount, limit:extrasLimit },
-          { label:"Monthly reports", used:monthlyReportCount, limit:reportLimit, period:"this month" },
-        ].map(row => {
-          const pct = Math.min(100, (row.used/row.limit)*100);
+        {/* Chat, AI drafts/suggestions and monthly reports are unlimited on every plan — nothing
+            to meter. Voice is the one AI pool still worth a real allowance: an open-ended spoken
+            conversation is a materially different resource than a one-shot text call. */}
+        {!subscribed && (() => {
+          const pct = Math.min(100, (voiceTurnsCount/voiceLimit)*100);
           const barColor = pct>=90?C.negative:pct>=70?C.warning:C.accent;
           return (
-            <div key={row.label} style={{ marginBottom:11 }}>
+            <div style={{ marginBottom:11 }}>
               <div style={{ display:"flex", justifyContent:"space-between", marginBottom:4 }}>
-                <Mono style={{ color:C.soft }}>{row.label}</Mono>
-                <Mono style={{ color:C.muted }}>{row.used}/{row.limit}{row.period ? ` ${row.period}` : " today"}</Mono>
+                <Mono style={{ color:C.soft }}>Voice mode</Mono>
+                <Mono style={{ color:C.muted }}>{voiceTurnsCount}/{voiceLimit} today</Mono>
               </div>
               <div style={{ background:C.surface, borderRadius:99, height:6, overflow:"hidden" }}>
                 <div style={{ height:"100%", width:`${pct}%`, background:barColor, borderRadius:99, transition:"width .3s ease" }} />
               </div>
             </div>
           );
-        })}
+        })()}
         {subscribed && (
           <Mono style={{ display:"block", color:C.soft, marginBottom:14 }}>Unlimited chat, voice, drafts and reports.</Mono>
         )}
@@ -1721,16 +1759,13 @@ function ProfileSection({ user, onUpdateName, onEditPreferences, onEditBusinessD
       <Card style={{ padding:"2px 16px" }}>
         <ProfileRow label="What's in Plus" sub={subscribed ? "Active" : "Free plan"} expanded={openRow==="plus"} onToggle={()=>toggle("plus")}>
           {/* The free tier isn't a stripped-down trial — finances, budgets, contacts, notes,
-              recurring transactions and notifications are complete and stay free permanently.
-              Plus is specifically the AI calls that cost real money per use, so upgrading is
-              paying for more of a genuinely limited resource rather than unlocking basics that
-              were artificially held back. */}
+              recurring transactions, notifications, AI chat, drafts/suggestions and monthly
+              reports are complete and stay free permanently. Plus is specifically about voice
+              (a materially more expensive resource — open-ended spoken conversation) and a
+              handful of real conveniences, not gating basic text usage. */}
           <div style={{ display:"flex", flexDirection:"column", gap:10, marginBottom:12 }}>
             {[
-              { t:"Unlimited AI chat", d:`No daily cap on Ask KROFT — free plan gets ${freeLimit} messages a day.` },
-              { t:"Unlimited voice mode", d:`Talk to KROFT as much as you want, hands-free — free plan gets ${voiceLimit} voice turns a day, separate from chat.` },
-              { t:"Unlimited AI drafts & suggestions", d:`Email replies and smart reminders, as many as you need — free plan gets ${extrasLimit} a day.` },
-              { t:"Monthly reports on demand", d:"Generate your finance summary whenever you want — free plan gets one a month." },
+              { t:"Unlimited voice mode", d:`Talk to KROFT as much as you want, hands-free — free plan gets ${voiceLimit} voice turns a day.` },
               { t:"Budget rollover", d:"Unused budget carries into next month instead of resetting to zero." },
               { t:"Longer conversation memory", d:"KROFT remembers more of a long conversation — 60 messages of context instead of 20." },
               { t:"Scheduled reminder calls", d:"Set a time and KROFT rings you in the app, speaks the reminder, and can talk it through if you answer." },
@@ -1783,10 +1818,7 @@ function ProfileSection({ user, onUpdateName, onEditPreferences, onEditBusinessD
         <ProfileRow label="Usage Statistics" sub="Real activity from this session" expanded={openRow==="usage"} onToggle={()=>toggle("usage")}>
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:9 }}>
             {[
-              { l:"AI messages today", v: dailyMessageCount, ai:true },
               { l:"Voice turns today", v: voiceTurnsCount, ai:true },
-              { l:"AI drafts today", v: aiExtrasCount, ai:true },
-              { l:"Reports this month", v: monthlyReportCount, ai:true },
               { l:"Total AI messages", v: usageStats.totalMessages, ai:true },
               { l:"Appointments", v: usageStats.appts },
               { l:"Finance entries", v: usageStats.financeEntries },
@@ -2219,6 +2251,8 @@ function KroftApp({ onFullReset } = {}) {
   const [showAddExp, setShowAddExp] = useState(false);
   const [monthlyReport, setMonthlyReport] = useState(null);
   const [generatingReport, setGeneratingReport] = useState(false);
+  const [weeklyRecap, setWeeklyRecap] = useState(null);
+  const [generatingRecap, setGeneratingRecap] = useState(false);
   const [editingEntry, setEditingEntry] = useState(null); // { kind:"income"|"expenses", id, label, amount, date, cat }
   const [remindersFired, setRemindersFired] = useState({ date:"", slots:[] }); // tracks which of today's 3 nudges already fired
   const [emails, setEmails] = useState([
@@ -2365,10 +2399,8 @@ function KroftApp({ onFullReset } = {}) {
   const recRef = useRef(null);
 
   // Subscription — real, session-local state. No payment processor is available in this
-  // environment, so "upgrading" flips this flag rather than charging anything. What it
-  // actually unlocks (removing the daily AI message cap) is real and enforced below.
-  const FREE_DAILY_MESSAGE_LIMIT = 15;
-  // How long until the daily allowance resets. Being told you're out with no idea whether that
+  // environment, so "upgrading" flips this flag rather than charging anything.
+  // How long until a daily allowance resets. Being told you're out with no idea whether that
   // means an hour or a day is the difference between waiting and assuming the app is broken.
   const resetsIn = () => {
     const now = new Date();
@@ -2378,60 +2410,32 @@ function KroftApp({ onFullReset } = {}) {
     const hrs = Math.round(mins / 60);
     return `${hrs} hour${hrs !== 1 ? "s" : ""}`;
   };
-  const messagesLeft = () => Math.max(0, FREE_DAILY_MESSAGE_LIMIT - dailyMessageCount);
 
-  // A second, smaller daily pool for the lighter one-off AI calls (email drafts, reminder
-  // suggestions) that aren't part of the main chat conversation. Kept separate from the message
-  // cap because someone chatting a lot shouldn't lose their ability to draft an email, and vice
-  // versa — they're different habits, not the same budget.
-  const FREE_DAILY_EXTRAS_LIMIT = 5;
-  const [aiExtrasCount, setAiExtrasCount] = useState(0);
-  const [aiExtrasDate, setAiExtrasDate] = useState(() => new Date().toDateString());
-  const extrasLeft = () => Math.max(0, FREE_DAILY_EXTRAS_LIMIT - aiExtrasCount);
-  // Call before any one-off AI action. Returns whether it's allowed to proceed, rolling the
-  // counter over on a new day and incrementing on success — mirrors the chat message gate so
-  // the two never disagree about what "a new day" means.
-  const spendAiExtra = () => {
-    const today = new Date().toDateString();
-    let count = aiExtrasCount;
-    if (today !== aiExtrasDate) { count = 0; setAiExtrasDate(today); setAiExtrasCount(0); }
-    if (!subscribed && count >= FREE_DAILY_EXTRAS_LIMIT) {
-      toast(`That's today's ${FREE_DAILY_EXTRAS_LIMIT} free AI drafts and suggestions used. Resets in about ${resetsIn()}, or KROFT Plus removes the limit.`);
-      return false;
-    }
-    if (!subscribed) setAiExtrasCount(count + 1);
-    return true;
-  };
-
-  // Voice mode used to share the same 15/day pool as typed chat — which meant the one feature
-  // built specifically for hands-free use (cooking, driving, walking) competed for quota with
-  // ordinary typing. Splitting it out means a chatty day never costs you your voice turns, and
-  // it's the clearest thing to point to when explaining why Plus is worth it: voice is what
-  // makes KROFT different from a chat window, so unlimited voice is the differentiated feature,
-  // not just "more of the same."
-  const FREE_DAILY_VOICE_LIMIT = 10;
+  // Chat, AI drafts/suggestions, and monthly reports are plain text generation — genuinely
+  // unlimited on every plan. api/chat.js enforces that by simply having no configured row for
+  // those usage types in the plan_limits table (see supabase/schema.sql); there's nothing to
+  // mirror client-side any more. Voice is the one AI pool that still has a real daily allowance
+  // — a materially different resource (open-ended spoken conversation, not a one-shot text
+  // call) — and its limit is fetched from the server via refreshUsageLimits() rather than
+  // hardcoded here, so it can change without redeploying the app.
+  const [usageLimits, setUsageLimits] = useState({}); // { voice: {limit, used, period, label}, ... } from GET /api/usage
+  const FALLBACK_VOICE_LIMIT = 30; // shown only before the real server-configured value has loaded
+  const voiceLimit = usageLimits.voice?.limit ?? FALLBACK_VOICE_LIMIT;
   const [voiceTurnsCount, setVoiceTurnsCount] = useState(0);
   const [voiceTurnsDate, setVoiceTurnsDate] = useState(() => new Date().toDateString());
-  const voiceTurnsLeft = () => Math.max(0, FREE_DAILY_VOICE_LIMIT - voiceTurnsCount);
-  // Returns whether a voice turn may proceed, rolling the day over and incrementing on success —
-  // same shape as spendAiExtra, kept separate because it gates a different pool.
+  const voiceTurnsLeft = () => Math.max(0, voiceLimit - voiceTurnsCount);
+  // Returns whether a voice turn may proceed, rolling the day over and incrementing on success.
+  // This is an optimistic client-side mirror for instant UI feedback — api/chat.js's own count,
+  // backed by the real ai_usage table, is what's actually enforced.
   const spendVoiceTurn = () => {
     const today = new Date().toDateString();
     let count = voiceTurnsCount;
     if (today !== voiceTurnsDate) { count = 0; setVoiceTurnsDate(today); setVoiceTurnsCount(0); }
-    if (!subscribed && count >= FREE_DAILY_VOICE_LIMIT) return false;
+    if (!subscribed && count >= voiceLimit) return false;
     if (!subscribed) setVoiceTurnsCount(count + 1);
     return true;
   };
 
-  // Monthly reports are the most expensive single call (fullest context, longest output), so
-  // they get their own much smaller allowance rather than sharing the daily pools — one free
-  // report a month is still real value, without one heavy user burning through daily quota meant
-  // for quick drafts.
-  const FREE_MONTHLY_REPORT_LIMIT = 1;
-  const [monthlyReportCount, setMonthlyReportCount] = useState(0);
-  const [monthlyReportMonth, setMonthlyReportMonth] = useState(() => todayISO().slice(0, 7));
-  const reportsLeftThisMonth = () => Math.max(0, FREE_MONTHLY_REPORT_LIMIT - monthlyReportCount);
   const [subscribed, setSubscribed] = useState(false);
   // Raw subscriptions.status ("inactive" | "active" | "past_due" | "canceled") — kept alongside
   // the derived `subscribed` boolean so the UI can tell "never subscribed" apart from "a renewal
@@ -2441,8 +2445,6 @@ function KroftApp({ onFullReset } = {}) {
   // transfer, USSD, mobile money, or an unconfirmed wallet-pay) — see isRecurringCapablePayment
   // in api/_lib/flutterwave.js, which is what actually sets this on the server.
   const [autoRenews, setAutoRenews] = useState(false);
-  const [dailyMessageCount, setDailyMessageCount] = useState(0);
-  const [messageCountDate, setMessageCountDate] = useState(() => new Date().toDateString());
 
   // Loads all persisted groups from window.storage and applies them to state. window.storage.get
   // throws (not returns null) for a key that's never been written — expected for a first-ever
@@ -2469,10 +2471,6 @@ function KroftApp({ onFullReset } = {}) {
       if (typeof p.proactiveInsights === "boolean") setProactiveInsights(p.proactiveInsights);
       if (typeof p.voicePref === "string") setVoicePref(p.voicePref);
       if (p.notifPrefs) setNotifPrefs(v => ({ ...v, ...p.notifPrefs }));
-      if (typeof p.aiExtrasCount === "number") setAiExtrasCount(p.aiExtrasCount);
-      if (p.aiExtrasDate) setAiExtrasDate(p.aiExtrasDate);
-      if (typeof p.monthlyReportCount === "number") setMonthlyReportCount(p.monthlyReportCount);
-      if (p.monthlyReportMonth) setMonthlyReportMonth(p.monthlyReportMonth);
       if (p.dailyBriefSentDate) setDailyBriefSentDate(p.dailyBriefSentDate);
       if (typeof p.voiceTurnsCount === "number") setVoiceTurnsCount(p.voiceTurnsCount);
       if (p.voiceTurnsDate) setVoiceTurnsDate(p.voiceTurnsDate);
@@ -2483,8 +2481,6 @@ function KroftApp({ onFullReset } = {}) {
       // refreshSubscriptionStatus's read of the server-verified subscriptions row (written only
       // by api/billing/webhook.js and api/billing/callback.js); defaulting to false here just
       // means a brief flash of "Free plan" until that fetch resolves, not a lasting gap.
-      if (typeof p.dailyMessageCount === "number") setDailyMessageCount(p.dailyMessageCount);
-      if (p.messageCountDate) setMessageCountDate(p.messageCountDate);
       if (typeof p.taxSetAsidePct === "number") setTaxSetAsidePct(p.taxSetAsidePct);
       if (Array.isArray(p.incomeCats)) setIncomeCats(p.incomeCats);
       if (Array.isArray(p.expenseCats)) setExpenseCats(p.expenseCats);
@@ -2579,13 +2575,13 @@ function KroftApp({ onFullReset } = {}) {
   // subscribed is deliberately excluded — see hydrateAllGroups's comment on why it's never
   // restored from this same blob; persisting it here would just re-create the value this app
   // must never trust from client storage in the first place.
-  const saveProfileNow = () => window.storage.set(STORAGE_KEYS.profile, JSON.stringify({ user, theme, voiceReplies, proactiveInsights, voicePref, dailyMessageCount, messageCountDate, incomeCats, expenseCats, notifPrefs, aiExtrasCount, aiExtrasDate, monthlyReportCount, monthlyReportMonth, dailyBriefSentDate, voiceTurnsCount, voiceTurnsDate, taxSetAsidePct }), false);
+  const saveProfileNow = () => window.storage.set(STORAGE_KEYS.profile, JSON.stringify({ user, theme, voiceReplies, proactiveInsights, voicePref, incomeCats, expenseCats, notifPrefs, dailyBriefSentDate, voiceTurnsCount, voiceTurnsDate, taxSetAsidePct }), false);
 
   useEffect(() => {
     if (!dataLoaded) return;
     const t = setTimeout(() => { saveProfileNow().catch(()=>{}); }, 900);
     return () => clearTimeout(t);
-  }, [dataLoaded, user, theme, voiceReplies, proactiveInsights, voicePref, dailyMessageCount, messageCountDate, incomeCats, expenseCats, notifPrefs, aiExtrasCount, aiExtrasDate, monthlyReportCount, monthlyReportMonth, dailyBriefSentDate, voiceTurnsCount, voiceTurnsDate, taxSetAsidePct]);
+  }, [dataLoaded, user, theme, voiceReplies, proactiveInsights, voicePref, incomeCats, expenseCats, notifPrefs, dailyBriefSentDate, voiceTurnsCount, voiceTurnsDate, taxSetAsidePct]);
 
   useEffect(() => {
     if (!dataLoaded) return;
@@ -3342,6 +3338,24 @@ function KroftApp({ onFullReset } = {}) {
     }
   };
 
+  // The configured daily/monthly allowance for the AI pools that still have one (voice today;
+  // any future metered feature — vision, image generation, file analysis, web research —
+  // reads from the same plan_limits table with zero client changes once it exists), plus
+  // this account's current usage against it. Fetched fresh on every dashboard entry rather
+  // than hardcoded, so an admin changing a limit in the database takes effect immediately —
+  // no redeploy needed.
+  const refreshUsageLimits = async () => {
+    if (!isSupabaseConfigured) return;
+    try {
+      const res = await authedFetch("/api/usage");
+      if (!res.ok) return;
+      const data = await res.json();
+      setUsageLimits(data?.limits || {});
+    } catch {
+      // Silent — a background refresh; the FALLBACK_VOICE_LIMIT keeps the UI sane meanwhile.
+    }
+  };
+
   // Redirects to Flutterwave's hosted Checkout for a new subscription. Nothing here can make
   // `subscribed` true directly — that only ever happens once api/billing/callback.js verifies
   // a real payment server-side (or, for later renewals, once api/billing/webhook.js confirms
@@ -3471,7 +3485,14 @@ function KroftApp({ onFullReset } = {}) {
   // onboarding via "Enter KROFT", without needing each of those call sites to remember to
   // trigger it themselves.
   useEffect(() => {
-    if (step === "dashboard") { refreshGoogleStatus(); refreshMicrosoftStatus(); refreshSubscriptionStatus(); }
+    if (step === "dashboard") {
+      refreshGoogleStatus(); refreshMicrosoftStatus(); refreshSubscriptionStatus(); refreshUsageLimits();
+      // Re-subscribes a returning session that already granted notification permission earlier —
+      // onEnableNotifications only fires the very first time permission is granted, so without
+      // this a subscription lost to (e.g.) clearing site data or a new browser would never be
+      // re-established on a later visit.
+      if (notifPermission === "granted") subscribeToPush(authedFetch);
+    }
   }, [step]);
 
   const doSignup = async () => {
@@ -3765,7 +3786,7 @@ function KroftApp({ onFullReset } = {}) {
     // Voice mode has its own daily allowance, separate from typed chat, so a busy voice
     // conversation and a busy typing session never compete for the same quota.
     if (!spendVoiceTurn()) {
-      const msg = `That's today's ${FREE_DAILY_VOICE_LIMIT} free voice turns. They reset in about ${resetsIn()}, or KROFT Plus removes the limit — typed chat still works.`;
+      const msg = `That's today's ${voiceLimit} free voice turns. They reset in about ${resetsIn()}, or KROFT Plus removes the limit — typed chat still works.`;
       setVoiceTranscript(""); setVoiceReply(msg); setVoiceState("speaking");
       voiceStopRef.current = speakSequence([msg], { onDone: () => { voiceStopRef.current = null; setVoiceState("idle"); } });
       return;
@@ -3823,6 +3844,7 @@ function KroftApp({ onFullReset } = {}) {
       raw = await runKroftCompletion(convo, {
         signal: controller.signal,
         usageType: "voice",
+        voiceMode: true,
         onDelta: partial => {
           if (!voiceOpenRef.current) return;
           latest = partial;
@@ -3856,7 +3878,7 @@ function KroftApp({ onFullReset } = {}) {
     if (!raw) { setVoiceState("idle"); return; }
 
     const { clean, action: aiAction } = extractAction(raw);
-    const actionResult = aiAction ? applyAiAction(aiAction) : null;
+    const actionResult = aiAction ? applyAutoAction(aiAction) : null;
     setAiMessages(p => [...p, { role:"assistant", content:clean }]);
     if (actionResult) toast(actionResult.label, actionResult.undo);
     setVoiceReply(clean);
@@ -4035,7 +4057,7 @@ function KroftApp({ onFullReset } = {}) {
   // of appointment titles — so the assistant couldn't answer "what's on today?", "what's due
   // this week?" or "where is my money going?", which is most of what a personal assistant is
   // for. Everything is capped and summarised rather than dumped, so context stays affordable.
-  const krofSysPrompt = () => {
+  const krofSysPrompt = (voiceMode = false) => {
     const now = new Date();
     const today = todayISO();
     const cur = user.currency;
@@ -4100,8 +4122,8 @@ ${list(projects, 8, p => `${p.name} — ${p.status}${p.deadline?`, due ${p.deadl
 
 NOTES (${notes.length}): ${list(notes, 8, n => n.title || "untitled")}
 DOCUMENTS (${documents.length}): ${list(documents, 8, d => d.title || "untitled")}
-CONTACTS (${contacts.length}): ${list(contacts, 12, c => `${c.name} (${c.category})`)}
-EMAIL: ${unread.length} unread${unread.length?` — latest: ${unread[0].subject} from ${unread[0].from}`:""}
+CONTACTS (${contacts.length}): ${list(contacts, 12, c => `${c.name}${c.email?` <${c.email}>`:""} (${c.category})`)}
+EMAIL: ${unread.length} unread${unread.length?` — recent: ${list(unread, 5, m => `"${m.subject}" from ${m.from}`)}`:""}
 
 STYLE
 Talk like a sharp, genuinely warm human assistant who knows this person well — never like an AI describing itself. Never say things like "As an AI," "I don't have personal experiences," or any other AI-disclaimer or meta-commentary about what you are — just answer, the way a person would. Use contractions and plain, natural sentences; vary how you open a reply instead of starting the same way every time. Address ${firstName||"them"} by their first name every so often — a greeting, good news, a heads-up — not stapled onto every single reply, which reads as scripted rather than natural. Keep answers tight — a couple of short paragraphs unless asked for depth. Prefer plain sentences over headings and bullet lists; replies are often read aloud.
@@ -4110,7 +4132,7 @@ LIMITS
 You are a bookkeeping and organisation assistant, not a licensed financial adviser. You can describe what is in their records, do arithmetic on it, and point out patterns. Do not recommend investments, tax positions, borrowing, insurance or financial products, and do not tell them what to do with their money. If asked for that, say plainly that it needs a qualified accountant or adviser, then offer what you can — the relevant figures from their own records.
 
 ACTIONS
-When ${user.name||"the user"} asks you to record, add, log or schedule something, actually do it by appending ONE action block to the very end of your reply, after your normal sentence confirming it:
+When ${user.name||"the user"} asks you to record, add, schedule, change or remove something, actually do it by appending ONE action block to the very end of your reply, after your normal sentence:
 <action>{"type":"...","...":"..."}</action>
 Valid types and their fields:
 {"type":"add_task","title":"string","priority":"High|Medium|Low"}
@@ -4119,7 +4141,19 @@ Valid types and their fields:
 {"type":"add_appointment","title":"string","date":"YYYY-MM-DD","time":"HH:MM","location":"string"}
 {"type":"add_note","title":"string","body":"string"}
 {"type":"add_reminder","text":"string","when":"string"}
-Rules: amounts are positive numbers with no currency symbol. Resolve relative dates ("tomorrow", "next Friday") against the current date above and emit an absolute YYYY-MM-DD. Expense categories to prefer: ${expenseCats.join(", ")}. Income categories to prefer: ${incomeCats.join(", ")}. Emit at most one action per reply, only when clearly asked to save something — never for a question like "how much did I spend?". You cannot delete or edit anything; if asked, say that has to be done by hand.`;
+{"type":"complete_task","title":"string"}
+{"type":"edit_appointment","title":"string","date":"YYYY-MM-DD","time":"HH:MM"}
+{"type":"delete_task","title":"string"}
+{"type":"delete_expense","label":"string"}
+{"type":"delete_income","label":"string"}
+{"type":"delete_appointment","title":"string"}
+{"type":"delete_reminder","text":"string"}
+{"type":"delete_note","title":"string"}
+{"type":"send_email","to":"string","subject":"string","body":"string"}
+Rules: amounts are positive numbers with no currency symbol. Resolve relative dates ("tomorrow", "next Friday") against the current date above and emit an absolute YYYY-MM-DD. Expense categories to prefer: ${expenseCats.join(", ")}. Income categories to prefer: ${incomeCats.join(", ")}. Emit at most one action per reply, only when clearly asked to save, change or remove something — never for a question like "how much did I spend?". complete_task, edit_appointment, and every delete_* type match an EXISTING item by its title/label/text against the lists above — use the shortest distinctive wording from that list, not a paraphrase, so the match is unambiguous. edit_appointment only needs the field(s) actually changing (e.g. just "time" to only move the time). Only set send_email's "to" to an address that actually appears in CONTACTS or EMAIL above — never guess or construct one; if you don't have a real address for who they mean, say so and ask for it instead of emitting the action.
+${voiceMode
+  ? `You're in a spoken voice conversation right now. Never emit a delete_* or send_email action block here — that confirmation step needs a screen this voice UI doesn't have. If asked to delete or send something, say you'll get it ready but they'll need to confirm it in the app, and leave out the action block entirely.`
+  : `delete_* and send_email are NOT executed immediately — the app shows a confirm/cancel step first, so word your sentence as an offer ("I'll have that ready to send — just confirm it") rather than a completed fact. Every other action type above already happened by the time your reply is read, so word those as done.`}`;
   };
 
   // Pulls the action block out of a reply. The block is stripped before the text is shown or
@@ -4133,15 +4167,43 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
     return { clean:text.replace(ACTION_RE, "").trim(), action };
   };
 
-  // Executes an action the model asked for. Deliberately additive only — nothing here can
-  // delete or overwrite existing data, so a misread instruction can at worst create one stray
-  // item, which the undo toast covers. Every write is validated locally rather than trusted:
-  // the model can hallucinate an amount or a malformed date.
+  // Finds the existing item complete_task/edit_appointment refers to. Only ever reached via a
+  // title the model was told to copy verbatim from the same TASKS/SCHEDULE list it was just
+  // shown, so a case-insensitive substring match is enough — this is matching the model's own
+  // quoted-back wording, not fuzzy-searching free text a person typed.
+  const findByTitle = (list, title) => list.find(x => x.title.toLowerCase().includes(title.toLowerCase()));
+
+  // Executes an action the model asked for. add_* stays additive-only, so a misread instruction
+  // there can at worst create one stray item, covered by the undo toast. complete_task and
+  // edit_appointment modify an existing item instead — same undo-toast safety net (the previous
+  // state is captured and restored), but unlike add_*, a failed match returns a toast explaining
+  // why rather than silently doing nothing: the model's reply already told the user it was done,
+  // so staying quiet on a miss would leave them wrongly believing it happened. Nothing here can
+  // delete an item or send anything on the user's behalf — those still require the person's own
+  // hand, deliberately, until a real confirm-before-execute flow exists for actions that aren't
+  // trivially reversible by an undo tap.
   const applyAiAction = action => {
     if (!action || typeof action !== "object") return null;
     const str = v => (typeof v === "string" ? v.trim() : "");
     const validDate = d => /^\d{4}-\d{2}-\d{2}$/.test(d) && !isNaN(new Date(d+"T00:00:00"));
     switch (action.type) {
+      case "complete_task": {
+        const title = str(action.title); if (!title) return null;
+        const match = findByTitle(tasks.filter(t => !t.done), title);
+        if (!match) return { label:`Couldn't find an open task matching "${title}" to complete.` };
+        setTasks(p => p.map(x => x.id === match.id ? { ...x, done:true } : x));
+        return { label:`Marked done: ${match.title}`, undo:() => setTasks(p => p.map(x => x.id === match.id ? { ...x, done:false } : x)) };
+      }
+      case "edit_appointment": {
+        const title = str(action.title); if (!title) return null;
+        const match = findByTitle(appts, title);
+        if (!match) return { label:`Couldn't find an appointment matching "${title}" to reschedule.` };
+        const newDate = validDate(action.date) ? action.date : match.date;
+        const newTime = str(action.time) || match.time;
+        const prev = { date:match.date, time:match.time };
+        setAppts(p => p.map(x => x.id === match.id ? { ...x, date:newDate, time:newTime } : x));
+        return { label:`Rescheduled "${match.title}" to ${newDate} at ${newTime}`, undo:() => setAppts(p => p.map(x => x.id === match.id ? { ...x, ...prev } : x)) };
+      }
       case "add_task": {
         const title = str(action.title); if (!title) return null;
         const priority = ["High","Medium","Low"].includes(action.priority) ? action.priority : "Medium";
@@ -4187,6 +4249,129 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
     }
   };
 
+  // Action types that never execute immediately — a delete can't be reversed by an undo tap the
+  // way an add can (the item might have been referenced elsewhere by the time someone taps undo),
+  // and a sent email genuinely can't be unsent. Both get a real confirm/cancel step instead.
+  const CONFIRM_ACTION_TYPES = new Set(["delete_task","delete_expense","delete_income","delete_appointment","delete_reminder","delete_note","send_email"]);
+
+  // Safety net for voice mode: krofSysPrompt(true) already tells the model never to emit a
+  // confirm-gated action while speaking, since there's no screen there to confirm on — but a
+  // model can still not follow an instruction perfectly. This makes that failure mode inert: a
+  // confirm-gated action reaching here is ignored rather than silently executed with no one able
+  // to confirm it. Only voiceAnswer uses this; the text chat's own confirm/cancel card is the
+  // real gate for everyone else.
+  const applyAutoAction = action => (action && CONFIRM_ACTION_TYPES.has(action.type)) ? null : applyAiAction(action);
+
+  const findBy = (list, field, value) => list.find(x => (x[field]||"").toLowerCase().includes(value.toLowerCase()));
+
+  // Validates a confirm-gated action WITHOUT touching any data, so the confirm/cancel card can
+  // show exactly what's about to happen. Mirrors applyAiAction's own miss-handling: a target
+  // that can't be found returns a reason instead of quietly proceeding, since the model's reply
+  // already framed this as something about to happen.
+  const describePendingAction = action => {
+    if (!action || typeof action !== "object") return { ok:false };
+    const str = v => (typeof v === "string" ? v.trim() : "");
+    const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    switch (action.type) {
+      case "delete_task": {
+        const title = str(action.title); if (!title) return { ok:false };
+        const match = findByTitle(tasks, title);
+        if (!match) return { ok:false, reason:`Couldn't find a task matching "${title}" to delete.` };
+        return { ok:true, summary:`Delete task "${match.title}"?` };
+      }
+      case "delete_expense":
+      case "delete_income": {
+        const isInc = action.type === "delete_income";
+        const label = str(action.label); if (!label) return { ok:false };
+        const match = findBy(isInc ? income : expenses, "label", label);
+        if (!match) return { ok:false, reason:`Couldn't find ${isInc?"income":"an expense"} matching "${label}" to delete.` };
+        return { ok:true, summary:`Delete ${isInc?"income":"expense"} "${match.label}" (${fmtCur(match.amount,user.currency)})?` };
+      }
+      case "delete_appointment": {
+        const title = str(action.title); if (!title) return { ok:false };
+        const match = findByTitle(appts, title);
+        if (!match) return { ok:false, reason:`Couldn't find an appointment matching "${title}" to delete.` };
+        return { ok:true, summary:`Delete appointment "${match.title}" on ${match.date}?` };
+      }
+      case "delete_reminder": {
+        const text = str(action.text); if (!text) return { ok:false };
+        const match = findBy(smartReminders, "text", text);
+        if (!match) return { ok:false, reason:`Couldn't find a reminder matching "${text}" to delete.` };
+        return { ok:true, summary:`Delete reminder "${match.text}"?` };
+      }
+      case "delete_note": {
+        const title = str(action.title); if (!title) return { ok:false };
+        const match = findByTitle(notes, title);
+        if (!match) return { ok:false, reason:`Couldn't find a note matching "${title}" to delete.` };
+        return { ok:true, summary:`Delete note "${match.title}"?` };
+      }
+      case "send_email": {
+        const to = str(action.to), subject = str(action.subject), body = str(action.body);
+        // The model was told to only use an address that actually appeared in CONTACTS/EMAIL —
+        // this doesn't re-verify that (nothing here has that list to check against a name), but
+        // it does refuse anything that isn't even a plausible address, so a hallucinated or
+        // malformed "to" fails closed instead of reaching the send card at all.
+        if (!EMAIL_RE.test(to)) return { ok:false, reason:`I don't have a real email address for that — try naming a saved contact or a recent email sender.` };
+        if (!subject && !body) return { ok:false };
+        return { ok:true, summary:`Send to ${to}`, to, subject, body };
+      }
+      default: return { ok:false };
+    }
+  };
+
+  // Runs a confirm-gated action — only ever called from the confirm/cancel card's Confirm
+  // button, never automatically. Deletes still get an undo toast afterward (the removed item is
+  // captured before it's spliced out): confirmed-then-undoable is a safer combination than
+  // either alone. send_email has no undo once it's sent — that's exactly why it needs the
+  // confirm step in the first place, unlike everything else in this file.
+  const executeConfirmedAction = async action => {
+    switch (action.type) {
+      case "delete_task": {
+        const match = findByTitle(tasks, action.title);
+        if (!match) return { label:"That task is already gone." };
+        setTasks(p => p.filter(x => x.id !== match.id));
+        return { label:`Deleted task: ${match.title}`, undo:() => setTasks(p => [match, ...p]) };
+      }
+      case "delete_expense":
+      case "delete_income": {
+        const isInc = action.type === "delete_income";
+        const setList = isInc ? setIncome : setExpenses;
+        const match = findBy(isInc ? income : expenses, "label", action.label);
+        if (!match) return { label:"That entry is already gone." };
+        setList(p => p.filter(x => x.id !== match.id));
+        return { label:`Deleted ${isInc?"income":"expense"}: ${match.label}`, undo:() => setList(p => [...p, match]) };
+      }
+      case "delete_appointment": {
+        const match = findByTitle(appts, action.title);
+        if (!match) return { label:"That appointment is already gone." };
+        setAppts(p => p.filter(x => x.id !== match.id));
+        return { label:`Deleted appointment: ${match.title}`, undo:() => setAppts(p => [...p, match]) };
+      }
+      case "delete_reminder": {
+        const match = findBy(smartReminders, "text", action.text);
+        if (!match) return { label:"That reminder is already gone." };
+        setSmartReminders(p => p.filter(x => x.id !== match.id));
+        return { label:`Deleted reminder: ${match.text}`, undo:() => setSmartReminders(p => [match, ...p]) };
+      }
+      case "delete_note": {
+        const match = findByTitle(notes, action.title);
+        if (!match) return { label:"That note is already gone." };
+        setNotes(p => p.filter(x => x.id !== match.id));
+        return { label:`Deleted note: ${match.title}`, undo:() => setNotes(p => [match, ...p]) };
+      }
+      case "send_email": {
+        try {
+          const res = await authedFetch("/api/mail/send", { method:"POST", body:JSON.stringify({ to:action.to, subject:action.subject, body:action.body }) });
+          if (!res.ok) return { label:"Couldn't send that email — try again from the Emails tab." };
+          return { label:`Sent to ${action.to}` };
+        } catch {
+          return { label:"Couldn't send that email — check your connection and try again." };
+        }
+      }
+      default: return null;
+    }
+  };
+
   // Only the most recent slice of the conversation is sent. The full history stays on screen,
   // but shipping all of it on every turn means replies get slower and more expensive the longer
   // a session runs, and eventually the request exceeds the model's context window and fails
@@ -4210,12 +4395,12 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
   // onDelta streams tokens as they arrive; without it the call resolves with the full text.
   // Streaming matters most here because replies are long enough that a spinner-then-dump feels
   // broken, and because the first sentence can start being read aloud while the rest arrives.
-  const runKroftCompletion = async (messages, { onDelta, signal, usageType = "chat" } = {}) => {
+  const runKroftCompletion = async (messages, { onDelta, signal, usageType = "chat", voiceMode = false } = {}) => {
     const recent = messages.slice(-historyLimit());
     const body = {
       model:"gemini-3.6-flash",
       max_tokens:2048,
-      system:krofSysPrompt(),
+      system:krofSysPrompt(voiceMode),
       messages:recent.map(m => ({ role:m.role, content:m.content })),
       ...(onDelta ? { stream:true } : {}),
     };
@@ -4390,27 +4575,7 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
   // without re-appending the user's message a second time — that message was already added
   // when the suggestion first appeared.
   const runNormalCompletion = async (conversationSoFar, contactAction = null) => {
-    const today = new Date().toDateString();
-    let currentCount = dailyMessageCount;
-    if (today !== messageCountDate) {
-      currentCount = 0;
-      setMessageCountDate(today);
-      setDailyMessageCount(0);
-    }
-    if (!subscribed && currentCount >= FREE_DAILY_MESSAGE_LIMIT) {
-      // Shown in the conversation rather than as a toast that disappears. Being silently
-      // stopped mid-thought, with the only explanation already faded away, reads as the app
-      // breaking rather than a limit being reached.
-      setAiMessages(p => [...p, {
-        id: uid(),
-        role: "assistant",
-        content: `That's all ${FREE_DAILY_MESSAGE_LIMIT} free messages for today — they reset in about ${resetsIn()}. Everything else in KROFT keeps working in the meantime.`,
-        limitNotice: true,
-      }]);
-      return;
-    }
     setAiLoading(true);
-    if (!subscribed) setDailyMessageCount(currentCount + 1);
     await streamReply(conversationSoFar, contactAction);
   };
 
@@ -4428,8 +4593,20 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
         onDelta: partial => setAiMessages(p => p.map(m => m.id === streamId ? { ...m, content:partial } : m)),
       });
       const { clean, action } = extractAction(raw);
-      const result = action ? applyAiAction(action) : null;
-      setAiMessages(p => p.map(m => m.id === streamId ? { ...m, content:clean, streaming:false, contactAction } : m));
+      // Confirm-gated actions (delete_*, send_email) never execute here — describePendingAction
+      // only validates and previews. A valid one is attached to this message as a card the
+      // person has to actually tap Confirm on (see confirmPendingAction below); an invalid one
+      // (nothing matched) surfaces the same way a failed complete_task/edit_appointment does —
+      // a toast explaining why, since the reply text already framed it as about to happen.
+      let pending = null, result = null;
+      if (action && CONFIRM_ACTION_TYPES.has(action.type)) {
+        const preview = describePendingAction(action);
+        if (preview.ok) pending = { action, summary: preview.summary };
+        else if (preview.reason) result = { label: preview.reason };
+      } else if (action) {
+        result = applyAiAction(action);
+      }
+      setAiMessages(p => p.map(m => m.id === streamId ? { ...m, content:clean, streaming:false, contactAction, pendingAction:pending } : m));
       if (result) toast(result.label, result.undo);
       if (voiceReplies && !voiceOpenRef.current) speak(clean);
     } catch (err) {
@@ -4449,6 +4626,23 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
   };
 
   const stopReply = () => { aiAbortRef.current?.abort(); aiAbortRef.current = null; };
+
+  // Handlers for the confirm/cancel card streamReply attaches to a message's pendingAction.
+  // Confirm actually runs the action and turns the card into a plain outcome line; Cancel just
+  // discards it — either way the card stops being tappable, so it can't fire twice.
+  const confirmPendingAction = async messageId => {
+    const msg = aiMessages.find(m => m.id === messageId);
+    if (!msg?.pendingAction || msg.pendingAction.done) return;
+    const { action } = msg.pendingAction;
+    setAiMessages(p => p.map(m => m.id === messageId ? { ...m, pendingAction:{ ...m.pendingAction, confirming:true } } : m));
+    const result = await executeConfirmedAction(action);
+    setAiMessages(p => p.map(m => m.id === messageId ? { ...m, pendingAction:{ ...m.pendingAction, confirming:false, done:true, outcome:result?.label || "Done." } } : m));
+    if (result?.undo) toast(result.label, result.undo);
+  };
+  const cancelPendingAction = messageId => {
+    setAiMessages(p => p.map(m => m.id === messageId && !m.pendingAction?.done
+      ? { ...m, pendingAction:{ ...m.pendingAction, done:true, outcome:"Cancelled." } } : m));
+  };
 
   // Plus: an unprompted daily notification — the one thing a free account structurally can't
   // get, since it requires KROFT to initiate rather than respond. Built from the same real data
@@ -4527,6 +4721,40 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
     check();
     return heartbeat(check);
   }, [dataLoaded, notifPermission, notifPrefs, appts, smartReminders, notifSent, subscribed, dailyBriefSentDate]);
+
+  // Keeps the server's scheduled_notifications index in sync with real, upcoming appointments so
+  // a push can still reach this person 10 minutes before one starts even with the app fully
+  // closed — the in-app version just above only ever fires while a tab is open. Deliberately only
+  // appointments for now: they have a simple, static, already-known title/time/location, unlike
+  // reminders (recur daily until marked done — a done-state the server-side index can't see, kv_
+  // store being client-managed) or the Daily Brief (its text is generated fresh, not something to
+  // precompute and push later). This is a full reconcile, not an incremental add/remove per
+  // appointment — sending the complete current set on every change means a missed edge case can
+  // never leave a stale entry behind; the server just deletes anything under the "appt:" prefix
+  // that isn't in this list any more (see api/push/schedule.js).
+  useEffect(() => {
+    if (!dataLoaded || !isSupabaseConfigured) return;
+    const now = Date.now();
+    const items = appts
+      .map(a => {
+        if (!a.date || !a.time) return null;
+        const [h, m] = a.time.split(":").map(Number);
+        if (isNaN(h)) return null;
+        const fires = new Date(`${a.date}T00:00:00`);
+        fires.setHours(h, m || 0, 0, 0);
+        fires.setMinutes(fires.getMinutes() - 10);
+        if (fires.getTime() <= now) return null; // only ever push for something still ahead
+        return { clientKey:`appt:${a.id}`, firesAt:fires.toISOString(), title:`${a.title} in 10 min`, body:[a.time, a.location].filter(Boolean).join(" · ") };
+      })
+      .filter(Boolean);
+    const t = setTimeout(() => {
+      authedFetch("/api/push/schedule", { method:"POST", body:JSON.stringify({ prefix:"appt:", items }) }).catch(() => {
+        // Best-effort — the in-app/OS notification path above (while the app is open) is
+        // unaffected either way, and the next appts change retries this automatically.
+      });
+    }, 1500);
+    return () => clearTimeout(t);
+  }, [dataLoaded, appts]);
 
   // Plus: scheduled calls. Kept independent of notifPermission — the in-app ringing overlay
   // doesn't need OS notification permission at all, only the accompanying system notification
@@ -4948,7 +5176,6 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
   };
 
   const aiDraftReply = async email => {
-    if (!spendAiExtra()) return;
     toast("KROFT is drafting a reply…");
     try {
       const res = await aiFetch("/api/chat", { method:"POST", headers:{"Content-Type":"application/json","X-Kroft-Usage-Type":"extra"}, body:JSON.stringify({ model:"gemini-3.6-flash", max_tokens:400, messages:[{ role:"user", content:`Draft a concise professional reply (under 5 sentences). From: ${email.from}, Subject: ${email.subject}, Body: "${email.body}"` }] }) });
@@ -4965,7 +5192,6 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
   // Smart Reminders — genuinely asks the AI for a useful reminder based on real context
   const [suggestingReminder, setSuggestingReminder] = useState(false);
   const suggestSmartReminder = async () => {
-    if (!spendAiExtra()) return;
     setSuggestingReminder(true);
     const context = `Appointments: ${appts.length>0 ? appts.map(a=>`${a.title} at ${a.time} on ${a.date}`).join("; ") : "none"}. Tasks: ${tasks.length>0 ? tasks.filter(t=>!t.done).map(t=>t.title).join("; ") : "none"}. Mood: ${mood}.`;
     try {
@@ -4988,14 +5214,6 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
     const expTotal = monthExp.reduce((s,r)=>s+r.amount,0);
     const net = incTotal - expTotal;
     if (monthInc.length===0 && monthExp.length===0) { toast("No entries logged this month yet."); return; }
-    const currentMonth = ym;
-    if (currentMonth !== monthlyReportMonth) { setMonthlyReportMonth(currentMonth); setMonthlyReportCount(0); }
-    const reportCount = currentMonth !== monthlyReportMonth ? 0 : monthlyReportCount;
-    if (!subscribed && reportCount >= FREE_MONTHLY_REPORT_LIMIT) {
-      toast(`You've used this month's free report. KROFT Plus gives you one whenever you want it.`);
-      return;
-    }
-    if (!subscribed) setMonthlyReportCount(reportCount + 1);
     const byCat = {};
     monthExp.forEach(r => { byCat[r.cat] = (byCat[r.cat]||0) + r.amount; });
     const topCats = Object.entries(byCat).sort((a,b)=>b[1]-a[1]).slice(0,3);
@@ -5008,6 +5226,40 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
       setMonthlyReport({ month:monthLabel(now.toISOString().slice(0,10)), incTotal, expTotal, net, topCats, advice, generatedAt:Date.now() });
     } catch { toast("Couldn't generate the report — check your connection and try again."); }
     setGeneratingReport(false);
+  };
+
+  // A genuine, cross-domain "what actually happened this week" — finance, appointments and mood
+  // together, since none of those alone tells the real story of a week the way they do combined.
+  // Deliberately only uses numbers that are honestly computable from real dated records: task
+  // objects don't carry a completion timestamp (only a done flag), so "tasks done this week" isn't
+  // a real number Kroft has — open-task count is reported as a plain snapshot instead of dressed
+  // up as a weekly stat. This is meant purely as a real recap, never a nudge back into the app —
+  // no streaks, no guilt, no urgency, matching the same non-manipulative bar as everything else
+  // that reaches back out to the user.
+  const generateWeeklyRecap = async () => {
+    const weekAgoISO = new Date(Date.now() - 7*86400000).toISOString().slice(0,10);
+    const today = todayISO();
+    const inWindow = iso => iso && iso >= weekAgoISO && iso <= today;
+    const weekInc = income.filter(r => inWindow(r.date));
+    const weekExp = expenses.filter(r => inWindow(r.date));
+    const incTotal = weekInc.reduce((s,r)=>s+r.amount,0);
+    const expTotal = weekExp.reduce((s,r)=>s+r.amount,0);
+    const weekAppts = appts.filter(a => inWindow(a.date));
+    const weekMoods = moodLog.filter(m => inWindow(m.date));
+    const openTasks = tasks.filter(t => !t.done).length;
+    if (!weekInc.length && !weekExp.length && !weekAppts.length && !weekMoods.length) {
+      toast("Not enough logged this week yet for a recap.");
+      return;
+    }
+    setGeneratingRecap(true);
+    const context = `This week (${weekAgoISO} to ${today}): ${weekInc.length} income entries totaling ${fmtCur(incTotal,user.currency)}, ${weekExp.length} expense entries totaling ${fmtCur(expTotal,user.currency)}, net ${fmtCur(incTotal-expTotal,user.currency)}. ${weekAppts.length} appointments this week. Mood entries this week: ${weekMoods.length ? weekMoods.map(m=>m.mood).join(", ") : "none logged"}. Currently ${openTasks} open task${openTasks!==1?"s":""} (a snapshot, not scoped to this week).`;
+    try {
+      const res = await aiFetch("/api/chat", { method:"POST", headers:{"Content-Type":"application/json","X-Kroft-Usage-Type":"report"}, body:JSON.stringify({ model:"gemini-3.6-flash", max_tokens:180, system:"You are KROFT, a personal assistant writing someone a recap of their own week. Given real numbers across their finances, appointments and mood, write 2-3 warm, specific sentences on what genuinely happened — real progress if the data shows it, a plain observation if it doesn't. Never invent a number you weren't given, and never imply a number for something not mentioned (like tasks) unless it was explicitly given as this week's. No guilt, no urgency, no sales language, no headers or bullets — plain sentences someone would actually want to read.", messages:[{ role:"user", content:context }] }) });
+      const data = await res.json();
+      const summary = (res.ok && data.content?.map(b=>b.text||"").join("").trim()) || "Couldn't put your recap together right now — try again shortly.";
+      setWeeklyRecap({ weekStart:weekAgoISO, weekEnd:today, incTotal, expTotal, apptsCount:weekAppts.length, moodCount:weekMoods.length, openTasks, summary, generatedAt:Date.now() });
+    } catch { toast("Couldn't generate your recap — check your connection and try again."); }
+    setGeneratingRecap(false);
   };
 
   // ── AROUND ME ────────────────────────────────────────────────────────────────
@@ -5161,19 +5413,16 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
     setAroundLoading(true); setAroundError(""); setAroundSearched(true); setAroundResults([]);
 
     let searchTerm = categoryOrQuery;
-    // This call spends from the same "extra" pool as aiDraftReply/suggestSmartReminder (see the
-    // X-Kroft-Usage-Type header below) but, unlike those two, never actually called spendAiExtra
-    // — the server-side quota still enforced it, but aiExtrasCount here never incremented, so
-    // Profile's "free AI drafts/suggestions" counter silently under-reported real usage. Skipping
-    // straight to a plain-text search on exhaustion (rather than blocking the search outright)
-    // matches the existing network-failure fallback below — the person still gets *a* result.
-    if (isNaturalLanguage && !spendAiExtra()) {
-      searchTerm = categoryOrQuery;
-    } else if (isNaturalLanguage) {
-      // Let Gemini interpret the natural-language request into a place-type query
+    if (isNaturalLanguage) {
+      // Let Gemini interpret the natural-language request into a place-type query. Tagged as its
+      // own "location_search" pool (separate from the now-unlimited plain-text AI calls) since
+      // repeated AI-powered nearby searches carry a real external-API cost the app wants to
+      // meter — if the free allowance is exhausted, the server's 429 has no `content` field, so
+      // searchTerm below falls straight back to the raw query and a plain-text search still runs
+      // (matching the network-failure fallback), rather than blocking the search outright.
       try {
         const res = await aiFetch("/api/chat", {
-          method:"POST", headers:{"Content-Type":"application/json","X-Kroft-Usage-Type":"extra"},
+          method:"POST", headers:{"Content-Type":"application/json","X-Kroft-Usage-Type":"location_search"},
           body:JSON.stringify({
             model:"gemini-3.6-flash", max_tokens:60,
             system:"Convert the user's request into a single short search term (2-4 words max) suitable for a places search API, such as 'coffee shop', 'pharmacy open now', 'budget hotel', or 'ATM'. Reply with ONLY the search term, nothing else.",
@@ -5868,6 +6117,34 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
                 </Card>
               );
             })()}
+            {/* A real recap of the week — finance, appointments and mood together, generated on
+                demand rather than pushed. This is the kind of retention loop worth building: it
+                reflects something that actually happened, not a manufactured reason to come back. */}
+            {dataLoaded && (
+              <Card style={{ marginBottom:16 }}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:weeklyRecap?10:0 }}>
+                  <div>
+                    <Mono style={{ display:"block", color:C.white, letterSpacing:.8, marginBottom:2 }}>This week</Mono>
+                    <Mono style={{ color:C.muted, fontSize:10 }}>
+                      {weeklyRecap ? `${weeklyRecap.weekStart} – ${weeklyRecap.weekEnd}` : "See what actually happened this week"}
+                    </Mono>
+                  </div>
+                  <Btn sm v="outline" onClick={generateWeeklyRecap} disabled={generatingRecap}>
+                    {generatingRecap ? <><Spinner size={11} color={C.soft} thickness={2} />Generating…</> : weeklyRecap ? "Refresh" : "Generate"}
+                  </Btn>
+                </div>
+                {weeklyRecap && (
+                  <>
+                    <div style={{ fontSize:13, lineHeight:1.7, color:C.text, marginBottom:10 }}>{weeklyRecap.summary}</div>
+                    <div style={{ display:"flex", gap:14, flexWrap:"wrap" }}>
+                      <Mono style={{ color:C.muted }}>Net {fmtCur(weeklyRecap.incTotal-weeklyRecap.expTotal, user.currency)}</Mono>
+                      <Mono style={{ color:C.muted }}>{weeklyRecap.apptsCount} appointment{weeklyRecap.apptsCount!==1?"s":""}</Mono>
+                      <Mono style={{ color:C.muted }}>{weeklyRecap.openTasks} open task{weeklyRecap.openTasks!==1?"s":""}</Mono>
+                    </div>
+                  </>
+                )}
+              </Card>
+            )}
             {!dataLoaded ? (
               <><SkeletonCard lines={2} /><SkeletonCard lines={3} /></>
             ) : income.length===0&&expenses.length===0 ? (
@@ -6398,7 +6675,6 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
                       <Mono style={{ display:"block", color:C.white, letterSpacing:.8, marginBottom:2 }}>Monthly report</Mono>
                       <Mono style={{ color:C.muted, fontSize:10 }}>
                         {monthlyReport ? monthlyReport.month : "See how this month went, with advice"}
-                        {!subscribed && (reportsLeftThisMonth() > 0 ? ` · ${reportsLeftThisMonth()} free left this month` : " · resets next month, or upgrade")}
                       </Mono>
                     </div>
                     <Btn sm v="outline" onClick={generateMonthlyReport} disabled={generatingReport}>{generatingReport?<><Spinner size={11} color={C.soft} thickness={2} />Generating…</>:monthlyReport?"Refresh":"Generate"}</Btn>
@@ -7792,18 +8068,6 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
                 </button>
               </div>
             </div>
-            {!subscribed && (
-              <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"10px 16px 0", flexWrap:"wrap", gap:8, flexShrink:0 }}>
-                <Mono style={{ color:C.soft }}>
-                  {Math.max(0, FREE_DAILY_MESSAGE_LIMIT - dailyMessageCount)} of {FREE_DAILY_MESSAGE_LIMIT} free messages left today
-                </Mono>
-                {dailyMessageCount >= FREE_DAILY_MESSAGE_LIMIT - 3 && (
-                  <button onClick={() => setTab("profile")} style={{ background:"none", border:"none", color:C.white, textDecoration:"underline", cursor:"pointer", fontSize:11, fontWeight:700, fontFamily:"'Space Grotesk',sans-serif" }}>
-                    Upgrade to Plus
-                  </button>
-                )}
-              </div>
-            )}
             <div style={{ flex:1, minHeight:0, position:"relative" }}>
               <div ref={chatScrollRef} onScroll={e => {
                 const box = e.currentTarget;
@@ -7825,6 +8089,33 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
                             runContactAction(m.contactAction);
                             setAiMessages(p => p.map(x => x.id===m.id ? {...x, contactActionResolved:true} : x));
                           }}>{{ email:`Email ${m.contactAction.contact.name}`, call:`Call ${m.contactAction.contact.name}`, text:`Text ${m.contactAction.contact.name}` }[m.contactAction.type]}</Btn>
+                        </div>
+                      )}
+                      {/* The confirm/cancel card for a confirm-gated action streamReply
+                          proposed (a delete, or send_email). Nothing behind this executes until
+                          Confirm is actually tapped — for send_email that means showing the real
+                          subject/body about to go out, not just a name, so review here means
+                          something. */}
+                      {m.pendingAction && !m.streaming && (
+                        <div style={{ marginTop:10, padding:"10px 12px", background:C.accentBg, border:`1px solid ${C.accent}44`, borderRadius:10 }}>
+                          {m.pendingAction.done ? (
+                            <Mono style={{ color:C.soft }}>{m.pendingAction.outcome}</Mono>
+                          ) : (
+                            <>
+                              <div style={{ fontSize:12.5, fontWeight:600, color:C.text, marginBottom:m.pendingAction.action.type==="send_email"?6:10 }}>{m.pendingAction.summary}</div>
+                              {m.pendingAction.action.type === "send_email" && (
+                                <Mono style={{ display:"block", color:C.muted, lineHeight:1.6, marginBottom:10, whiteSpace:"pre-wrap" }}>
+                                  Subject: {m.pendingAction.action.subject}{"\n"}{m.pendingAction.action.body}
+                                </Mono>
+                              )}
+                              <div style={{ display:"flex", gap:8 }}>
+                                <Btn sm disabled={m.pendingAction.confirming} onClick={() => confirmPendingAction(m.id)}>
+                                  {m.pendingAction.confirming ? <Spinner size={12} color={C.black} thickness={2} /> : "Confirm"}
+                                </Btn>
+                                <Btn sm v="outline" disabled={m.pendingAction.confirming} onClick={() => cancelPendingAction(m.id)}>Cancel</Btn>
+                              </div>
+                            </>
+                          )}
                         </div>
                       )}
                     </div>
@@ -7919,14 +8210,6 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
                 {/* One button in one place: the mic sits there until you start typing, then it
                     becomes Send. Showing both at once meant a permanently greyed-out Send
                     taking up space next to a mic you'd use far more often. */}
-                {/* Usage is visible where messages are actually spent, and only once it starts
-                    to matter. The meter previously lived in Profile alone, so the first sign of
-                    a limit was hitting it mid-conversation. */}
-                {!subscribed && messagesLeft() <= 5 && (
-                  <Mono style={{ color: messagesLeft() === 0 ? C.negative : C.muted, flexShrink:0, alignSelf:"center" }}>
-                    {messagesLeft() === 0 ? `resets in ${resetsIn()}` : `${messagesLeft()} left`}
-                  </Mono>
-                )}
                 {aiLoading ? (
                   <button onClick={stopReply} aria-label="Stop generating" title="Stop"
                     style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:"50%", width:44, height:44, flexShrink:0, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>
@@ -7968,7 +8251,11 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
               onEnableNotifications={async () => {
                 const result = await requestNotifyPermission();
                 setNotifPermission(result);
-                if (result === "granted") { sendNotification("Notifications on", "KROFT will let you know when something's due.", "kroft:welcome"); toast("Notifications enabled."); }
+                if (result === "granted") {
+                  sendNotification("Notifications on", "KROFT will let you know when something's due.", "kroft:welcome");
+                  toast("Notifications enabled.");
+                  subscribeToPush(authedFetch);
+                }
                 else if (result === "denied") toast("Notifications were blocked.");
               }}
               onSetNotifPref={(k, v) => setNotifPrefs(p => ({ ...p, [k]: v }))}
@@ -7976,13 +8263,8 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
                 const ok = sendNotification("Test from KROFT", "If you can see this, notifications are working.", "kroft:test");
                 toast(ok ? "Test sent." : "Couldn't send — check your browser settings.");
               }}
-              aiExtrasCount={aiExtrasCount}
-              extrasLimit={FREE_DAILY_EXTRAS_LIMIT}
-              monthlyReportCount={monthlyReportCount}
-              reportLimit={FREE_MONTHLY_REPORT_LIMIT}
-              reportsLeftThisMonth={reportsLeftThisMonth()}
               voiceTurnsCount={voiceTurnsCount}
-              voiceLimit={FREE_DAILY_VOICE_LIMIT}
+              voiceLimit={voiceLimit}
               onSignOut={async () => {
                 // Signing out previously only flipped `step` back to the login screen — every
                 // bit of data stayed live in memory, so returning to the dashboard showed the
@@ -8007,8 +8289,6 @@ Rules: amounts are positive numbers with no currency symbol. Resolve relative da
               billingLoading={billingLoading}
               onUpgrade={startCheckout}
               onManageBilling={cancelKroftPlus}
-              dailyMessageCount={dailyMessageCount}
-              freeLimit={FREE_DAILY_MESSAGE_LIMIT}
               voiceReplies={voiceReplies}
               onSetVoiceReplies={setVoiceReplies}
               proactiveInsights={proactiveInsights}
