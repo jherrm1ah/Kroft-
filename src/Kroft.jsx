@@ -8160,7 +8160,11 @@ ${voiceMode
               <div ref={chatScrollRef} onScroll={e => {
                 const box = e.currentTarget;
                 setChatNearBottom(box.scrollHeight - box.scrollTop - box.clientHeight < 120);
-              }} style={{ position:"absolute", inset:0, overflowY:"auto", padding:"16px", display:"flex", flexDirection:"column", gap:12 }}>
+              }} style={{ position:"absolute", inset:0, overflowY:"auto", padding:"16px", display:"flex", flexDirection:"column", gap:12,
+                // Top-aligned once a real conversation exists (messages stack down, scroll takes
+                // over), but centered while it's just the one welcome message — top-aligning that
+                // alone left a large dead gap below it before the suggestion chips underneath.
+                justifyContent: aiMessages.length <= 1 ? "center" : "flex-start" }}>
                 {aiMessages.map((m,i) => (
                   <div key={m.id || i} style={{ display:"flex", flexDirection:"column", alignItems:m.role==="user"?"flex-end":"flex-start", animation:"fadeUp .3s ease" }}>
                     <div style={{ background:m.role==="user"?C.white:C.surface, border:`1px solid ${m.role==="user"?C.soft:C.cardB}`, borderRadius:m.role==="user"?"14px 14px 3px 14px":"14px 14px 14px 3px", padding:"10px 14px", maxWidth:"80%" }}>
@@ -8208,7 +8212,7 @@ ${voiceMode
                       )}
                     </div>
                     {m.role==="assistant" && !m.streaming && (
-                      <div style={{ display:"flex", gap:2, marginTop:5, alignItems:"center" }}>
+                      <div style={{ display:"flex", gap:8, marginTop:5, alignItems:"center" }}>
                         {[
                           { id:"copy", label:"Copy", onClick:() => copyMsg(m.content) },
                           { id:"share", label:"Share", onClick:() => shareMsg(m.content) },
@@ -8222,7 +8226,7 @@ ${voiceMode
                           ...(i === aiMessages.length - 1 ? [{ id:"retry", label:"Retry", onClick:() => regenerateReply(i), disabled:aiLoading }] : []),
                         ].map(a => (
                           <button key={a.id} onClick={a.onClick} disabled={a.disabled} title={a.label} aria-label={a.label}
-                            style={{ background:"none", border:"none", padding:6, borderRadius:8, cursor:a.disabled?"not-allowed":"pointer", opacity:a.disabled?.4:1, display:"flex", alignItems:"center", justifyContent:"center" }}>
+                            style={{ background:"none", border:"none", padding:8, borderRadius:8, cursor:a.disabled?"not-allowed":"pointer", opacity:a.disabled?.4:1, display:"flex", alignItems:"center", justifyContent:"center" }}>
                             <NavIcon id={a.id} size={14} color={a.active?C.accent:C.muted} />
                           </button>
                         ))}
