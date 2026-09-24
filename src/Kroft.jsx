@@ -7,13 +7,21 @@ import { supabase, isSupabaseConfigured } from "./supabaseClient.js";
 // Light mode: white/off-white surfaces, near-black text.
 // Every token below meets or exceeds WCAG AA contrast against its paired surface.
 const DARK = {
-  bg:"#000000", card:"#0d0d0d", cardB:"#1c1c1c", surface:"#141414",
-  hover:"#1a1a1a", white:"#ffffff", black:"#000000",
+  bg:"#000000",
+  // Cards were previously #0d0d0d — barely lighter than the #000 page behind them, so every
+  // card leaned on its border alone for definition (the opposite of, e.g., ChatGPT's dark
+  // settings rows, which are a genuinely solid, visible grey with no border needed at all).
+  // Raised to a real mid-grey — deliberately a step lighter than that reference rather than
+  // matching it — so a card reads as its own surface at a glance, border or not.
+  card:"#363636", cardB:"#424242", surface:"#141414",
+  hover:"#3d3d3d", white:"#ffffff", black:"#000000",
   offWhite:"#f4f2ee",
   text:"#ffffff",        // primary text — pure white on black, max contrast
   soft:"#dcd8d0",        // secondary text — bright off-white, clearly readable (was low-contrast grey)
   muted:"#9a968e",       // tertiary/placeholder — still readable, used sparingly
-  border:"#2c2c2c",      // visible borders / dividers on dark surfaces
+  border:"#4d4d4d",      // visible borders / dividers on dark surfaces — bumped alongside card/
+                          // cardB above so a `hi` card's emphasis border/ring still reads clearly
+                          // against the now-lighter card fill instead of nearly vanishing into it.
   div:"#1c1c1c",
   invBg:"#f4f2ee", invText:"#0a0a0a", // inverse surface for chips/pills on dark
   // Muted/desaturated versions of the original Tailwind-400 tones (#4ade80/#f87171/#fbbf24/
