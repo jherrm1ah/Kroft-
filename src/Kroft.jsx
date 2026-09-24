@@ -33,6 +33,10 @@ const DARK = {
   // screen with a heavy shadow and a large radius each reads as a pile of distinct boxes rather
   // than one calm layout.
   shadowRaised:"0 8px 22px rgba(0,0,0,.4)", shadowBase:"0 1px 5px rgba(0,0,0,.3)",
+  // RGB triplet (not hex) so VoiceOrb can build an rgba() glow at a variable opacity — a light
+  // glow reads as a corona against dark mode's black voice screen, but the same white glow would
+  // vanish against light mode's off-white one, so this flips to a dark glow there instead.
+  glowRGB:"255,255,255",
 };
 const LIGHT = {
   bg:"#f4f2ee", card:"#ffffff", cardB:"#e6e2da", surface:"#ffffff",
@@ -52,6 +56,7 @@ const LIGHT = {
   accent:"#4f5389", accentBg:"rgba(79,83,137,.10)",
   fill:"rgba(10,10,10,.04)", fillStrong:"rgba(10,10,10,.07)",
   shadowRaised:"0 8px 22px rgba(40,36,28,.10)", shadowBase:"0 1px 3px rgba(40,36,28,.05)",
+  glowRGB:"10,10,10",
 };
 // The Briefing plays over an always-dark scrim for focus, so it reads its colors from DARK
 // regardless of the active theme. Without this it inherits light tokens and renders a
@@ -81,6 +86,7 @@ const ANIM = `
 @keyframes wave{0%,100%{transform:scaleY(.2)}50%{transform:scaleY(1)}}
 @keyframes slideIn{0%{transform:translateX(108%) scale(.9);opacity:0}70%{transform:translateX(-4%) scale(1.03);opacity:1}100%{transform:translateX(0) scale(1);opacity:1}}
 @keyframes stepIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
+@keyframes slideUp{from{opacity:0;transform:translateY(100%)}to{opacity:1;transform:translateY(0)}}
 /* ---- "Fun and haptic" pass: playful, springy feedback on the things people touch a lot ---- */
 @keyframes bouncePop{0%{transform:scale(.4) rotate(-8deg);opacity:0}55%{transform:scale(1.18) rotate(4deg);opacity:1}75%{transform:scale(.92) rotate(-2deg)}100%{transform:scale(1) rotate(0);opacity:1}}
 @keyframes checkPop{0%{transform:scale(1) rotate(0)}35%{transform:scale(1.4) rotate(-10deg)}65%{transform:scale(.88) rotate(6deg)}100%{transform:scale(1) rotate(0)}}
@@ -1018,90 +1024,34 @@ function ActionSheet({ title, subtitle, actions, onClose }) {
   );
 }
 
-// Particle orb for voice mode — a deforming sphere of dots, rendered on a canvas because a
-// few thousand DOM nodes would stutter on a phone. Points are laid out with a Fibonacci
-// spiral (even coverage, no clumping at the poles the way lat/long grids do), then the radius
-// is displaced by summed sine waves so the surface rolls organically instead of pulsing as a
-// rigid ball. Live mic level pushes that displacement further, so the shape reacts to the
-// voice rather than animating on a fixed loop.
+// A static eclipse-style disc — solid black, with a soft glow halo behind it — replacing the
+// earlier spinning particle-sphere animation, which read as "just an animation, no real use." The
+// one exception: while actually listening, the glow breathes with the real mic input level
+// (levelRef, already fed by the recognizer elsewhere) — motion that means something, instead of
+// generic movement. Every other state (idle/thinking/speaking) stays at the calm static glow.
 function VoiceOrb({ state, levelRef, size = 300 }) {
-  const canvasRef = useRef(null);
+  const ref = useRef(null);
   const stateRef = useRef(state);
   stateRef.current = state;
 
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    canvas.width = size * dpr;
-    canvas.height = size * dpr;
-    ctx.scale(dpr, dpr);
-
-    const COUNT = 2600;
-    const pts = [];
-    const golden = Math.PI * (3 - Math.sqrt(5));
-    for (let i = 0; i < COUNT; i++) {
-      const y = 1 - (i / (COUNT - 1)) * 2;
-      const r = Math.sqrt(Math.max(0, 1 - y * y));
-      const th = golden * i;
-      pts.push({ x: Math.cos(th) * r, y, z: Math.sin(th) * r });
-    }
-
-    let raf, t = 0, smooth = 0;
-    const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
-    const cx = size / 2, cy = size / 2, R = size * 0.33;
-
-    const draw = () => {
-      const st = stateRef.current;
-      // Idle breathes gently; listening tracks the mic; thinking churns; speaking swells.
-      const target = st === "listening" ? (levelRef?.current ?? 0) : st === "speaking" ? 0.55 : st === "thinking" ? 0.3 : 0.12;
-      smooth += (target - smooth) * 0.12;
-      t += reduce ? 0.002 : (st === "thinking" ? 0.016 : 0.009);
-
-      ctx.clearRect(0, 0, size, size);
-      const spin = t * (st === "thinking" ? 0.9 : 0.45);
-      const cosS = Math.cos(spin), sinS = Math.sin(spin);
-
-      for (let i = 0; i < COUNT; i++) {
-        const p = pts[i];
-        // Organic displacement — three sine waves at different frequencies so the surface
-        // never repeats in an obviously periodic way.
-        const n =
-          Math.sin(p.x * 2.6 + t * 1.5) * 0.5 +
-          Math.sin(p.y * 3.1 - t * 1.1) * 0.4 +
-          Math.sin(p.z * 2.2 + t * 0.8) * 0.35 +
-          Math.sin((p.x + p.y) * 4.1 - t * 0.6) * 0.2;
-        const rad = 1 + n * (0.14 + smooth * 0.26);
-
-        let x = p.x * rad, y = p.y * rad, z = p.z * rad;
-        const rx = x * cosS - z * sinS;
-        const rz = x * sinS + z * cosS;
-        x = rx; z = rz;
-
-        const persp = 1 / (1.9 - z * 0.55);
-        const sx = cx + x * R * persp * 1.9;
-        const sy = cy + y * R * persp * 1.9;
-        const depth = (z + 1) / 2;
-
-        // Cyan at the top, through blue, to magenta at the base — y runs downward in screen
-        // space, so the ramp follows +y rather than against it.
-        const hue = 192 + ((y + 1) / 2) * 98;
-        const alpha = (0.25 + depth * 0.72) * (st === "idle" ? 0.8 : 1);
-        const dot = 0.6 + depth * 1.7;
-
-        ctx.fillStyle = `hsla(${hue}, 95%, ${60 + depth * 12}%, ${alpha})`;
-        ctx.beginPath();
-        ctx.arc(sx, sy, dot, 0, 6.283);
-        ctx.fill();
-      }
-      raf = requestAnimationFrame(draw);
+    const el = ref.current;
+    if (!el) return;
+    const base = { blur:size*0.45, spread:size*0.14, alpha:.32, blur2:size*0.18, spread2:size*0.04, alpha2:.48 };
+    let raf, smooth = 0;
+    const tick = () => {
+      const target = stateRef.current === "listening" ? (levelRef?.current ?? 0) : 0;
+      smooth += (target - smooth) * 0.15;
+      el.style.boxShadow =
+        `0 0 ${base.blur + smooth*size*0.25}px ${base.spread + smooth*size*0.08}px rgba(${C.glowRGB},${(base.alpha + smooth*0.35).toFixed(2)}), ` +
+        `0 0 ${base.blur2 + smooth*size*0.1}px ${base.spread2 + smooth*size*0.04}px rgba(${C.glowRGB},${(base.alpha2 + smooth*0.4).toFixed(2)})`;
+      raf = requestAnimationFrame(tick);
     };
-    draw();
+    tick();
     return () => cancelAnimationFrame(raf);
-  }, [size]);
+  }, [size, levelRef]);
 
-  return <canvas ref={canvasRef} style={{ width:size, height:size, display:"block" }} />;
+  return <div ref={ref} style={{ width:size, height:size, borderRadius:"50%", background:"#050505", flexShrink:0 }} />;
 }
 
 // Full-screen one-on-one voice conversation. Entered deliberately rather than running
@@ -1116,11 +1066,11 @@ function IncomingCallScreen({ call, onAnswer, onDecline }) {
   const size = Math.min(260, (typeof window !== "undefined" ? window.innerWidth : 360) - 100);
   return (
     <div ref={ref} role="dialog" aria-modal="true" aria-label={`Incoming call: ${call.title}`} tabIndex={-1}
-      style={{ position:"fixed", inset:0, zIndex:1300, background:"#000", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"space-between", padding:"14vh 24px calc(40px + env(safe-area-inset-bottom))" }}>
+      style={{ position:"fixed", inset:0, zIndex:1300, background:C.bg, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"space-between", padding:"14vh 24px calc(40px + env(safe-area-inset-bottom))" }}>
       <div style={{ textAlign:"center" }}>
-        <Mono style={{ color:"rgba(255,255,255,.5)", display:"block", marginBottom:8 }}>Incoming call</Mono>
-        <div style={{ fontSize:22, fontWeight:700, color:"#fff", letterSpacing:-.4 }}>KROFT</div>
-        <div style={{ fontSize:14, color:"rgba(255,255,255,.65)", marginTop:6 }}>{call.title}</div>
+        <Mono style={{ color:C.muted, display:"block", marginBottom:8 }}>Incoming call</Mono>
+        <div style={{ fontSize:22, fontWeight:700, color:C.text, letterSpacing:-.4 }}>KROFT</div>
+        <div style={{ fontSize:14, color:C.soft, marginTop:6 }}>{call.title}</div>
       </div>
 
       <VoiceOrb state="thinking" levelRef={{ current:0 }} size={size} />
@@ -1169,14 +1119,14 @@ function VoiceMode({ state, transcript, reply, error, onStart, onStop, onClose, 
   const size = Math.min(320, (typeof window !== "undefined" ? window.innerWidth : 360) - 60);
   const ref = useModalA11y(onClose);
   return (
-    <div ref={ref} role="dialog" aria-modal="true" aria-label="Voice conversation" tabIndex={-1} style={{ position:"fixed", inset:0, zIndex:1200, background:"#000", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"space-between", padding:"22px 20px calc(28px + env(safe-area-inset-bottom))" }}>
+    <div ref={ref} role="dialog" aria-modal="true" aria-label="Voice conversation" tabIndex={-1} style={{ position:"fixed", inset:0, zIndex:1200, background:C.bg, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"space-between", padding:"22px 20px calc(28px + env(safe-area-inset-bottom))" }}>
       {/* Left-aligned so it doesn't sit under the toast stack, which now renders above this overlay. */}
       <div style={{ width:"100%", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-        <button onClick={onClose} aria-label="Close voice mode" style={{ background:"rgba(255,255,255,.08)", border:"none", borderRadius:"50%", width:40, height:40, color:"#fff", fontSize:17, cursor:"pointer" }}>✕</button>
+        <button onClick={onClose} aria-label="Close voice mode" style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:"50%", width:40, height:40, color:C.text, fontSize:17, cursor:"pointer" }}>✕</button>
         {/* Quiet, and only once it's worth mentioning — matches the same low-key threshold used
             for the chat message counter, so usage isn't nagging from the first turn. */}
         {!subscribed && turnsLeft <= 3 && (
-          <Mono style={{ color: turnsLeft === 0 ? BRIEF.negative : "rgba(255,255,255,.5)" }}>
+          <Mono style={{ color: turnsLeft === 0 ? C.negative : C.muted }}>
             {turnsLeft === 0 ? "resets tomorrow" : `${turnsLeft} voice turns left`}
           </Mono>
         )}
@@ -1193,14 +1143,14 @@ function VoiceMode({ state, transcript, reply, error, onStart, onStop, onClose, 
           <VoiceOrb state={state} levelRef={levelRef} size={size} />
         </div>
 
-        <div style={{ fontSize:13, fontWeight:600, color:"rgba(255,255,255,.62)", letterSpacing:.4, minHeight:18 }}>{label}</div>
+        <div style={{ fontSize:13, fontWeight:600, color:C.muted, letterSpacing:.4, minHeight:18 }}>{label}</div>
 
         <div style={{ minHeight:96, maxHeight:170, overflowY:"auto", width:"100%", maxWidth:460, textAlign:"center", padding:"0 4px" }}>
-          {error && <div style={{ fontSize:14, color:BRIEF.negative, lineHeight:1.6 }}>{error}</div>}
-          {!error && transcript && <div style={{ fontSize:17, color:"#fff", lineHeight:1.5, fontWeight:500 }}>{transcript}</div>}
-          {!error && !transcript && reply && <div ref={replyEndRef} style={{ fontSize:15, color:"rgba(255,255,255,.78)", lineHeight:1.7, textAlign:"left" }}>{reply}</div>}
+          {error && <div style={{ fontSize:14, color:C.negative, lineHeight:1.6 }}>{error}</div>}
+          {!error && transcript && <div style={{ fontSize:17, color:C.text, lineHeight:1.5, fontWeight:500 }}>{transcript}</div>}
+          {!error && !transcript && reply && <div ref={replyEndRef} style={{ fontSize:15, color:C.soft, lineHeight:1.7, textAlign:"left" }}>{reply}</div>}
           {!error && !transcript && !reply && state === "idle" && (
-            <div style={{ fontSize:14, color:"rgba(255,255,255,.42)", lineHeight:1.7 }}>
+            <div style={{ fontSize:14, color:C.muted, lineHeight:1.7 }}>
               {!supported
                 ? "This browser can't do live speech recognition. Chrome or Edge on Android and desktop work best."
                 : primed
@@ -1216,8 +1166,8 @@ function VoiceMode({ state, transcript, reply, error, onStart, onStop, onClose, 
 
       <div style={{ width:"100%", maxWidth:460, display:"flex", gap:10 }}>
         {state === "idle"
-          ? <button onClick={onStart} disabled={!supported} style={{ flex:1, minHeight:52, borderRadius:16, border:"none", background:supported?"#fff":"rgba(255,255,255,.14)", color:supported?"#000":"rgba(255,255,255,.4)", fontSize:15, fontWeight:700, fontFamily:"'Space Grotesk',sans-serif", cursor:supported?"pointer":"not-allowed" }}>{primed ? "Start talking" : "Allow microphone"}</button>
-          : <button onClick={onStop} style={{ flex:1, minHeight:52, borderRadius:16, border:"1px solid rgba(255,255,255,.28)", background:"transparent", color:"#fff", fontSize:15, fontWeight:700, fontFamily:"'Space Grotesk',sans-serif", cursor:"pointer" }}>{state==="speaking" ? "Interrupt" : state==="thinking" ? "Cancel" : "Stop"}</button>}
+          ? <button onClick={onStart} disabled={!supported} style={{ flex:1, minHeight:52, borderRadius:16, border:"none", background:supported?C.text:C.surface, color:supported?C.card:C.muted, fontSize:15, fontWeight:700, fontFamily:"'Space Grotesk',sans-serif", cursor:supported?"pointer":"not-allowed" }}>{primed ? "Start talking" : "Allow microphone"}</button>
+          : <button onClick={onStop} style={{ flex:1, minHeight:52, borderRadius:16, border:`1px solid ${C.border}`, background:"transparent", color:C.text, fontSize:15, fontWeight:700, fontFamily:"'Space Grotesk',sans-serif", cursor:"pointer" }}>{state==="speaking" ? "Interrupt" : state==="thinking" ? "Cancel" : "Stop"}</button>}
       </div>
     </div>
   );
@@ -1238,6 +1188,39 @@ function buildUberDeepLink(address) {
   url.searchParams.set("pickup", "my_location");
   if (address) url.searchParams.set("dropoff[formatted_address]", address);
   return url.toString();
+}
+
+// The Add Income/Add Expense buttons live in the Finance header, but the form itself used to
+// render inline, deep in the page (near the ledger, well below Summary/budgets/charts) — so
+// nothing visibly happened until you scrolled all the way down to find it. A modal that pulls up
+// from the bottom is visible the instant it opens, wherever the page happened to be scrolled to.
+function AddEntryModal({ kind, theme, value, onChange, cats, onAddCategory, onSubmit, onClose }) {
+  const ref = useModalA11y(onClose);
+  return (
+    <div ref={ref} role="dialog" aria-modal="true" aria-label={`New ${kind} entry`} tabIndex={-1}
+      style={{ position:"fixed", inset:0, zIndex:950, background:"rgba(0,0,0,.6)", display:"flex", alignItems:"flex-end", justifyContent:"center" }}
+      onClick={onClose}>
+      <div style={{ background:C.card, borderRadius:"20px 20px 0 0", padding:"20px 20px calc(20px + env(safe-area-inset-bottom))", width:"100%", maxWidth:480, boxSizing:"border-box", animation:"slideUp .25s ease" }} onClick={e => e.stopPropagation()}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14 }}>
+          <Mono style={{ color:C.white, letterSpacing:.8 }}>New {kind} entry</Mono>
+          <button onClick={onClose} aria-label="Close" style={{ background:"none", border:"none", color:C.muted, fontSize:20, cursor:"pointer", padding:4, lineHeight:1 }}>✕</button>
+        </div>
+        <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+          <Inp placeholder="Description" value={value.label} onChange={e => onChange(v=>({...v,label:e.target.value}))} style={{ flex:2, minWidth:120 }} />
+          <Inp placeholder="Amount" value={value.amount} type="number" inputMode="decimal" min="0" step="0.01" onChange={e => onChange(v=>({...v,amount:e.target.value}))} style={{ flex:1, minWidth:80 }} />
+          <input type="date" value={value.date||todayISO()} max={todayISO()} onChange={e => onChange(v=>({...v,date:e.target.value}))} style={{ flex:1, minWidth:130, background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"10px 12px", color:C.text, fontSize:12, fontFamily:"'Space Grotesk',sans-serif", outline:"none", colorScheme:theme }} />
+          <CategorySelect value={value.cat} onChange={c => onChange(v=>({...v,cat:c}))} cats={cats} onAddCategory={onAddCategory} />
+          {/* Turns the entry into a template that re-posts itself on this cadence. */}
+          <select value={value.repeat} onChange={e => onChange(v=>({...v,repeat:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 12px", color:C.text, fontSize:12, fontFamily:"'Space Grotesk',sans-serif", outline:"none" }}>
+            <option value="none">Does not repeat</option>
+            <option value="weekly">Repeats weekly</option>
+            <option value="monthly">Repeats monthly</option>
+          </select>
+          <Btn full onClick={onSubmit}>Add</Btn>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function UberModal({ dest, onClose }) {
@@ -6633,70 +6616,54 @@ ${voiceMode
               <div style={{ fontSize:12, fontWeight:600, color:C.muted, marginBottom:11, marginTop:8 }}>Transactions</div>
             )}
             {showAddInc && (
-              <Card style={{ marginBottom:13, border:`1px solid ${C.border}` }}>
-                <Mono style={{ display:"block", color:C.white, marginBottom:11, letterSpacing:.8 }}>New income entry</Mono>
-                <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
-                  <Inp placeholder="Description" value={newInc.label} onChange={e => setNewInc(v=>({...v,label:e.target.value}))} style={{ flex:2, minWidth:120 }} />
-                  <Inp placeholder="Amount" value={newInc.amount} type="number" inputMode="decimal" min="0" step="0.01" onChange={e => setNewInc(v=>({...v,amount:e.target.value}))} style={{ flex:1, minWidth:80 }} />
-                  <input type="date" value={newInc.date||todayISO()} max={todayISO()} onChange={e => setNewInc(v=>({...v,date:e.target.value}))} style={{ flex:1, minWidth:130, background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"10px 12px", color:C.text, fontSize:12, fontFamily:"'Space Grotesk',sans-serif", outline:"none", colorScheme:theme }} />
-                  <CategorySelect value={newInc.cat} onChange={c => setNewInc(v=>({...v,cat:c}))} cats={incomeCats} onAddCategory={c => setIncomeCats(p=>p.includes(c)?p:[...p,c])} />
-                  {/* Turns the entry into a template that re-posts itself on this cadence. */}
-                  <select value={newInc.repeat} onChange={e => setNewInc(v=>({...v,repeat:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 12px", color:C.text, fontSize:12, fontFamily:"'Space Grotesk',sans-serif", outline:"none" }}>
-                    <option value="none">Does not repeat</option>
-                    <option value="weekly">Repeats weekly</option>
-                    <option value="monthly">Repeats monthly</option>
-                  </select>
-                  <Btn onClick={() => {
-                    if (!newInc.label) return;
-                    const amt = parseAmount(newInc.amount);
-                    if (amt === null) { toast("Enter an amount greater than zero."); return; }
-                    const isFirstEverEntry = income.length === 0 && expenses.length === 0;
-                    {
-                      const base = { id:uid(), ...newInc, amount:amt, date:newInc.date||todayISO(), cur:user.currency };
-                      // A repeating entry counts as its own first posting, so nextDate starts one
-                      // cadence ahead — otherwise the engine would immediately duplicate it.
-                      if (base.repeat && base.repeat !== "none") base.nextDate = advanceRepeatDate(base.date, base.repeat);
-                      setIncome(p => [...p, base]);
-                    }
-                    setNewInc({label:"",amount:"",cat:"Invoice",date:todayISO(),repeat:"none"}); setShowAddInc(false);
-                    if (isFirstEverEntry) { toast("First entry logged — you're on your way."); celebrate(); }
-                    else toast(`Income added: ${fmtCur(amt,user.currency)}`);
-                  }}>Add</Btn>
-                </div>
-              </Card>
+              <AddEntryModal
+                kind="income"
+                theme={theme}
+                value={newInc}
+                onChange={setNewInc}
+                cats={incomeCats}
+                onAddCategory={c => setIncomeCats(p=>p.includes(c)?p:[...p,c])}
+                onClose={() => setShowAddInc(false)}
+                onSubmit={() => {
+                  if (!newInc.label) return;
+                  const amt = parseAmount(newInc.amount);
+                  if (amt === null) { toast("Enter an amount greater than zero."); return; }
+                  const isFirstEverEntry = income.length === 0 && expenses.length === 0;
+                  const base = { id:uid(), ...newInc, amount:amt, date:newInc.date||todayISO(), cur:user.currency };
+                  // A repeating entry counts as its own first posting, so nextDate starts one
+                  // cadence ahead — otherwise the engine would immediately duplicate it.
+                  if (base.repeat && base.repeat !== "none") base.nextDate = advanceRepeatDate(base.date, base.repeat);
+                  setIncome(p => [...p, base]);
+                  setNewInc({label:"",amount:"",cat:"Invoice",date:todayISO(),repeat:"none"}); setShowAddInc(false);
+                  if (isFirstEverEntry) { toast("First entry logged — you're on your way."); celebrate(); }
+                  else toast(`Income added: ${fmtCur(amt,user.currency)}`);
+                }}
+              />
             )}
             {showAddExp && (
-              <Card style={{ marginBottom:13, border:`1px solid ${C.border}` }}>
-                <Mono style={{ display:"block", color:C.white, marginBottom:11, letterSpacing:.8 }}>New expense entry</Mono>
-                <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
-                  <Inp placeholder="Description" value={newExp.label} onChange={e => setNewExp(v=>({...v,label:e.target.value}))} style={{ flex:2, minWidth:120 }} />
-                  <Inp placeholder="Amount" value={newExp.amount} type="number" inputMode="decimal" min="0" step="0.01" onChange={e => setNewExp(v=>({...v,amount:e.target.value}))} style={{ flex:1, minWidth:80 }} />
-                  <input type="date" value={newExp.date||todayISO()} max={todayISO()} onChange={e => setNewExp(v=>({...v,date:e.target.value}))} style={{ flex:1, minWidth:130, background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"10px 12px", color:C.text, fontSize:12, fontFamily:"'Space Grotesk',sans-serif", outline:"none", colorScheme:theme }} />
-                  <CategorySelect value={newExp.cat} onChange={c => setNewExp(v=>({...v,cat:c}))} cats={expenseCats} onAddCategory={c => setExpenseCats(p=>p.includes(c)?p:[...p,c])} />
-                  {/* Turns the entry into a template that re-posts itself on this cadence. */}
-                  <select value={newExp.repeat} onChange={e => setNewExp(v=>({...v,repeat:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 12px", color:C.text, fontSize:12, fontFamily:"'Space Grotesk',sans-serif", outline:"none" }}>
-                    <option value="none">Does not repeat</option>
-                    <option value="weekly">Repeats weekly</option>
-                    <option value="monthly">Repeats monthly</option>
-                  </select>
-                  <Btn onClick={() => {
-                    if (!newExp.label) return;
-                    const amt = parseAmount(newExp.amount);
-                    if (amt === null) { toast("Enter an amount greater than zero."); return; }
-                    const isFirstEverEntry = income.length === 0 && expenses.length === 0;
-                    {
-                      const base = { id:uid(), ...newExp, amount:amt, date:newExp.date||todayISO(), cur:user.currency };
-                      // A repeating entry counts as its own first posting, so nextDate starts one
-                      // cadence ahead — otherwise the engine would immediately duplicate it.
-                      if (base.repeat && base.repeat !== "none") base.nextDate = advanceRepeatDate(base.date, base.repeat);
-                      setExpenses(p => [...p, base]);
-                    }
-                    setNewExp({label:"",amount:"",cat:"Operations",date:todayISO(),repeat:"none"}); setShowAddExp(false);
-                    if (isFirstEverEntry) { toast("First entry logged — you're on your way."); celebrate(); }
-                    else toast(`Expense added: ${fmtCur(amt,user.currency)}`);
-                  }}>Add</Btn>
-                </div>
-              </Card>
+              <AddEntryModal
+                kind="expense"
+                theme={theme}
+                value={newExp}
+                onChange={setNewExp}
+                cats={expenseCats}
+                onAddCategory={c => setExpenseCats(p=>p.includes(c)?p:[...p,c])}
+                onClose={() => setShowAddExp(false)}
+                onSubmit={() => {
+                  if (!newExp.label) return;
+                  const amt = parseAmount(newExp.amount);
+                  if (amt === null) { toast("Enter an amount greater than zero."); return; }
+                  const isFirstEverEntry = income.length === 0 && expenses.length === 0;
+                  const base = { id:uid(), ...newExp, amount:amt, date:newExp.date||todayISO(), cur:user.currency };
+                  // A repeating entry counts as its own first posting, so nextDate starts one
+                  // cadence ahead — otherwise the engine would immediately duplicate it.
+                  if (base.repeat && base.repeat !== "none") base.nextDate = advanceRepeatDate(base.date, base.repeat);
+                  setExpenses(p => [...p, base]);
+                  setNewExp({label:"",amount:"",cat:"Operations",date:todayISO(),repeat:"none"}); setShowAddExp(false);
+                  if (isFirstEverEntry) { toast("First entry logged — you're on your way."); celebrate(); }
+                  else toast(`Expense added: ${fmtCur(amt,user.currency)}`);
+                }}
+              />
             )}
             {income.length===0&&expenses.length===0&&!showAddInc&&!showAddExp && (
               <Card style={{ textAlign:"center", padding:26, marginBottom:14 }}>
