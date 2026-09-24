@@ -300,12 +300,81 @@ function categorizeVoices(vs) {
   return { "female-1":female[0], "female-2":female[1], "male-1":male[0], "male-2":male[1] };
 }
 
-// Set from KroftApp whenever the signed-in user's chosen voice slot (persisted per-account,
-// see voicePref) changes. Lives at module scope, outside React, because speak()/speakSequence()/
-// createSpeechQueue() are plain functions called from all over this file, not hooks with access
-// to component state.
-let preferredVoiceKey = null;
-const setPreferredVoiceKey = key => { preferredVoiceKey = key; };
+// ── KROFT Voice / TTS system ────────────────────────────────────────────────────────────────
+// Layering: AI response text -> speak()/speakSequence()/createSpeechQueue() -> the selected
+// VOICE_PROFILE -> the current TTS provider (today: the browser's own SpeechSynthesis, the only
+// real, already-integrated, zero-cost, zero-server-key option this app has) -> audio playback.
+// A real multi-voice cloud provider (ElevenLabs, Azure, Google Cloud TTS, ...) can be swapped in
+// later by writing one module with the same speak(text, voice, rate)/cancel() contract that
+// pickVoiceForPersona()/applyVoice() below already isolate everything else from — nothing above
+// this comment block would need to change.
+//
+// Each persona is a real, distinct combination of: (1) an actual different browser voice where
+// the device/OS exposes one (via genderSlot's categorizeVoices() heuristic, or an exact voice via
+// providerVoiceId when configured), (2) its own base speaking rate, and (3) its own inter-
+// utterance pause length — never pitch alone, which would just be the same voice sped up or
+// slowed down. How distinct that actually sounds is bounded by what voices the browser/OS expose
+// (see categorizeVoices' own comment) — this doesn't pretend otherwise.
+const VOICE_PROFILES = {
+  ben: {
+    id:"ben", name:"Ben", gender:"male", style:"warm_calm_personal",
+    traits:"Warm • Calm • Personal", isDefault:true,
+    previewLine:"Hey, you've got two things coming up today. Want me to help you prioritise them?",
+    speed:1.00, pauseMs:90, genderSlot:"male-1",
+    // Configurable per the spec, not hardcoded inline: set VITE_TTS_VOICE_BEN to an exact
+    // browser voice name (or a substring of one) to pin this persona to it. Unset (the common
+    // case) falls back to the genderSlot heuristic above.
+    providerVoiceId: import.meta.env.VITE_TTS_VOICE_BEN || null,
+  },
+  atlas: {
+    id:"atlas", name:"Atlas", gender:"male", style:"deep_analytical_professional",
+    traits:"Deep • Professional • Analytical", isDefault:false,
+    previewLine:"Your spending is above this month's target. I've identified three areas where you can reduce your expenses.",
+    speed:0.87, pauseMs:130, genderSlot:"male-2",
+    providerVoiceId: import.meta.env.VITE_TTS_VOICE_ATLAS || null,
+  },
+  mira: {
+    id:"mira", name:"Mira", gender:"female", style:"warm_elegant_reassuring",
+    traits:"Warm • Elegant • Reassuring", isDefault:false,
+    previewLine:"Good morning. You've got a busy day ahead, but I've already organised everything for you.",
+    speed:0.97, pauseMs:100, genderSlot:"female-1",
+    providerVoiceId: import.meta.env.VITE_TTS_VOICE_MIRA || null,
+  },
+  nova: {
+    id:"nova", name:"Nova", gender:"female", style:"energetic_modern_expressive",
+    traits:"Energetic • Modern • Expressive", isDefault:false,
+    previewLine:"Alright, you're all set! Your meeting starts in twenty minutes, and I've pulled up everything you'll need.",
+    speed:1.12, pauseMs:60, genderSlot:"female-2",
+    providerVoiceId: import.meta.env.VITE_TTS_VOICE_NOVA || null,
+  },
+};
+const DEFAULT_VOICE_ID = "ben";
+// Earlier builds persisted a raw browser-voice slot (female-1/female-2/male-1/male-2) instead of
+// a persona. Mapped forward once on load so a returning user's saved choice still resolves to a
+// real persona instead of silently resetting — see hydrateAllGroups.
+const LEGACY_VOICE_SLOT_MAP = { "male-1":"ben", "male-2":"atlas", "female-1":"mira", "female-2":"nova" };
+const resolveVoiceId = raw => VOICE_PROFILES[raw] ? raw : (LEGACY_VOICE_SLOT_MAP[raw] || DEFAULT_VOICE_ID);
+
+// Small, non-theatrical delivery shifts layered on top of a persona's own base pace — the
+// "VOICE BEHAVIOUR" KROFT should show, never exaggerated acting. Applied as a multiplier on the
+// persona's own speed/pause, so Atlas-reading-a-warning is still recognizably Atlas, just a touch
+// more deliberate than Atlas-normal.
+const SPEECH_CONTEXTS = {
+  normal:      { rateMul:1.00, pauseMul:1.00 },
+  warning:     { rateMul:0.92, pauseMul:1.25 },
+  celebration: { rateMul:1.08, pauseMul:0.85 },
+  reminder:    { rateMul:1.00, pauseMul:1.00 },
+  sensitive:   { rateMul:0.90, pauseMul:1.30 },
+};
+
+// Set from KroftApp whenever the signed-in user's chosen voice (persisted per-account, see
+// voicePref) or speed preference changes. Lives at module scope, outside React, because
+// speak()/speakSequence()/createSpeechQueue() are plain functions called from all over this
+// file, not hooks with access to component state.
+let preferredVoiceId = DEFAULT_VOICE_ID;
+const setPreferredVoiceId = id => { preferredVoiceId = resolveVoiceId(id); };
+let preferredVoiceSpeed = 1.0;
+const setPreferredVoiceSpeed = mul => { preferredVoiceSpeed = typeof mul === "number" && mul > 0 ? mul : 1.0; };
 
 // Assigning an incompatible value to utterance.voice throws synchronously — a real browser
 // behavior (reproduced directly: SpeechSynthesisUtterance.voice's setter validates its argument
@@ -313,8 +382,8 @@ const setPreferredVoiceKey = key => { preferredVoiceKey = key; };
 // Uncaught inside a speechSynthesis callback or a React effect, that silently kills the entire
 // read-aloud attempt — no visible error, just dead air where the briefing or a wellness tip
 // should have played. Every speak call site funnels through here so a voice picked by
-// categorizeVoices/pickVoice, however it was obtained, can never take down speech entirely — it
-// falls back to the platform's own default voice for the language instead.
+// categorizeVoices/pickVoiceForPersona, however it was obtained, can never take down speech
+// entirely — it falls back to the platform's own default voice for the language instead.
 const applyVoice = (u, voice) => {
   u.lang = voice?.lang || "en-US";
   if (!voice) return;
@@ -324,20 +393,37 @@ const applyVoice = (u, voice) => {
 // getVoices() returns an empty list on the first call in Chrome until the engine finishes
 // loading them and fires voiceschanged — so picking a voice synchronously silently failed on
 // the very first read-aloud of a session, falling back to the default robotic voice.
-const pickVoice = () => {
+// voiceIdOverride: used by the voice-picker's own Preview button to audition a persona without
+// changing the person's actual saved preference (preferredVoiceId stays untouched).
+const pickVoiceForPersona = voiceIdOverride => {
+  const profile = VOICE_PROFILES[resolveVoiceId(voiceIdOverride || preferredVoiceId)];
   const vs = window.speechSynthesis.getVoices();
-  if (!vs.length) return null;
-  if (preferredVoiceKey) {
-    const chosen = categorizeVoices(vs)[preferredVoiceKey];
-    if (chosen) return chosen;
+  if (!vs.length) return { profile, voice:null };
+  if (profile.providerVoiceId) {
+    const hit = vs.find(v => v.voiceURI===profile.providerVoiceId || v.name===profile.providerVoiceId || v.name.toLowerCase().includes(profile.providerVoiceId.toLowerCase()));
+    if (hit) return { profile, voice:hit };
   }
-  return vs.find(v => /Samantha|Google US English|Karen|Serena/i.test(v.name))
+  const bySlot = categorizeVoices(vs)[profile.genderSlot];
+  if (bySlot) return { profile, voice:bySlot };
+  const fallback = vs.find(v => /Samantha|Google US English|Karen|Serena/i.test(v.name))
       || vs.find(v => v.lang === "en-US" && !/compact/i.test(v.name))
       || vs.find(v => v.lang?.startsWith("en"))
       || null;
+  return { profile, voice:fallback };
 };
 
-function speak(raw) {
+// A persona's base rate/pause, adjusted by the delivery context (see SPEECH_CONTEXTS) and the
+// person's own speed preference (Settings' Slower/Normal/Faster) — every speak call site funnels
+// through this so the three levers never drift out of sync with each other.
+const computeDelivery = (profile, context) => {
+  const ctx = SPEECH_CONTEXTS[context] || SPEECH_CONTEXTS.normal;
+  return { rate: profile.speed * ctx.rateMul * preferredVoiceSpeed, pauseMs: Math.round(profile.pauseMs * ctx.pauseMul) };
+};
+
+// opts.context: one of SPEECH_CONTEXTS' keys — see "VOICE BEHAVIOUR" above computeDelivery.
+// opts.voiceId: auditions a specific persona for this call only (used by the voice picker's
+// Preview button); omitted, every other call site keeps using whatever the person has selected.
+function speak(raw, opts = {}) {
   if (!("speechSynthesis" in window)) return;
   const text = speechText(raw);
   if (!text) return;
@@ -352,14 +438,15 @@ function speak(raw) {
   const run = () => {
     if (started) return;
     started = true;
-    const voice = pickVoice();
+    const { profile, voice } = pickVoiceForPersona(opts.voiceId);
+    const { rate, pauseMs } = computeDelivery(profile, opts.context);
     let i = 0;
     const next = () => {
       if (i >= chunks.length) return;
       const u = new SpeechSynthesisUtterance(chunks[i++]);
-      u.rate = 0.95; u.pitch = 1.0; applyVoice(u, voice);
-      u.onend = next;
-      u.onerror = next;
+      u.rate = rate; u.pitch = 1.0; applyVoice(u, voice);
+      u.onend = () => setTimeout(next, pauseMs);
+      u.onerror = () => setTimeout(next, pauseMs);
       window.speechSynthesis.speak(u);
     };
     next();
@@ -379,24 +466,24 @@ const stopSpeaking = () => { if ("speechSynthesis" in window) window.speechSynth
 // anything is the single worst part of a voice assistant — several seconds of silence where the
 // person can't tell if it heard them. This queues each complete sentence the moment it lands, so
 // KROFT starts talking almost immediately and the rest arrives while it's still speaking.
-function createSpeechQueue({ onStart, onDone } = {}) {
+function createSpeechQueue({ onStart, onDone, context } = {}) {
   let spokenUpTo = 0;      // how much of the incoming text has been queued
   let queue = [];
   let speaking = false;
   let finished = false;
   let cancelled = false;
   let started = false;
-  let voice = null;
+  let delivery = null;
 
   const drain = () => {
     if (cancelled || speaking) return;
     if (!queue.length) { if (finished) onDone?.(); return; }
     speaking = true;
     if (!started) { started = true; onStart?.(); }
-    if (!voice) voice = pickVoice();
+    if (!delivery) { const { profile, voice } = pickVoiceForPersona(); delivery = { voice, ...computeDelivery(profile, context) }; }
     const u = new SpeechSynthesisUtterance(queue.shift());
-    u.rate = 0.95; u.pitch = 1.0; applyVoice(u, voice);
-    const next = () => { speaking = false; drain(); };
+    u.rate = delivery.rate; u.pitch = 1.0; applyVoice(u, delivery.voice);
+    const next = () => { speaking = false; setTimeout(drain, delivery.pauseMs); };
     u.onend = next; u.onerror = next;
     window.speechSynthesis.speak(u);
   };
@@ -427,7 +514,7 @@ function createSpeechQueue({ onStart, onDone } = {}) {
   };
 }
 
-function speakSequence(lines, { onLine, onDone } = {}) {
+function speakSequence(lines, { onLine, onDone, context, voiceId } = {}) {
   if (!("speechSynthesis" in window)) { lines.forEach((_, i) => onLine?.(i)); onDone?.(); return () => {}; }
   window.speechSynthesis.cancel();
   let cancelled = false;
@@ -439,7 +526,8 @@ function speakSequence(lines, { onLine, onDone } = {}) {
   const start = () => {
     if (started || cancelled) return;
     started = true;
-    const voice = pickVoice();
+    const { profile, voice } = pickVoiceForPersona(voiceId);
+    const { rate, pauseMs } = computeDelivery(profile, context);
     let li = 0;
     const speakLine = () => {
       if (cancelled) return;
@@ -452,9 +540,9 @@ function speakSequence(lines, { onLine, onDone } = {}) {
         if (cancelled) return;
         if (ci >= chunks.length) { li++; speakLine(); return; }
         const u = new SpeechSynthesisUtterance(chunks[ci++]);
-        u.rate = 0.95; u.pitch = 1.0; applyVoice(u, voice);
-        u.onend = nextChunk;
-        u.onerror = nextChunk;
+        u.rate = rate; u.pitch = 1.0; applyVoice(u, voice);
+        u.onend = () => setTimeout(nextChunk, pauseMs);
+        u.onerror = () => setTimeout(nextChunk, pauseMs);
         window.speechSynthesis.speak(u);
       };
       nextChunk();
@@ -1510,7 +1598,7 @@ function ProfileSwitch({ value, onChange }) {
   );
 }
 
-function ProfileSection({ user, onUpdateName, onEditPreferences, onEditBusinessDetails, onSignOut, theme, onToggleTheme, toast, subscribed, subscriptionStatus, autoRenews, billingLoading, onUpgrade, onManageBilling, usageStats, voiceReplies, onSetVoiceReplies, proactiveInsights, onSetProactiveInsights, voicePref, onSetVoicePref, onSetupBiometric, onRemoveBiometric, onExportData, onImportData, notifPermission, notifPrefs, onEnableNotifications, onSetNotifPref, onTestNotification, voiceTurnsCount, voiceLimit }) {
+function ProfileSection({ user, onUpdateName, onEditPreferences, onEditBusinessDetails, onSignOut, theme, onToggleTheme, toast, subscribed, subscriptionStatus, autoRenews, billingLoading, onUpgrade, onManageBilling, usageStats, voiceReplies, onSetVoiceReplies, proactiveInsights, onSetProactiveInsights, voicePref, onSetVoicePref, voiceSpeed, onSetVoiceSpeed, onSetupBiometric, onRemoveBiometric, onExportData, onImportData, notifPermission, notifPrefs, onEnableNotifications, onSetNotifPref, onTestNotification, voiceTurnsCount, voiceLimit }) {
   // null = main hub. Otherwise one of: "ai" | "productivity" | "privacy" | "subscription" | "support"
   const [screen, setScreen] = useState(null);
   const [openRow, setOpenRow] = useState(null);
@@ -1558,23 +1646,37 @@ function ProfileSection({ user, onUpdateName, onEditPreferences, onEditBusinessD
         <ProfileRow label="AI Memory" sub="What KROFT remembers about you" expanded={openRow==="memory"} onToggle={()=>toggle("memory")}>
           <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>{isSupabaseConfigured ? "KROFT remembers your recent conversation (the last 60 messages) across visits, plus your finances, appointments, and mood, to answer with real context. It's kept in your own account and never shared with other KROFT users." : "KROFT remembers your recent conversation (the last 60 messages) on this device, plus your finances, appointments, and mood, to answer with real context. Nothing leaves this device in local-only mode."}</Mono>
         </ProfileRow>
-        <ProfileRow label="Voice & Language" sub="English (US) · Voice replies" expanded={openRow==="voice"} onToggle={()=>toggle("voice")}
+        <ProfileRow label="Voice & Language" sub={`English (US) · ${VOICE_PROFILES[resolveVoiceId(voicePref)].name}`} expanded={openRow==="voice"} onToggle={()=>toggle("voice")}
           right={<ProfileSwitch value={voiceReplies} onChange={onSetVoiceReplies} />}>
-          <Mono style={{ display:"block", color:C.soft, lineHeight:1.7, marginBottom:12 }}>{voiceReplies ? "KROFT speaks replies and reminders aloud." : "KROFT will stay silent unless you tap Read Aloud."}</Mono>
-          <Mono style={{ display:"block", color:C.soft, marginBottom:8 }}>Voice</Mono>
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8, marginBottom:8 }}>
-            {[
-              { key:"female-1", label:"Female 1" },
-              { key:"female-2", label:"Female 2" },
-              { key:"male-1", label:"Male 1" },
-              { key:"male-2", label:"Male 2" },
-            ].map(v => (
-              <button key={v.key} onClick={() => onSetVoicePref(v.key)} style={{ padding:"10px 6px", borderRadius:10, cursor:"pointer", textAlign:"center", background:voicePref===v.key?C.white:C.surface, border:`1px solid ${voicePref===v.key?C.white:C.cardB}`, color:voicePref===v.key?C.black:C.text, fontSize:12, fontWeight:700, fontFamily:"'Space Grotesk',sans-serif" }}>
-                {v.label}
+          <Mono style={{ display:"block", color:C.soft, lineHeight:1.7, marginBottom:14 }}>{voiceReplies ? "KROFT speaks replies and reminders aloud." : "KROFT will stay silent unless you tap Read Aloud — voice is never required to use KROFT."}</Mono>
+          <Mono style={{ display:"block", color:C.white, marginBottom:2 }}>KROFT Voice</Mono>
+          <Mono style={{ display:"block", color:C.muted, marginBottom:10 }}>Choose how KROFT sounds.</Mono>
+          {Object.values(VOICE_PROFILES).map(v => {
+            const selected = resolveVoiceId(voicePref)===v.id;
+            return (
+              <div key={v.id} role="button" tabIndex={0} onClick={() => onSetVoicePref(v.id)} onKeyDown={e => { if (e.key==="Enter"||e.key===" ") { e.preventDefault(); onSetVoicePref(v.id); } }}
+                style={{ display:"flex", alignItems:"center", gap:11, padding:"12px 14px", borderRadius:18, marginBottom:8, cursor:"pointer", background:selected?C.white:C.surface, border:`1px solid ${selected?C.white:C.cardB}` }}>
+                <div style={{ flex:1, minWidth:0 }}>
+                  <div style={{ display:"flex", alignItems:"center", gap:7, flexWrap:"wrap" }}>
+                    <span style={{ fontWeight:700, fontSize:13, color:selected?C.black:C.text }}>{v.name}</span>
+                    {v.isDefault && <span style={{ fontSize:9, fontWeight:700, letterSpacing:.6, color:selected?C.black:C.muted, opacity:.65 }}>DEFAULT</span>}
+                  </div>
+                  <div style={{ fontSize:11, color:selected?C.black:C.muted, opacity:selected?.75:1 }}>{v.traits}</div>
+                </div>
+                <button onClick={e => { e.stopPropagation(); speak(v.previewLine, { voiceId:v.id }); }} aria-label={`Preview ${v.name}`} title="Play preview"
+                  style={{ width:32, height:32, borderRadius:"50%", flexShrink:0, border:`1px solid ${selected?C.black:C.cardB}`, background:"transparent", display:"flex", alignItems:"center", justifyContent:"center", cursor:"pointer", color:selected?C.black:C.text, fontSize:12 }}>▶</button>
+              </div>
+            );
+          })}
+          <Mono style={{ display:"block", color:C.white, marginTop:6, marginBottom:8 }}>Speaking speed</Mono>
+          <div style={{ display:"flex", gap:8, marginBottom:10 }}>
+            {[{ m:0.85, l:"Slower" }, { m:1.0, l:"Normal" }, { m:1.15, l:"Faster" }].map(s => (
+              <button key={s.l} onClick={() => onSetVoiceSpeed(s.m)} style={{ flex:1, padding:"9px 6px", borderRadius:10, cursor:"pointer", textAlign:"center", background:(voiceSpeed||1)===s.m?C.white:C.surface, border:`1px solid ${(voiceSpeed||1)===s.m?C.white:C.cardB}`, color:(voiceSpeed||1)===s.m?C.black:C.text, fontSize:12, fontWeight:700, fontFamily:"'Space Grotesk',sans-serif" }}>
+                {s.l}
               </button>
             ))}
           </div>
-          <Mono style={{ display:"block", color:C.muted, lineHeight:1.6 }}>Tap one to hear it — the exact voices available depend on your device and browser.</Mono>
+          <Mono style={{ display:"block", color:C.muted, lineHeight:1.6 }}>Tap a voice to hear it and select it, or use ▶ to preview without switching. Volume follows your device's own volume control. The exact voice available for each option depends on your device and browser.</Mono>
         </ProfileRow>
         <ProfileRow label="Appearance" sub={theme==="dark" ? "Dark mode" : "Light mode"} expanded={openRow==="appearance"} onToggle={()=>toggle("appearance")}>
           <Mono style={{ display:"block", color:C.soft, lineHeight:1.7, marginBottom:12 }}>Switch between dark and light. Both use only black, white and off-white — no grey.</Mono>
@@ -2116,12 +2218,16 @@ function KroftApp({ onFullReset } = {}) {
   // below. When off, KROFT should only respond when asked, not surface unprompted toasts.
   const [proactiveInsights, setProactiveInsights] = useState(true);
 
-  // Which of the four voice slots (see categorizeVoices) KROFT speaks with — persisted
-  // per-account like every other preference here. Kept in sync with the module-level TTS
-  // functions below, since speak()/speakSequence() live outside React and read preferredVoiceKey
-  // directly rather than taking it as an argument on every call site.
-  const [voicePref, setVoicePref] = useState("female-1");
-  useEffect(() => { setPreferredVoiceKey(voicePref); }, [voicePref]);
+  // Which of the four KROFT voices (Ben/Atlas/Mira/Nova — see VOICE_PROFILES) KROFT speaks
+  // with — persisted per-account like every other preference here. Kept in sync with the
+  // module-level TTS functions below, since speak()/speakSequence() live outside React and read
+  // preferredVoiceId directly rather than taking it as an argument on every call site.
+  const [voicePref, setVoicePref] = useState(DEFAULT_VOICE_ID);
+  useEffect(() => { setPreferredVoiceId(voicePref); }, [voicePref]);
+  // Speed multiplier applied on top of the selected voice's own base pace (Settings'
+  // Slower/Normal/Faster) — the accessibility "speech speed setting" the voice spec calls for.
+  const [voiceSpeed, setVoiceSpeed] = useState(1.0);
+  useEffect(() => { setPreferredVoiceSpeed(voiceSpeed); }, [voiceSpeed]);
 
   // Starts at signup. With Supabase configured, the load effect below jumps straight to the
   // dashboard when a real session already exists (a returning, still-signed-in user), the same
@@ -2496,7 +2602,10 @@ function KroftApp({ onFullReset } = {}) {
       if (p.theme) setTheme(p.theme);
       if (typeof p.voiceReplies === "boolean") setVoiceReplies(p.voiceReplies);
       if (typeof p.proactiveInsights === "boolean") setProactiveInsights(p.proactiveInsights);
-      if (typeof p.voicePref === "string") setVoicePref(p.voicePref);
+      // resolveVoiceId maps a pre-persona save (the old female-1/male-2/etc. slot keys) forward
+      // to its nearest new persona, so a returning user's saved choice never silently resets.
+      if (typeof p.voicePref === "string") setVoicePref(resolveVoiceId(p.voicePref));
+      if (typeof p.voiceSpeed === "number") setVoiceSpeed(p.voiceSpeed);
       if (p.notifPrefs) setNotifPrefs(v => ({ ...v, ...p.notifPrefs }));
       if (p.dailyBriefSentDate) setDailyBriefSentDate(p.dailyBriefSentDate);
       if (typeof p.voiceTurnsCount === "number") setVoiceTurnsCount(p.voiceTurnsCount);
@@ -2602,13 +2711,13 @@ function KroftApp({ onFullReset } = {}) {
   // subscribed is deliberately excluded — see hydrateAllGroups's comment on why it's never
   // restored from this same blob; persisting it here would just re-create the value this app
   // must never trust from client storage in the first place.
-  const saveProfileNow = () => window.storage.set(STORAGE_KEYS.profile, JSON.stringify({ user, theme, voiceReplies, proactiveInsights, voicePref, incomeCats, expenseCats, notifPrefs, dailyBriefSentDate, voiceTurnsCount, voiceTurnsDate, taxSetAsidePct }), false);
+  const saveProfileNow = () => window.storage.set(STORAGE_KEYS.profile, JSON.stringify({ user, theme, voiceReplies, proactiveInsights, voicePref, voiceSpeed, incomeCats, expenseCats, notifPrefs, dailyBriefSentDate, voiceTurnsCount, voiceTurnsDate, taxSetAsidePct }), false);
 
   useEffect(() => {
     if (!dataLoaded) return;
     const t = setTimeout(() => { saveProfileNow().catch(()=>{}); }, 900);
     return () => clearTimeout(t);
-  }, [dataLoaded, user, theme, voiceReplies, proactiveInsights, voicePref, incomeCats, expenseCats, notifPrefs, dailyBriefSentDate, voiceTurnsCount, voiceTurnsDate, taxSetAsidePct]);
+  }, [dataLoaded, user, theme, voiceReplies, proactiveInsights, voicePref, voiceSpeed, incomeCats, expenseCats, notifPrefs, dailyBriefSentDate, voiceTurnsCount, voiceTurnsDate, taxSetAsidePct]);
 
   useEffect(() => {
     if (!dataLoaded) return;
@@ -2988,7 +3097,7 @@ function KroftApp({ onFullReset } = {}) {
     if (m==="stressed"||m==="angry") {
       setWellness(s => Math.max(10, s-13));
       const tip = rand(["Take 5 slow breaths.","Step away from your screen for 10 minutes.","Drink a full glass of water.","A short walk resets your focus."]);
-      if (voiceReplies) speak(`${firstNameOf(user.name)||"Hey"}, I'm sensing stress. ${tip}`); toast(tip);
+      if (voiceReplies) speak(`${firstNameOf(user.name)||"Hey"}, I'm sensing stress. ${tip}`, { context:"sensitive" }); toast(tip);
     } else if (m==="happy") { setWellness(s => Math.min(100, s+7)); toast("Great energy. Wellness score up."); }
     else toast(`Mood: ${m}`);
   };
@@ -4028,6 +4137,7 @@ function KroftApp({ onFullReset } = {}) {
     setVoiceReply("");
     const msg = `Hey ${firstNameOf(user.name)||"there"}, this is your reminder call — ${call.title}.${call.note ? ` ${call.note}` : ""}`;
     voiceStopRef.current = speakSequence([msg], {
+      context:"reminder",
       onDone: () => { voiceStopRef.current = null; if (voiceOpenRef.current) voiceListen(); },
     });
   };
@@ -8787,7 +8897,9 @@ ${voiceMode
               proactiveInsights={proactiveInsights}
               onSetProactiveInsights={setProactiveInsights}
               voicePref={voicePref}
-              onSetVoicePref={key => { setPreferredVoiceKey(key); setVoicePref(key); speak("Hi, this is how I sound."); }}
+              onSetVoicePref={setVoicePref}
+              voiceSpeed={voiceSpeed}
+              onSetVoiceSpeed={setVoiceSpeed}
               onSetupBiometric={setupBiometric}
               onRemoveBiometric={removeBiometric}
               usageStats={{
