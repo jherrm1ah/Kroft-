@@ -586,7 +586,11 @@ const CARD_LEVELS = {
   // back to the bubble-y original.
   raised: { radius:20, pad:20, shadow:() => C.shadowRaised },
   base:   { radius:16, pad:16, shadow:() => C.shadowBase },
-  inset:  { radius:12, pad:12, shadow:() => "none" },
+  // inset was left at the old 12 during that pass — almost every use of it is a single, centered
+  // "nothing here yet" empty-state card (never stacked, so the bubble concern above doesn't
+  // apply), which is exactly the kind of card that reads worst when it's the sharpest-cornered
+  // thing on the whole screen. Raised to match `raised` above.
+  inset:  { radius:20, pad:12, shadow:() => "none" },
 };
 const Card = ({ children, style, onClick, hi, level="base", ...rest }) => {
   const L = CARD_LEVELS[level] || CARD_LEVELS.base;
