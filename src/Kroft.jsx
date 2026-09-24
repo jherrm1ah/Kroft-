@@ -8318,25 +8318,38 @@ ${voiceMode
                     style={{ background:C.card, border:`1px solid ${C.cardB}`, borderRadius:"50%", width:34, height:34, flexShrink:0, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>
                     <NavIcon id="plus" size={16} color={C.text} />
                   </button>
-                  {/* One button in one place: the mic sits there until you start typing, then it
-                      becomes Send. Showing both at once meant a permanently greyed-out Send
-                      taking up space next to a mic you'd use far more often. */}
-                  {aiLoading ? (
-                    <button onClick={stopReply} aria-label="Stop generating" title="Stop"
-                      style={{ background:C.text, border:"none", borderRadius:"50%", width:36, height:36, flexShrink:0, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>
-                      <span style={{ width:11, height:11, borderRadius:3, background:C.card, display:"block" }} />
-                    </button>
-                  ) : aiInput.trim() ? (
-                    <button onClick={() => askKroft()} aria-label="Send message" title="Send"
-                      style={{ background:C.text, border:"none", borderRadius:"50%", width:36, height:36, flexShrink:0, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", animation:"pop .18s ease" }}>
-                      <NavIcon id="send" size={17} color={C.card} />
-                    </button>
-                  ) : (
-                    <button onClick={() => { setVoiceOpen(true); setVoiceState("idle"); setVoiceError(""); }} aria-label="Open voice mode" title="Voice mode"
-                      style={{ background:C.text, border:"none", borderRadius:"50%", width:36, height:36, flexShrink:0, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>
-                      <NavIcon id="waveform" size={17} color={C.card} />
-                    </button>
-                  )}
+                  <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                    {/* Dictate-and-review: unlike the black button's live voice mode (a spoken
+                        back-and-forth conversation), this records one utterance, transcribes it
+                        into the text field via the same toggleListen already used elsewhere
+                        (Notes' own Voice button), and stops there — reviewing before Send stays
+                        possible, rather than sending the instant speech recognition finishes. */}
+                    {SRSupported && !aiLoading && (
+                      <button onClick={toggleListen} aria-label={listening ? "Stop recording" : "Dictate a message"} title={listening ? "Stop recording" : "Dictate a message"}
+                        style={{ background:listening?C.accentBg:C.card, border:`1px solid ${listening?C.accent:C.cardB}`, borderRadius:"50%", width:36, height:36, flexShrink:0, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>
+                        <NavIcon id="mic" size={16} color={listening?C.accent:C.text} />
+                      </button>
+                    )}
+                    {/* One button in one place: the mic sits there until you start typing, then it
+                        becomes Send. Showing both at once meant a permanently greyed-out Send
+                        taking up space next to a mic you'd use far more often. */}
+                    {aiLoading ? (
+                      <button onClick={stopReply} aria-label="Stop generating" title="Stop"
+                        style={{ background:C.text, border:"none", borderRadius:"50%", width:36, height:36, flexShrink:0, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>
+                        <span style={{ width:11, height:11, borderRadius:3, background:C.card, display:"block" }} />
+                      </button>
+                    ) : aiInput.trim() ? (
+                      <button onClick={() => askKroft()} aria-label="Send message" title="Send"
+                        style={{ background:C.text, border:"none", borderRadius:"50%", width:36, height:36, flexShrink:0, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", animation:"pop .18s ease" }}>
+                        <NavIcon id="send" size={17} color={C.card} />
+                      </button>
+                    ) : (
+                      <button onClick={() => { setVoiceOpen(true); setVoiceState("idle"); setVoiceError(""); }} aria-label="Open voice mode" title="Voice mode"
+                        style={{ background:C.text, border:"none", borderRadius:"50%", width:36, height:36, flexShrink:0, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>
+                        <NavIcon id="waveform" size={17} color={C.card} />
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>
