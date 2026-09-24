@@ -8124,10 +8124,10 @@ ${voiceMode
                 {aiMessages.length > 1 && (
                   <button onClick={startNewChat} className="hbtn" aria-label="Start a new conversation" title="New chat" style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:8, padding:"6px 12px", cursor:"pointer", color:C.soft, fontSize:11, fontWeight:700 }}>New chat</button>
                 )}
+                {/* No separate header "Voice" button anymore — the input bar's own black
+                    circular button already opens voice mode when the field is empty, so this
+                    was a second way to do the exact same thing. */}
                 <button onClick={() => setShowBriefing(true)} className="hbtn" style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:8, padding:"6px 12px", cursor:"pointer", color:C.soft, fontSize:11, fontWeight:700 }}>Brief</button>
-                <button onClick={() => { setVoiceOpen(true); setVoiceState("idle"); setVoiceError(""); }} className="hbtn" style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:8, padding:"6px 12px", cursor:"pointer", display:"flex", alignItems:"center", gap:6, color:C.soft, fontSize:11, fontWeight:700 }}>
-                  <NavIcon id="mic" size={13} color={C.soft} />Voice
-                </button>
               </div>
             </div>
             <div style={{ flex:1, minHeight:0, position:"relative" }}>
