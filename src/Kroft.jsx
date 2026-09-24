@@ -7771,35 +7771,40 @@ ${voiceMode
             {!hungry ? (
               <Card style={{ marginBottom:16, border:`1px solid ${C.soft}` }} hi>
                 <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:12 }}>
-                  <div><div style={{ fontWeight:700, fontSize:14, color:C.white, marginBottom:3 }}>Feeling hungry?</div><Mono style={{ color:C.soft }}>KROFT suggests what to eat based on your schedule.</Mono></div>
-                  <Btn onClick={() => { setHungry(true); if (voiceReplies) speak(`Hey ${firstNameOf(user.name)||"there"}, I'd suggest the Harvest Bowl from Sweetgreen. Light, healthy, just 0.1 miles away.`); toast("KROFT pick: Harvest Bowl at Sweetgreen"); }}>Yes, I'm hungry</Btn>
+                  <div><div style={{ fontWeight:700, fontSize:14, color:C.white, marginBottom:3 }}>Feeling hungry?</div><Mono style={{ color:C.soft }}>Find a real restaurant near you right now.</Mono></div>
+                  <Btn onClick={() => { setHungry(true); setAroundCategory("restaurant"); setAroundQuery(""); searchNearby("Restaurants"); }}>Yes, I'm hungry</Btn>
                 </div>
               </Card>
             ) : (
               <Card style={{ marginBottom:14, border:`1px solid ${C.soft}` }} hi>
-                <Mono style={{ display:"block", color:C.white, marginBottom:5, letterSpacing:.8 }}>KROFT'S TOP PICK</Mono>
-                <div style={{ fontSize:16, fontWeight:700, color:C.white, marginBottom:4 }}>Harvest Bowl · Sweetgreen</div>
-                <div style={{ fontSize:13, color:C.soft, lineHeight:1.6, marginBottom:12 }}>Light, energising, 0.1 mi away. High protein, no post-lunch crash.</div>
-                <div style={{ display:"flex", gap:8 }}><Btn sm onClick={() => setUberDest({name:"Sweetgreen",dist:"0.1 mi"})}>Uber there</Btn><Btn sm v="outline" onClick={() => setHungry(false)}>Reset</Btn></div>
+                <Mono style={{ display:"block", color:C.white, marginBottom:5, letterSpacing:.8 }}>NEARBY PICK</Mono>
+                {/* Grounded in the same real Nominatim search "Nearby places" uses below — no
+                    fabricated name, rating, cuisine, or "suggested dish", since none of that is
+                    data KROFT actually has. */}
+                {aroundLoading ? (
+                  <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+                    <Spinner size={16} color={C.white} thickness={2} />
+                    <Mono style={{ color:C.soft }}>Finding something nearby…</Mono>
+                  </div>
+                ) : aroundResults.length > 0 ? (
+                  <>
+                    <div style={{ fontSize:16, fontWeight:700, color:C.white, marginBottom:4 }}>{aroundResults[0].name}</div>
+                    <div style={{ fontSize:13, color:C.soft, lineHeight:1.6, marginBottom:12 }}>{aroundResults[0].address} · {distanceFrom(aroundResults[0].lat, aroundResults[0].lng)} away</div>
+                    <div style={{ display:"flex", gap:8 }}>
+                      <Btn sm onClick={() => setUberDest({ name:aroundResults[0].name, location:aroundResults[0].address })}>Uber there</Btn>
+                      <Btn sm v="outline" onClick={() => setHungry(false)}>Reset</Btn>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <Mono style={{ display:"block", color:C.muted, marginBottom:12 }}>
+                      {locationStatus!=="granted" ? "Turn on location below to find something nearby." : "Nothing found nearby right now."}
+                    </Mono>
+                    <Btn sm v="outline" onClick={() => setHungry(false)}>Reset</Btn>
+                  </>
+                )}
               </Card>
             )}
-            {[{id:1,name:"Sweetgreen",cuisine:"Healthy Bowls",dist:"0.1 mi",rating:"4.5",suggest:"Harvest Bowl",why:"Light energy before any meeting."},{id:2,name:"The Capital Grille",cuisine:"Steakhouse",dist:"0.3 mi",rating:"4.8",suggest:"Filet Mignon",why:"Great for client dinners."},{id:3,name:"Nobu",cuisine:"Japanese Fusion",dist:"0.5 mi",rating:"4.9",suggest:"Black Cod Miso",why:"Celebrate a great week."}].map(r => (
-              <Card key={r.id} style={{ marginBottom:11 }}>
-                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", flexWrap:"wrap", gap:10 }}>
-                  <div>
-                    <div style={{ display:"flex", alignItems:"center", gap:9, marginBottom:5 }}><span style={{ fontWeight:700, fontSize:14, color:C.white }}>{r.name}</span><Tag tone="positive">{r.rating}</Tag></div>
-                    <Mono style={{ display:"block", color:C.soft, marginBottom:3 }}>{r.cuisine} · {r.dist}</Mono>
-                    <div style={{ fontSize:12, color:C.soft }}>Suggested: <span style={{ color:C.white, fontWeight:700 }}>{r.suggest}</span></div>
-                    <Mono style={{ display:"block", color:C.soft, marginTop:2, fontStyle:"italic" }}>{r.why}</Mono>
-                  </div>
-                  <div style={{ display:"flex", gap:7, flexWrap:"wrap" }}>
-                    <Btn sm onClick={() => { if (voiceReplies) speak(`${r.suggest} at ${r.name}. ${r.why}`); toast(`KROFT: ${r.why}`); }}>Suggest</Btn>
-                    <Btn sm v="outline" onClick={() => setUberDest({name:r.name,dist:r.dist})}>Uber</Btn>
-                    <Btn sm v="outline" onClick={() => { setTab("nova"); setAiInput(`Tell me about ${r.name} and what I should order`); }}>Ask</Btn>
-                  </div>
-                </div>
-              </Card>
-            ))}
 
             <Mono style={{ display:"block", color:C.soft, margin:"22px 0 9px", letterSpacing:.8 }}>Nearby places</Mono>
 
