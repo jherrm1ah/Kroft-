@@ -891,6 +891,8 @@ const NavIcon = ({ id, size=20, color="currentColor" }) => {
       return <svg viewBox="0 0 24 24" style={s}><path d="M12 3.5c3.5 4.2 6 7.6 6 10.8a6 6 0 0 1-12 0c0-3.2 2.5-6.6 6-10.8z" {...p} /></svg>;
     case "coffee":
       return <svg viewBox="0 0 24 24" style={s}><path d="M5 9h11v6a4 4 0 0 1-4 4H9a4 4 0 0 1-4-4z" {...p} /><path d="M16 10.5h1.5a2.5 2.5 0 0 1 0 5H16" {...p} /><path d="M8 5.5v1.5M11 5.5v1.5M14 5.5v1.5" {...p} /></svg>;
+    case "flame":
+      return <svg viewBox="0 0 24 24" style={s}><path d="M12 3c1 3-3 4.5-3 8a3 3 0 0 0 6 0c1 1 1.5 2.3 1.5 3.5a4.5 4.5 0 0 1-9 0C7.5 10.5 10 8 12 3z" {...p} /></svg>;
     case "send":
       return <svg viewBox="0 0 24 24" style={s}><path d="M4.5 12h14" {...p} /><path d="M12.5 5.5 19 12l-6.5 6.5" {...p} /></svg>;
     case "edit":
@@ -2742,6 +2744,27 @@ function KroftApp({ onFullReset } = {}) {
       .slice(-14)
       .map(e => ({ ...e, label: e.date === today ? "Today" : new Date(e.date + "T00:00:00").toLocaleDateString("en-US", { month:"short", day:"numeric" }) }));
   }, [wellnessHistory, wellness]);
+
+  // Consecutive days actually checked in — a real, honest streak of engagement (a mood logged
+  // that day), not just "the app happened to be open" (the wellness score itself exists every
+  // day automatically, so it can't tell active use from a day nobody touched wellness at all).
+  // Today not having a mood logged yet doesn't break the streak before the day is even over —
+  // it just isn't counted until it happens, same as how a habit tracker treats "still open".
+  const wellnessStreak = useMemo(() => {
+    const days = new Set(moodLog.map(m => m.date).filter(Boolean));
+    const today = todayISO();
+    let streak = 0;
+    // todayISO() is UTC-based (new Date().toISOString().slice(0,10)), so every step here stays
+    // in UTC too (setUTCDate, not setDate) — mixing local-time decrements with a UTC-serialized
+    // comparison would silently shift the date by a day near midnight in some timezones.
+    const cursor = new Date(today + "T00:00:00Z");
+    if (!days.has(today)) cursor.setUTCDate(cursor.getUTCDate() - 1);
+    while (days.has(cursor.toISOString().slice(0, 10))) {
+      streak++;
+      cursor.setUTCDate(cursor.getUTCDate() - 1);
+    }
+    return streak;
+  }, [moodLog]);
 
   // Weeks of the visible month for the calendar grid, Sunday-first, padded with the trailing days
   // of the previous/next month so every week row is a full 7 cells — those padding cells are
@@ -8040,7 +8063,18 @@ ${voiceMode
           <div style={{ animation:"fadeUp .4s ease" }}>
             <h2 style={{ fontSize:22, fontWeight:700, color:C.white, letterSpacing:-1, marginBottom:18 }}>Wellness</h2>
             <Card style={{ marginBottom:14, border:`1px solid ${wColor}55` }}>
-              <Mono style={{ display:"block", color:wColor, letterSpacing:.8, marginBottom:14, textAlign:"center" }}>Wellness score today</Mono>
+              <div style={{ display:"flex", justifyContent:"center", alignItems:"center", gap:10, marginBottom:14 }}>
+                <Mono style={{ color:wColor, letterSpacing:.8 }}>Wellness score today</Mono>
+                {/* Real streak — days with an actual mood check-in, not just the app being open
+                    (see wellnessStreak's own comment). Hidden at 0 rather than showing "0 days",
+                    which reads as a scoreboard shaming you on day one. */}
+                {wellnessStreak > 0 && (
+                  <div style={{ display:"flex", alignItems:"center", gap:4, background:C.warningBg, border:`1px solid ${C.warning}55`, borderRadius:20, padding:"3px 9px" }}>
+                    <NavIcon id="flame" size={11} color={C.warning} />
+                    <Mono style={{ color:C.warning, fontSize:10 }}>{wellnessStreak} day{wellnessStreak!==1?"s":""}</Mono>
+                  </div>
+                )}
+              </div>
               {/* A ring gauge reads as an actual wellness/fitness metric — the flat number-over-a-
                   bar it replaces looked like any other stat tile in the app, nothing that said
                   "this one is about you" the way a progress ring does. */}
