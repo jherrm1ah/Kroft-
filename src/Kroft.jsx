@@ -986,6 +986,10 @@ const NavIcon = ({ id, size=20, color="currentColor" }) => {
       return <svg viewBox="0 0 24 24" style={s}><path d="M12 3c1 3-3 4.5-3 8a3 3 0 0 0 6 0c1 1 1.5 2.3 1.5 3.5a4.5 4.5 0 0 1-9 0C7.5 10.5 10 8 12 3z" {...p} /></svg>;
     case "pin":
       return <svg viewBox="0 0 24 24" style={s}><path d="M12 3v6l4 3.5H8L12 9" {...p} /><path d="M12 12.5V21" {...p} /></svg>;
+    case "image":
+      return <svg viewBox="0 0 24 24" style={s}><rect x="3.5" y="4.5" width="17" height="15" rx="2" {...p} /><circle cx="8.5" cy="9.5" r="1.5" {...p} /><path d="m5 17 5-5 3.5 3.5L18 11l1.5 1.5" {...p} /></svg>;
+    case "file":
+      return <svg viewBox="0 0 24 24" style={s}><path d="M6.5 3.5h8l4 4v13h-12z" {...p} /><path d="M14.5 3.5v4h4" {...p} /></svg>;
     case "send":
       return <svg viewBox="0 0 24 24" style={s}><path d="M4.5 12h14" {...p} /><path d="M12.5 5.5 19 12l-6.5 6.5" {...p} /></svg>;
     case "edit":
@@ -2524,6 +2528,15 @@ function KroftApp({ onFullReset } = {}) {
   const [aiInput, setAiInput] = useState("");
   const [aiInputFocused, setAiInputFocused] = useState(false);
   const [aiLoading, setAiLoading] = useState(false);
+  // Pending attachments for the message currently being composed — cleared once it's sent.
+  // { id, kind:"image"|"file", name, type, size, dataUrl }. Images are genuinely sent to the AI
+  // as real inline image data (see runKroftCompletion below and api/_lib/gemini.js) — KROFT can
+  // actually see them. A non-image file isn't parsed or read; only its name goes to the model,
+  // same honesty as everywhere else in this app that doesn't pretend to a capability it lacks.
+  const [aiAttachments, setAiAttachments] = useState([]);
+  const [showAttachMenu, setShowAttachMenu] = useState(false);
+  const aiPhotoInputRef = useRef(null);
+  const aiFileInputRef = useRef(null);
   // Drives the floating "scroll to bottom" button — shown only once someone has actually
   // scrolled up to re-read earlier messages, not on every render.
   const [chatNearBottom, setChatNearBottom] = useState(true);
@@ -3767,6 +3780,31 @@ function KroftApp({ onFullReset } = {}) {
     });
   };
 
+  // Ask KROFT's own attach flow (the "+" in the message bar) — separate from the Files upload
+  // above since these are transient (held only until the message sends), never land in the
+  // Files list, and need a kind tag (image vs. file) to know how to send them to the AI: an
+  // image becomes a real inline image part in the request (see runKroftCompletion); a non-image
+  // file is never read, only its name is mentioned in the text sent.
+  const handleAiAttach = (e, kind) => {
+    const picked = Array.from(e.target.files || []);
+    e.target.value = "";
+    if (!picked.length) return;
+    const ok = picked.filter(f => f.size <= MAX_UPLOAD_FILE_BYTES);
+    const tooBig = picked.length - ok.length;
+    if (tooBig > 0) toast(`${tooBig} file${tooBig!==1?"s":""} skipped — over the 8MB limit.`);
+    if (!ok.length) return;
+    Promise.all(ok.map(f => new Promise(resolve => {
+      const reader = new FileReader();
+      reader.onload = () => resolve({ id:uid(), kind, name:f.name, type:f.type||"application/octet-stream", size:f.size, dataUrl:reader.result });
+      reader.onerror = () => resolve(null);
+      reader.readAsDataURL(f);
+    }))).then(results => {
+      const added = results.filter(Boolean);
+      if (added.length) setAiAttachments(p => [...p, ...added]);
+    });
+  };
+  const removeAiAttachment = id => setAiAttachments(p => p.filter(a => a.id !== id));
+
   // ── Voice mode ────────────────────────────────────────────────────────────────────────
   // A full turn loop: listen → transcribe → answer → speak → back to listening. The two
   // things that make or break this are echo (the mic hearing KROFT's own voice and treating
@@ -4560,6 +4598,26 @@ ${voiceMode
     : status === 400 ? "That request didn't go through. Try rephrasing it."
     : "Something went wrong reaching the AI service.";
 
+  // A message with image attachments is sent as real Anthropic-shaped content blocks (text +
+  // image) — api/_lib/gemini.js translates these into genuine Gemini inline image parts, so
+  // KROFT actually sees the image, not just a mention of it. A non-image file attachment is
+  // never parsed or read; only its name is folded into the text, the same honesty as everywhere
+  // else in this app about what it can and can't actually do.
+  const buildMessageContent = m => {
+    const atts = m.attachments || [];
+    if (!atts.length) return m.content;
+    const images = atts.filter(a => a.kind==="image");
+    const files = atts.filter(a => a.kind!=="image");
+    const text = files.length
+      ? `${m.content}${m.content ? "\n\n" : ""}[Attached file${files.length!==1?"s":""}: ${files.map(f=>f.name).join(", ")}]`
+      : m.content;
+    if (!images.length) return text;
+    return [
+      { type:"text", text: text || "(see attached image)" },
+      ...images.map(img => ({ type:"image", source:{ type:"base64", media_type:img.type, data: (img.dataUrl.split(",")[1] || "") } })),
+    ];
+  };
+
   // onDelta streams tokens as they arrive; without it the call resolves with the full text.
   // Streaming matters most here because replies are long enough that a spinner-then-dump feels
   // broken, and because the first sentence can start being read aloud while the rest arrives.
@@ -4569,7 +4627,7 @@ ${voiceMode
       model:"gemini-3.6-flash",
       max_tokens:2048,
       system:krofSysPrompt(voiceMode),
-      messages:recent.map(m => ({ role:m.role, content:m.content })),
+      messages:recent.map(m => ({ role:m.role, content:buildMessageContent(m) })),
       ...(onDelta ? { stream:true } : {}),
     };
 
@@ -5373,7 +5431,9 @@ ${voiceMode
   const scrollChatToBottom = () => chatEnd.current?.scrollIntoView({ behavior:"smooth" });
 
   const askKroft = async override => {
-    const q = override || aiInput; if (!q.trim()) return;
+    const q = override || aiInput;
+    // Attachments alone (no typed text) is a valid send — "here's a photo" needs no caption.
+    if (!q.trim() && aiAttachments.length===0) return;
 
     // A detected contact action no longer short-circuits the model. It used to intercept the
     // message entirely and return a "did you mean...?" card, which made sense when KROFT was
@@ -5383,8 +5443,8 @@ ${voiceMode
     const contactAction = resolveContactAction(q);
 
     // Real daily cap enforcement for the free plan. Resets when the calendar day changes.
-    const userMsg = { role:"user", content:q };
-    setAiMessages(p => [...p, userMsg]); setAiInput("");
+    const userMsg = { role:"user", content:q, ...(aiAttachments.length>0 ? { attachments:aiAttachments } : {}) };
+    setAiMessages(p => [...p, userMsg]); setAiInput(""); setAiAttachments([]);
     await runNormalCompletion([...aiMessages, userMsg], contactAction);
   };
 
@@ -8651,6 +8711,18 @@ ${voiceMode
                   <div key={m.id || i} style={{ display:"flex", flexDirection:"column", alignItems:m.role==="user"?"flex-end":"flex-start", animation:"fadeUp .3s ease" }}>
                     <div style={{ background:m.role==="user"?C.white:C.surface, border:`1px solid ${m.role==="user"?C.soft:C.cardB}`, borderRadius:m.role==="user"?"14px 14px 3px 14px":"14px 14px 14px 3px", padding:"10px 14px", maxWidth:"80%" }}>
                       {m.role==="assistant" && <Mono style={{ display:"block", color:C.muted, fontSize:9, letterSpacing:.8, marginBottom:5 }}>KROFT</Mono>}
+                      {m.attachments?.length > 0 && (
+                        <div style={{ display:"flex", flexWrap:"wrap", gap:6, marginBottom:m.content?8:0 }}>
+                          {m.attachments.map(a => a.kind==="image" ? (
+                            <img key={a.id} src={a.dataUrl} alt={a.name} style={{ width:84, height:84, borderRadius:10, objectFit:"cover", border:`1px solid ${C.soft}` }} />
+                          ) : (
+                            <a key={a.id} href={a.dataUrl} download={a.name} style={{ display:"flex", alignItems:"center", gap:6, padding:"6px 10px", borderRadius:10, background:C.fill, border:`1px solid ${C.soft}`, textDecoration:"none", maxWidth:180 }}>
+                              <NavIcon id="file" size={13} color={C.black} />
+                              <span style={{ fontSize:11, fontWeight:600, color:C.black, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{a.name}</span>
+                            </a>
+                          ))}
+                        </div>
+                      )}
                       <div style={{ fontSize:13, lineHeight:1.75, color:m.failed?C.negative:(m.role==="user"?C.black:C.text), whiteSpace:"pre-wrap" }}>
                         {m.content}
                         {/* Blinking caret while tokens are still arriving, so a paused stream
@@ -8765,11 +8837,31 @@ ${voiceMode
                   has no border of its own now) so typing and the button row read as one control,
                   not two stacked ones. */}
               <div style={{
-                background:C.surface, borderRadius:22, padding:"10px 10px 8px",
+                background:C.surface, borderRadius:22, padding:"10px 10px 8px", position:"relative",
                 border:`1px solid ${aiInputFocused ? C.accent : C.cardB}`,
                 boxShadow:aiInputFocused ? `0 0 0 3px ${C.accentBg}` : "none",
                 transition:"border-color .18s, box-shadow .18s",
               }}>
+                <input ref={aiPhotoInputRef} type="file" accept="image/*" multiple style={{ display:"none" }} onChange={e => handleAiAttach(e, "image")} />
+                <input ref={aiFileInputRef} type="file" multiple style={{ display:"none" }} onChange={e => handleAiAttach(e, "file")} />
+                {aiAttachments.length > 0 && (
+                  <div style={{ display:"flex", flexWrap:"wrap", gap:6, marginBottom:8, padding:"0 4px" }}>
+                    {aiAttachments.map(a => (
+                      <div key={a.id} style={{ position:"relative" }}>
+                        {a.kind==="image" ? (
+                          <img src={a.dataUrl} alt={a.name} style={{ width:52, height:52, borderRadius:9, objectFit:"cover", border:`1px solid ${C.cardB}`, display:"block" }} />
+                        ) : (
+                          <div style={{ display:"flex", alignItems:"center", gap:6, padding:"8px 10px", borderRadius:9, background:C.card, border:`1px solid ${C.cardB}`, maxWidth:120 }}>
+                            <NavIcon id="file" size={13} color={C.text} />
+                            <span style={{ fontSize:10, fontWeight:600, color:C.text, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{a.name}</span>
+                          </div>
+                        )}
+                        <button onClick={() => removeAiAttachment(a.id)} aria-label={`Remove ${a.name}`} title="Remove"
+                          style={{ position:"absolute", top:-6, right:-6, width:18, height:18, borderRadius:"50%", background:C.text, border:`1.5px solid ${C.bg}`, color:C.card, fontSize:10, fontWeight:900, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", padding:0, lineHeight:1 }}>✕</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
                 {/* A plain single-line <Inp> couldn't hold more than one line at all — pasting
                     or composing anything longer just scrolled the text sideways out of view.
                     This grows with the content (capped at ~5 lines, then scrolls internally)
@@ -8792,12 +8884,28 @@ ${voiceMode
                   onBlur={() => setAiInputFocused(false)}
                 />
                 <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginTop:2 }}>
-                  {/* Reuses the existing "start over" action — there's no separate attach/upload
-                      feature to put here, and a dead "+" would be worse than none at all. */}
-                  <button onClick={startNewChat} aria-label="Start a new conversation" title="New chat"
-                    style={{ background:C.card, border:`1px solid ${C.cardB}`, borderRadius:"50%", width:34, height:34, flexShrink:0, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>
-                    <NavIcon id="plus" size={16} color={C.text} />
-                  </button>
+                  {/* "New chat" moved to the header (it's still right there) — the "+" now opens
+                      a real attach menu instead of duplicating that action. */}
+                  <div style={{ position:"relative" }}>
+                    <button onClick={() => setShowAttachMenu(v => !v)} aria-label="Attach a photo or file" aria-expanded={showAttachMenu} title="Attach"
+                      style={{ background:showAttachMenu?C.white:C.card, border:`1px solid ${showAttachMenu?C.white:C.cardB}`, borderRadius:"50%", width:34, height:34, flexShrink:0, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", transform:showAttachMenu?"rotate(45deg)":"none", transition:"transform .15s" }}>
+                      <NavIcon id="plus" size={16} color={showAttachMenu?C.black:C.text} />
+                    </button>
+                    {showAttachMenu && (
+                      <div style={{ position:"absolute", bottom:"calc(100% + 8px)", left:0, background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:14, padding:6, display:"flex", flexDirection:"column", gap:2, boxShadow:C.shadowRaised, zIndex:5, minWidth:150 }}>
+                        {[
+                          { id:"image", label:"Photo", onClick:() => aiPhotoInputRef.current?.click() },
+                          { id:"file", label:"File", onClick:() => aiFileInputRef.current?.click() },
+                        ].map(o => (
+                          <button key={o.id} onClick={() => { o.onClick(); setShowAttachMenu(false); }}
+                            style={{ display:"flex", alignItems:"center", gap:10, padding:"9px 11px", borderRadius:9, background:"none", border:"none", cursor:"pointer", color:C.text, fontSize:13, fontFamily:"'Space Grotesk',sans-serif", textAlign:"left" }}>
+                            <NavIcon id={o.id} size={15} color={C.soft} />
+                            {o.label}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                   <div style={{ display:"flex", alignItems:"center", gap:8 }}>
                     {/* Dictate-and-review: unlike the black button's live voice mode (a spoken
                         back-and-forth conversation), this records one utterance, transcribes it
@@ -8818,7 +8926,7 @@ ${voiceMode
                         style={{ background:C.text, border:"none", borderRadius:"50%", width:36, height:36, flexShrink:0, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>
                         <span style={{ width:11, height:11, borderRadius:3, background:C.card, display:"block" }} />
                       </button>
-                    ) : aiInput.trim() ? (
+                    ) : (aiInput.trim() || aiAttachments.length>0) ? (
                       <button onClick={() => askKroft()} aria-label="Send message" title="Send"
                         style={{ background:C.text, border:"none", borderRadius:"50%", width:36, height:36, flexShrink:0, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", animation:"pop .18s ease" }}>
                         <NavIcon id="send" size={17} color={C.card} />
