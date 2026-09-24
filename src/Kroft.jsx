@@ -2207,6 +2207,8 @@ function KroftApp({ onFullReset } = {}) {
   const [showAddExp, setShowAddExp] = useState(false);
   const [monthlyReport, setMonthlyReport] = useState(null);
   const [generatingReport, setGeneratingReport] = useState(false);
+  const [weeklyRecap, setWeeklyRecap] = useState(null);
+  const [generatingRecap, setGeneratingRecap] = useState(false);
   const [editingEntry, setEditingEntry] = useState(null); // { kind:"income"|"expenses", id, label, amount, date, cat }
   const [remindersFired, setRemindersFired] = useState({ date:"", slots:[] }); // tracks which of today's 3 nudges already fired
   const [emails, setEmails] = useState([
@@ -5141,6 +5143,40 @@ ${voiceMode
     setGeneratingReport(false);
   };
 
+  // A genuine, cross-domain "what actually happened this week" — finance, appointments and mood
+  // together, since none of those alone tells the real story of a week the way they do combined.
+  // Deliberately only uses numbers that are honestly computable from real dated records: task
+  // objects don't carry a completion timestamp (only a done flag), so "tasks done this week" isn't
+  // a real number Kroft has — open-task count is reported as a plain snapshot instead of dressed
+  // up as a weekly stat. This is meant purely as a real recap, never a nudge back into the app —
+  // no streaks, no guilt, no urgency, matching the same non-manipulative bar as everything else
+  // that reaches back out to the user.
+  const generateWeeklyRecap = async () => {
+    const weekAgoISO = new Date(Date.now() - 7*86400000).toISOString().slice(0,10);
+    const today = todayISO();
+    const inWindow = iso => iso && iso >= weekAgoISO && iso <= today;
+    const weekInc = income.filter(r => inWindow(r.date));
+    const weekExp = expenses.filter(r => inWindow(r.date));
+    const incTotal = weekInc.reduce((s,r)=>s+r.amount,0);
+    const expTotal = weekExp.reduce((s,r)=>s+r.amount,0);
+    const weekAppts = appts.filter(a => inWindow(a.date));
+    const weekMoods = moodLog.filter(m => inWindow(m.date));
+    const openTasks = tasks.filter(t => !t.done).length;
+    if (!weekInc.length && !weekExp.length && !weekAppts.length && !weekMoods.length) {
+      toast("Not enough logged this week yet for a recap.");
+      return;
+    }
+    setGeneratingRecap(true);
+    const context = `This week (${weekAgoISO} to ${today}): ${weekInc.length} income entries totaling ${fmtCur(incTotal,user.currency)}, ${weekExp.length} expense entries totaling ${fmtCur(expTotal,user.currency)}, net ${fmtCur(incTotal-expTotal,user.currency)}. ${weekAppts.length} appointments this week. Mood entries this week: ${weekMoods.length ? weekMoods.map(m=>m.mood).join(", ") : "none logged"}. Currently ${openTasks} open task${openTasks!==1?"s":""} (a snapshot, not scoped to this week).`;
+    try {
+      const res = await aiFetch("/api/chat", { method:"POST", headers:{"Content-Type":"application/json","X-Kroft-Usage-Type":"report"}, body:JSON.stringify({ model:"gemini-3.6-flash", max_tokens:180, system:"You are KROFT, a personal assistant writing someone a recap of their own week. Given real numbers across their finances, appointments and mood, write 2-3 warm, specific sentences on what genuinely happened — real progress if the data shows it, a plain observation if it doesn't. Never invent a number you weren't given, and never imply a number for something not mentioned (like tasks) unless it was explicitly given as this week's. No guilt, no urgency, no sales language, no headers or bullets — plain sentences someone would actually want to read.", messages:[{ role:"user", content:context }] }) });
+      const data = await res.json();
+      const summary = (res.ok && data.content?.map(b=>b.text||"").join("").trim()) || "Couldn't put your recap together right now — try again shortly.";
+      setWeeklyRecap({ weekStart:weekAgoISO, weekEnd:today, incTotal, expTotal, apptsCount:weekAppts.length, moodCount:weekMoods.length, openTasks, summary, generatedAt:Date.now() });
+    } catch { toast("Couldn't generate your recap — check your connection and try again."); }
+    setGeneratingRecap(false);
+  };
+
   // ── AROUND ME ────────────────────────────────────────────────────────────────
 
   const toggleProjectLink = (projectId, kind, itemId) => {
@@ -5996,6 +6032,34 @@ ${voiceMode
                 </Card>
               );
             })()}
+            {/* A real recap of the week — finance, appointments and mood together, generated on
+                demand rather than pushed. This is the kind of retention loop worth building: it
+                reflects something that actually happened, not a manufactured reason to come back. */}
+            {dataLoaded && (
+              <Card style={{ marginBottom:16 }}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:weeklyRecap?10:0 }}>
+                  <div>
+                    <Mono style={{ display:"block", color:C.white, letterSpacing:.8, marginBottom:2 }}>This week</Mono>
+                    <Mono style={{ color:C.muted, fontSize:10 }}>
+                      {weeklyRecap ? `${weeklyRecap.weekStart} – ${weeklyRecap.weekEnd}` : "See what actually happened this week"}
+                    </Mono>
+                  </div>
+                  <Btn sm v="outline" onClick={generateWeeklyRecap} disabled={generatingRecap}>
+                    {generatingRecap ? <><Spinner size={11} color={C.soft} thickness={2} />Generating…</> : weeklyRecap ? "Refresh" : "Generate"}
+                  </Btn>
+                </div>
+                {weeklyRecap && (
+                  <>
+                    <div style={{ fontSize:13, lineHeight:1.7, color:C.text, marginBottom:10 }}>{weeklyRecap.summary}</div>
+                    <div style={{ display:"flex", gap:14, flexWrap:"wrap" }}>
+                      <Mono style={{ color:C.muted }}>Net {fmtCur(weeklyRecap.incTotal-weeklyRecap.expTotal, user.currency)}</Mono>
+                      <Mono style={{ color:C.muted }}>{weeklyRecap.apptsCount} appointment{weeklyRecap.apptsCount!==1?"s":""}</Mono>
+                      <Mono style={{ color:C.muted }}>{weeklyRecap.openTasks} open task{weeklyRecap.openTasks!==1?"s":""}</Mono>
+                    </div>
+                  </>
+                )}
+              </Card>
+            )}
             {!dataLoaded ? (
               <><SkeletonCard lines={2} /><SkeletonCard lines={3} /></>
             ) : income.length===0&&expenses.length===0 ? (
