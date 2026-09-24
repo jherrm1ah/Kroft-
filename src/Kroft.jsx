@@ -1025,16 +1025,33 @@ function ActionSheet({ title, subtitle, actions, onClose }) {
 // rigid ball. Live mic level pushes that displacement further, so the shape reacts to the
 // voice rather than animating on a fixed loop.
 // A static eclipse-style disc — solid black, with a soft glow halo behind it — replacing the
-// earlier spinning particle-sphere animation. `state`/`levelRef` are accepted but unused now: the
-// point was to have one clean, calm mark regardless of listening/thinking/speaking, not something
-// that visibly "does stuff" without actually reflecting anything real about the call.
-function VoiceOrb({ size = 300 }) {
-  return (
-    <div style={{
-      width: size, height: size, borderRadius: "50%", background: "#050505", flexShrink: 0,
-      boxShadow: `0 0 ${size*0.45}px ${size*0.14}px rgba(255,255,255,.32), 0 0 ${size*0.18}px ${size*0.04}px rgba(255,255,255,.48)`,
-    }} />
-  );
+// earlier spinning particle-sphere animation, which read as "just an animation, no real use." The
+// one exception: while actually listening, the glow breathes with the real mic input level
+// (levelRef, already fed by the recognizer elsewhere) — motion that means something, instead of
+// generic movement. Every other state (idle/thinking/speaking) stays at the calm static glow.
+function VoiceOrb({ state, levelRef, size = 300 }) {
+  const ref = useRef(null);
+  const stateRef = useRef(state);
+  stateRef.current = state;
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const base = { blur:size*0.45, spread:size*0.14, alpha:.32, blur2:size*0.18, spread2:size*0.04, alpha2:.48 };
+    let raf, smooth = 0;
+    const tick = () => {
+      const target = stateRef.current === "listening" ? (levelRef?.current ?? 0) : 0;
+      smooth += (target - smooth) * 0.15;
+      el.style.boxShadow =
+        `0 0 ${base.blur + smooth*size*0.25}px ${base.spread + smooth*size*0.08}px rgba(255,255,255,${(base.alpha + smooth*0.35).toFixed(2)}), ` +
+        `0 0 ${base.blur2 + smooth*size*0.1}px ${base.spread2 + smooth*size*0.04}px rgba(255,255,255,${(base.alpha2 + smooth*0.4).toFixed(2)})`;
+      raf = requestAnimationFrame(tick);
+    };
+    tick();
+    return () => cancelAnimationFrame(raf);
+  }, [size, levelRef]);
+
+  return <div ref={ref} style={{ width:size, height:size, borderRadius:"50%", background:"#050505", flexShrink:0 }} />;
 }
 
 // Full-screen one-on-one voice conversation. Entered deliberately rather than running
