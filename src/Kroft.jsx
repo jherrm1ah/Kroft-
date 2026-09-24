@@ -11,15 +11,15 @@ const DARK = {
   // Cards were previously #0d0d0d — barely lighter than the #000 page behind them, so every
   // card leaned on its border alone for definition (the opposite of, e.g., ChatGPT's dark
   // settings rows, which are a genuinely solid, visible grey with no border needed at all).
-  // Raised to a real mid-grey — deliberately a step lighter than that reference rather than
-  // matching it — so a card reads as its own surface at a glance, border or not.
-  card:"#363636", cardB:"#424242", surface:"#141414",
-  hover:"#3d3d3d", white:"#ffffff", black:"#000000",
+  // Raised to a real grey, then dialed back down from the first pass (which read too bright) —
+  // still clearly its own surface at a glance, just a darker one.
+  card:"#2a2a2a", cardB:"#363636", surface:"#141414",
+  hover:"#313131", white:"#ffffff", black:"#000000",
   offWhite:"#f4f2ee",
   text:"#ffffff",        // primary text — pure white on black, max contrast
   soft:"#dcd8d0",        // secondary text — bright off-white, clearly readable (was low-contrast grey)
   muted:"#9a968e",       // tertiary/placeholder — still readable, used sparingly
-  border:"#4d4d4d",      // visible borders / dividers on dark surfaces — bumped alongside card/
+  border:"#404040",      // visible borders / dividers on dark surfaces — bumped alongside card/
                           // cardB above so a `hi` card's emphasis border/ring still reads clearly
                           // against the now-lighter card fill instead of nearly vanishing into it.
   div:"#1c1c1c",
@@ -6230,7 +6230,10 @@ ${voiceMode
       {showBriefing && <Briefing user={user} income={totalIncome} expenses={totalExpenses} emails={emails} appts={appts} onClose={() => setShowBriefing(false)} />}
       {showChatHistory && (() => {
         const q = chatHistorySearch.trim().toLowerCase();
-        const filtered = q ? chatHistory.filter(c => c.title.toLowerCase().includes(q)) : chatHistory;
+        // Title alone used to miss anything that isn't literally in the auto-generated title —
+        // searching for a word actually discussed, not just the topic it got titled after, is
+        // the more useful case for a conversation search.
+        const filtered = q ? chatHistory.filter(c => c.title.toLowerCase().includes(q) || (c.messages||[]).some(m => (m.content||"").toLowerCase().includes(q))) : chatHistory;
         return (
           <div role="dialog" aria-modal="true" aria-label="Chat history" style={{ position:"fixed", inset:0, zIndex:310, background:C.bg, display:"flex", flexDirection:"column" }}>
             <div style={{ display:"flex", alignItems:"center", gap:10, padding:"12px 16px", borderBottom:`1px solid ${C.cardB}`, flexShrink:0 }}>
@@ -7105,13 +7108,17 @@ ${voiceMode
           // the section it lives in so tapping it opens the right screen.
           const hit = (s, ...fields) => fields.some(f => (f||"").toLowerCase().includes(s));
           const contentHits = !searching ? [] : [
-            ...notes.filter(n => hit(q, n.title, n.body)).map(n => ({ id:"note"+n.id, section:"notes", kind:"Note", label:n.title || "Untitled note", detail:(n.body||"").slice(0,60) })),
+            // A checklist note's real content lives in its items, not `body` (empty for those) —
+            // search both so "milk" finds the shopping-list note it's actually in, not just notes
+            // where it happens to be in the title.
+            ...notes.filter(n => hit(q, n.title, n.body, (n.checklist||[]).map(i=>i.text).join(" "))).map(n => ({ id:"note"+n.id, section:"notes", kind:"Note", label:n.title || "Untitled note", detail: n.checklist ? `${n.checklist.filter(i=>i.done).length}/${n.checklist.length} items` : (n.body||"").slice(0,60) })),
             ...tasks.filter(t => hit(q, t.title)).map(t => ({ id:"task"+t.id, section:"tasks", kind:"Task", label:t.title, detail:t.done?"Done":t.priority })),
             ...appts.filter(a => hit(q, a.title, a.location, a.notes)).map(a => ({ id:"appt"+a.id, section:"calendar", kind:"Appointment", label:a.title, detail:[a.time, fmtDate(a.date)].filter(Boolean).join(", ") })),
             ...contacts.filter(c => hit(q, c.name, c.email, c.phone)).map(c => ({ id:"contact"+c.id, section:"contacts", kind:"Contact", label:c.name, detail:c.email || c.phone })),
             ...smartReminders.filter(r => hit(q, r.text)).map(r => ({ id:"rem"+r.id, section:"reminders", kind:"Reminder", label:r.text, detail:r.when })),
             ...documents.filter(d => hit(q, d.title, d.body)).map(d => ({ id:"doc"+d.id, section:"documents", kind:"Document", label:d.title || "Untitled", detail:(d.body||"").slice(0,60) })),
-            ...projects.filter(p => hit(q, p.name, p.description)).map(p => ({ id:"proj"+p.id, section:"projects", kind:"Project", label:p.name, detail:p.status })),
+            // Same reasoning as notes above — a project's milestone titles are real content too.
+            ...projects.filter(p => hit(q, p.name, p.description, (p.milestones||[]).map(m=>m.title).join(" "))).map(p => ({ id:"proj"+p.id, section:"projects", kind:"Project", label:p.name, detail:p.status })),
             ...files.filter(f => hit(q, f.name)).map(f => ({ id:"file"+f.id, section:"files", kind:"File", label:f.name, detail:f.date })),
             ...emails.filter(e => hit(q, e.subject, e.from, e.body)).map(e => ({ id:"mail"+e.id, section:"email", kind:"Email", label:e.subject, detail:e.from })),
             ...voiceMemos.filter(m => hit(q, m.title, m.transcript)).map(m => ({ id:"memo"+m.id, section:"memos", kind:"Voice memo", label:m.title || "Untitled memo", detail:(m.transcript||"").slice(0,60) })),
