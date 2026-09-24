@@ -666,6 +666,50 @@ const sendNotification = (title, body, tag, opts = {}) => {
   } catch { return false; }
 };
 
+// Web Push's applicationServerKey wants raw bytes, not the base64url string VAPID keys are
+// normally handed around as — this is the standard conversion every Web Push integration needs.
+const urlBase64ToUint8Array = base64String => {
+  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const raw = atob(base64);
+  return Uint8Array.from([...raw].map(c => c.charCodeAt(0)));
+};
+
+// Registers the service worker that turns a Web Push message into a real OS notification while
+// no tab of the app is open (see public/sw.js) — a no-op if the browser doesn't support service
+// workers at all, so this never blocks anything for a browser that simply can't do this.
+const registerServiceWorker = async () => {
+  if (!("serviceWorker" in navigator)) return null;
+  try { return await navigator.serviceWorker.register("/sw.js"); }
+  catch { return null; }
+};
+
+// Subscribes this browser to Web Push and tells the server about it, so push delivery (currently:
+// appointment reminders — see the scheduled-notifications sync effect below) can reach this
+// device later, including while it's fully closed. Silently does nothing without a real account
+// or a configured VAPID key, rather than surfacing an error for a gap the person can't act on.
+const subscribeToPush = async authedFetch => {
+  if (!isSupabaseConfigured || !("PushManager" in window)) return;
+  const vapidKey = import.meta.env.VITE_VAPID_PUBLIC_KEY;
+  if (!vapidKey) return;
+  try {
+    const registration = await registerServiceWorker();
+    if (!registration) return;
+    let subscription = await registration.pushManager.getSubscription();
+    if (!subscription) {
+      subscription = await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(vapidKey),
+      });
+    }
+    const json = subscription.toJSON();
+    await authedFetch("/api/push/subscribe", { method:"POST", body:JSON.stringify({ endpoint:json.endpoint, keys:json.keys }) });
+  } catch {
+    // Best-effort — push is a bonus delivery channel, not something any existing feature depends
+    // on working. In-app/OS notifications while the app is open are unaffected either way.
+  }
+};
+
 // Placeholder blocks shown while stored data is still loading. Without these the app renders
 // its empty states first — a finance app briefly announcing "No financial data yet" to someone
 // who has months of records is alarming, and indistinguishable from real data loss.
@@ -3441,7 +3485,14 @@ function KroftApp({ onFullReset } = {}) {
   // onboarding via "Enter KROFT", without needing each of those call sites to remember to
   // trigger it themselves.
   useEffect(() => {
-    if (step === "dashboard") { refreshGoogleStatus(); refreshMicrosoftStatus(); refreshSubscriptionStatus(); refreshUsageLimits(); }
+    if (step === "dashboard") {
+      refreshGoogleStatus(); refreshMicrosoftStatus(); refreshSubscriptionStatus(); refreshUsageLimits();
+      // Re-subscribes a returning session that already granted notification permission earlier —
+      // onEnableNotifications only fires the very first time permission is granted, so without
+      // this a subscription lost to (e.g.) clearing site data or a new browser would never be
+      // re-established on a later visit.
+      if (notifPermission === "granted") subscribeToPush(authedFetch);
+    }
   }, [step]);
 
   const doSignup = async () => {
@@ -4670,6 +4721,40 @@ ${voiceMode
     check();
     return heartbeat(check);
   }, [dataLoaded, notifPermission, notifPrefs, appts, smartReminders, notifSent, subscribed, dailyBriefSentDate]);
+
+  // Keeps the server's scheduled_notifications index in sync with real, upcoming appointments so
+  // a push can still reach this person 10 minutes before one starts even with the app fully
+  // closed — the in-app version just above only ever fires while a tab is open. Deliberately only
+  // appointments for now: they have a simple, static, already-known title/time/location, unlike
+  // reminders (recur daily until marked done — a done-state the server-side index can't see, kv_
+  // store being client-managed) or the Daily Brief (its text is generated fresh, not something to
+  // precompute and push later). This is a full reconcile, not an incremental add/remove per
+  // appointment — sending the complete current set on every change means a missed edge case can
+  // never leave a stale entry behind; the server just deletes anything under the "appt:" prefix
+  // that isn't in this list any more (see api/push/schedule.js).
+  useEffect(() => {
+    if (!dataLoaded || !isSupabaseConfigured) return;
+    const now = Date.now();
+    const items = appts
+      .map(a => {
+        if (!a.date || !a.time) return null;
+        const [h, m] = a.time.split(":").map(Number);
+        if (isNaN(h)) return null;
+        const fires = new Date(`${a.date}T00:00:00`);
+        fires.setHours(h, m || 0, 0, 0);
+        fires.setMinutes(fires.getMinutes() - 10);
+        if (fires.getTime() <= now) return null; // only ever push for something still ahead
+        return { clientKey:`appt:${a.id}`, firesAt:fires.toISOString(), title:`${a.title} in 10 min`, body:[a.time, a.location].filter(Boolean).join(" · ") };
+      })
+      .filter(Boolean);
+    const t = setTimeout(() => {
+      authedFetch("/api/push/schedule", { method:"POST", body:JSON.stringify({ prefix:"appt:", items }) }).catch(() => {
+        // Best-effort — the in-app/OS notification path above (while the app is open) is
+        // unaffected either way, and the next appts change retries this automatically.
+      });
+    }, 1500);
+    return () => clearTimeout(t);
+  }, [dataLoaded, appts]);
 
   // Plus: scheduled calls. Kept independent of notifPermission — the in-app ringing overlay
   // doesn't need OS notification permission at all, only the accompanying system notification
@@ -8166,7 +8251,11 @@ ${voiceMode
               onEnableNotifications={async () => {
                 const result = await requestNotifyPermission();
                 setNotifPermission(result);
-                if (result === "granted") { sendNotification("Notifications on", "KROFT will let you know when something's due.", "kroft:welcome"); toast("Notifications enabled."); }
+                if (result === "granted") {
+                  sendNotification("Notifications on", "KROFT will let you know when something's due.", "kroft:welcome");
+                  toast("Notifications enabled.");
+                  subscribeToPush(authedFetch);
+                }
                 else if (result === "denied") toast("Notifications were blocked.");
               }}
               onSetNotifPref={(k, v) => setNotifPrefs(p => ({ ...p, [k]: v }))}

@@ -263,3 +263,53 @@ insert into public.plan_limits (plan, usage_type, period, limit_count, label) va
   ('free', 'background_ai',    'day',  5, 'Background AI'),
   ('free', 'agent',            'day',  5, 'Advanced actions')
 on conflict (plan, usage_type) do nothing;
+
+-- Real push delivery needs two things this app didn't have: somewhere to remember which
+-- browsers are subscribed to push (push_subscriptions), and a queryable index of "what needs to
+-- fire and when" a cron job can scan efficiently (scheduled_notifications). Reminder/appointment
+-- *content* deliberately stays exactly where it already lives (kv_store, client-managed) — this
+-- is not a migration of that data model, just a thin, purpose-built index the client keeps in
+-- sync whenever it creates, edits, or deletes something with a fire time. Same RLS pattern as
+-- oauth_tokens/payment_events/ai_usage: no policies for anon/authenticated, written and read only
+-- by service_role via api/* endpoints.
+
+create table if not exists public.push_subscriptions (
+  id         uuid primary key default gen_random_uuid(),
+  user_id    uuid not null references auth.users(id) on delete cascade,
+  endpoint   text not null,
+  p256dh     text not null,
+  auth_key   text not null,
+  created_at timestamptz not null default now(),
+  unique (user_id, endpoint)
+);
+
+comment on table public.push_subscriptions is
+  'Web Push subscriptions (endpoint + keys) registered by a user''s browser via a service worker. One row per browser/device. Written by api/push/subscribe.js, read only by the cron delivery endpoint, both via service_role.';
+
+alter table public.push_subscriptions enable row level security;
+
+create table if not exists public.scheduled_notifications (
+  id         uuid primary key default gen_random_uuid(),
+  user_id    uuid not null references auth.users(id) on delete cascade,
+  -- A stable, client-chosen key ("appt:<id>", "brief:2026-09-24") so the client can idempotently
+  -- upsert or cancel a scheduled push by re-syncing whenever the underlying appointment/brief
+  -- time changes, without needing to track this table's own generated row id.
+  client_key text not null,
+  fires_at   timestamptz not null,
+  title      text not null,
+  body       text not null,
+  tag        text not null default 'kroft:reminder',
+  sent       boolean not null default false,
+  created_at timestamptz not null default now(),
+  unique (user_id, client_key)
+);
+
+comment on table public.scheduled_notifications is
+  'A thin, queryable index of "what needs to push and when" — kept in sync by the client whenever an appointment or the daily brief time is created, edited, or deleted. The appointment''s own detail stays in kv_store; this only exists so a cron job can efficiently find what''s due across every user without scanning JSON blobs. Written by api/push/schedule.js, read and marked sent by the cron delivery endpoint, both via service_role.';
+
+alter table public.scheduled_notifications enable row level security;
+
+-- The cron job's whole query is "what fires soon and hasn't been sent" — this is the one access
+-- pattern that actually needs an index; everything else here is service_role point-lookups by id.
+create index if not exists scheduled_notifications_due_idx
+  on public.scheduled_notifications (fires_at) where not sent;
