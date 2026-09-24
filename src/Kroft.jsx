@@ -893,6 +893,8 @@ const NavIcon = ({ id, size=20, color="currentColor" }) => {
       return <svg viewBox="0 0 24 24" style={s}><path d="M5 9h11v6a4 4 0 0 1-4 4H9a4 4 0 0 1-4-4z" {...p} /><path d="M16 10.5h1.5a2.5 2.5 0 0 1 0 5H16" {...p} /><path d="M8 5.5v1.5M11 5.5v1.5M14 5.5v1.5" {...p} /></svg>;
     case "flame":
       return <svg viewBox="0 0 24 24" style={s}><path d="M12 3c1 3-3 4.5-3 8a3 3 0 0 0 6 0c1 1 1.5 2.3 1.5 3.5a4.5 4.5 0 0 1-9 0C7.5 10.5 10 8 12 3z" {...p} /></svg>;
+    case "pin":
+      return <svg viewBox="0 0 24 24" style={s}><path d="M12 3v6l4 3.5H8L12 9" {...p} /><path d="M12 12.5V21" {...p} /></svg>;
     case "send":
       return <svg viewBox="0 0 24 24" style={s}><path d="M4.5 12h14" {...p} /><path d="M12.5 5.5 19 12l-6.5 6.5" {...p} /></svg>;
     case "edit":
@@ -2273,10 +2275,14 @@ function KroftApp({ onFullReset } = {}) {
 
   // Workspace — Notes
   const [notes, setNotes] = useState([]);
-  const [newNote, setNewNote] = useState({ title:"", body:"", contactId:null });
+  // checklist:null = a plain text note; checklist:[{id,text,done}] (even empty) = a checklist
+  // note — toggled via the Text/Checklist switch on the New/Edit forms.
+  const [newNote, setNewNote] = useState({ title:"", body:"", contactId:null, checklist:null });
   const [showAddNote, setShowAddNote] = useState(false);
   const [openNote, setOpenNote] = useState(null);
   const [editingNote, setEditingNote] = useState(null);
+  const [newNoteChecklistDraft, setNewNoteChecklistDraft] = useState("");
+  const [editNoteChecklistDraft, setEditNoteChecklistDraft] = useState("");
 
   // Workspace — Tasks
   const [tasks, setTasks] = useState([]);
@@ -5403,6 +5409,9 @@ ${voiceMode
     setProjects(p => p.map(pr => pr.id!==projectId ? pr : { ...pr, milestones:(pr.milestones||[]).filter(m => m.id!==milestoneId) }));
   };
 
+  const toggleNotePinned = noteId => setNotes(p => p.map(n => n.id===noteId ? { ...n, pinned:!n.pinned } : n));
+  const toggleNoteChecklistItem = (noteId, itemId) => setNotes(p => p.map(n => n.id!==noteId ? n : { ...n, checklist:(n.checklist||[]).map(it => it.id===itemId ? {...it,done:!it.done} : it) }));
+
   // Share anything — files, notes, documents — via the native share sheet where available,
   // falling back to copying to clipboard (e.g. desktop browsers without navigator.share).
   const shareContent = async ({ title, text, url }) => {
@@ -7188,11 +7197,38 @@ ${voiceMode
               <Card style={{ marginBottom:13, border:`1px solid ${C.border}` }}>
                 <div style={{ fontSize:13, fontWeight:700, color:C.text, marginBottom:11 }}>New note</div>
                 <Inp placeholder="Title" value={newNote.title} onChange={e=>setNewNote(v=>({...v,title:e.target.value}))} style={{ marginBottom:9 }} />
-                <textarea placeholder="Write your note, checklist, or idea…" value={newNote.body} onChange={e=>setNewNote(v=>({...v,body:e.target.value}))} rows={4} style={{ width:"100%", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 14px", color:C.text, fontSize:13, fontFamily:"'Space Grotesk',sans-serif", outline:"none", resize:"vertical", boxSizing:"border-box", marginBottom:10 }} />
+                <div style={{ display:"flex", gap:7, marginBottom:9 }}>
+                  {[{checklist:false,l:"Text"},{checklist:true,l:"Checklist"}].map(o => (
+                    <button key={o.l} onClick={() => setNewNote(v=>({...v, checklist:o.checklist?(v.checklist||[]):null}))} style={{ flex:1, padding:"7px 10px", borderRadius:9, border:`1px solid ${!!newNote.checklist===o.checklist?C.white:C.cardB}`, background:!!newNote.checklist===o.checklist?"rgba(255,255,255,.1)":"transparent", color:!!newNote.checklist===o.checklist?C.white:C.muted, cursor:"pointer", fontSize:11, fontWeight:700, fontFamily:"'Space Grotesk',sans-serif" }}>{o.l}</button>
+                  ))}
+                </div>
+                {Array.isArray(newNote.checklist) ? (
+                  <div style={{ marginBottom:10 }}>
+                    {newNote.checklist.map((item,i) => (
+                      <div key={item.id} style={{ display:"flex", alignItems:"center", gap:8, padding:"4px 0" }}>
+                        <div style={{ width:14, height:14, borderRadius:4, border:`1.5px solid ${C.soft}`, flexShrink:0 }} />
+                        <Inp value={item.text} onChange={e=>setNewNote(v=>({...v,checklist:v.checklist.map((it,ix)=>ix===i?{...it,text:e.target.value}:it)}))} placeholder="List item" style={{ flex:1, padding:"7px 10px" }} />
+                        <button onClick={()=>setNewNote(v=>({...v,checklist:v.checklist.filter((_,ix)=>ix!==i)}))} style={{ background:"none", border:"none", color:C.soft, cursor:"pointer", fontSize:13, padding:"0 2px" }}>✕</button>
+                      </div>
+                    ))}
+                    <div style={{ display:"flex", gap:7, marginTop:6 }}>
+                      <Inp placeholder="Add item" value={newNoteChecklistDraft} onChange={e=>setNewNoteChecklistDraft(e.target.value)} onKeyDown={e=>{ if (e.key==="Enter") { e.preventDefault(); if (!newNoteChecklistDraft.trim()) return; setNewNote(v=>({...v,checklist:[...v.checklist,{id:uid(),text:newNoteChecklistDraft.trim(),done:false}]})); setNewNoteChecklistDraft(""); } }} style={{ flex:1 }} />
+                      <Btn sm v="outline" onClick={() => { if (!newNoteChecklistDraft.trim()) return; setNewNote(v=>({...v,checklist:[...v.checklist,{id:uid(),text:newNoteChecklistDraft.trim(),done:false}]})); setNewNoteChecklistDraft(""); }}>Add item</Btn>
+                    </div>
+                  </div>
+                ) : (
+                  <textarea placeholder="Write your note, checklist, or idea…" value={newNote.body} onChange={e=>setNewNote(v=>({...v,body:e.target.value}))} rows={4} style={{ width:"100%", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 14px", color:C.text, fontSize:13, fontFamily:"'Space Grotesk',sans-serif", outline:"none", resize:"vertical", boxSizing:"border-box", marginBottom:10 }} />
+                )}
                 <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
                   <Btn sm v="outline" onClick={toggleListen}>{listening ? "Stop" : "Voice"}</Btn>
                   {contacts.length > 0 && <ContactSelect value={newNote.contactId} onChange={id=>setNewNote(v=>({...v,contactId:id}))} contacts={contacts} />}
-                  <Btn sm onClick={() => { if (!newNote.title.trim() && !newNote.body.trim()) return; setNotes(p=>[{id:uid(),...newNote,date:dateStr()},...p]); setNewNote({title:"",body:"",contactId:null}); setShowAddNote(false); toast("Note saved."); }}>Save Note</Btn>
+                  <Btn sm onClick={() => {
+                    const hasChecklist = Array.isArray(newNote.checklist) && newNote.checklist.length>0;
+                    if (!newNote.title.trim() && !newNote.body.trim() && !hasChecklist) return;
+                    setNotes(p=>[{id:uid(),...newNote,date:dateStr()},...p]);
+                    setNewNote({title:"",body:"",contactId:null,checklist:null}); setNewNoteChecklistDraft("");
+                    setShowAddNote(false); toast("Note saved.");
+                  }}>Save Note</Btn>
                 </div>
               </Card>
             )}
@@ -7203,31 +7239,76 @@ ${voiceMode
                 <Btn sm onClick={() => setShowAddNote(true)}>+ New Note</Btn>
               </Card>
             )}
-            {notes.map(n => (
+            {/* Pinned notes float to the top (stable sort keeps everything else in its existing
+                order), same "surface what matters" idea as Tasks/Projects sorting by what's
+                actually pressing rather than just insertion order. */}
+            {[...notes].sort((a,b) => (b.pinned?1:0)-(a.pinned?1:0)).map(n => (
               editingNote && editingNote.id===n.id ? (
                 <Card key={n.id} style={{ marginBottom:10, border:`1px solid ${C.soft}` }}>
                   <div style={{ fontSize:13, fontWeight:700, color:C.text, marginBottom:11 }}>Edit note</div>
                   <Inp placeholder="Title" value={editingNote.title} onChange={e=>setEditingNote(v=>({...v,title:e.target.value}))} style={{ marginBottom:9 }} />
-                  <textarea placeholder="Write your note, checklist, or idea…" value={editingNote.body} onChange={e=>setEditingNote(v=>({...v,body:e.target.value}))} rows={4} style={{ width:"100%", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 14px", color:C.text, fontSize:13, fontFamily:"'Space Grotesk',sans-serif", outline:"none", resize:"vertical", boxSizing:"border-box", marginBottom:10 }} />
+                  <div style={{ display:"flex", gap:7, marginBottom:9 }}>
+                    {[{checklist:false,l:"Text"},{checklist:true,l:"Checklist"}].map(o => (
+                      <button key={o.l} onClick={() => setEditingNote(v=>({...v, checklist:o.checklist?(v.checklist||[]):null}))} style={{ flex:1, padding:"7px 10px", borderRadius:9, border:`1px solid ${!!editingNote.checklist===o.checklist?C.white:C.cardB}`, background:!!editingNote.checklist===o.checklist?"rgba(255,255,255,.1)":"transparent", color:!!editingNote.checklist===o.checklist?C.white:C.muted, cursor:"pointer", fontSize:11, fontWeight:700, fontFamily:"'Space Grotesk',sans-serif" }}>{o.l}</button>
+                    ))}
+                  </div>
+                  {Array.isArray(editingNote.checklist) ? (
+                    <div style={{ marginBottom:10 }}>
+                      {editingNote.checklist.map((item,i) => (
+                        <div key={item.id} style={{ display:"flex", alignItems:"center", gap:8, padding:"4px 0" }}>
+                          <button onClick={()=>setEditingNote(v=>({...v,checklist:v.checklist.map((it,ix)=>ix===i?{...it,done:!it.done}:it)}))} style={{ width:14, height:14, borderRadius:4, border:`1.5px solid ${item.done?C.white:C.soft}`, background:item.done?C.white:"transparent", cursor:"pointer", flexShrink:0, padding:0 }} />
+                          <Inp value={item.text} onChange={e=>setEditingNote(v=>({...v,checklist:v.checklist.map((it,ix)=>ix===i?{...it,text:e.target.value}:it)}))} placeholder="List item" style={{ flex:1, padding:"7px 10px" }} />
+                          <button onClick={()=>setEditingNote(v=>({...v,checklist:v.checklist.filter((_,ix)=>ix!==i)}))} style={{ background:"none", border:"none", color:C.soft, cursor:"pointer", fontSize:13, padding:"0 2px" }}>✕</button>
+                        </div>
+                      ))}
+                      <div style={{ display:"flex", gap:7, marginTop:6 }}>
+                        <Inp placeholder="Add item" value={editNoteChecklistDraft} onChange={e=>setEditNoteChecklistDraft(e.target.value)} onKeyDown={e=>{ if (e.key==="Enter") { e.preventDefault(); if (!editNoteChecklistDraft.trim()) return; setEditingNote(v=>({...v,checklist:[...v.checklist,{id:uid(),text:editNoteChecklistDraft.trim(),done:false}]})); setEditNoteChecklistDraft(""); } }} style={{ flex:1 }} />
+                        <Btn sm v="outline" onClick={() => { if (!editNoteChecklistDraft.trim()) return; setEditingNote(v=>({...v,checklist:[...v.checklist,{id:uid(),text:editNoteChecklistDraft.trim(),done:false}]})); setEditNoteChecklistDraft(""); }}>Add item</Btn>
+                      </div>
+                    </div>
+                  ) : (
+                    <textarea placeholder="Write your note, checklist, or idea…" value={editingNote.body} onChange={e=>setEditingNote(v=>({...v,body:e.target.value}))} rows={4} style={{ width:"100%", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 14px", color:C.text, fontSize:13, fontFamily:"'Space Grotesk',sans-serif", outline:"none", resize:"vertical", boxSizing:"border-box", marginBottom:10 }} />
+                  )}
                   <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
-                    <Btn sm v="outline" onClick={() => setEditingNote(null)} style={{ flex:1 }}>Cancel</Btn>
+                    <Btn sm v="outline" onClick={() => { setEditingNote(null); setEditNoteChecklistDraft(""); }} style={{ flex:1 }}>Cancel</Btn>
                     {contacts.length > 0 && <ContactSelect value={editingNote.contactId} onChange={id=>setEditingNote(v=>({...v,contactId:id}))} contacts={contacts} />}
-                    <Btn sm onClick={() => { if (!editingNote.title.trim() && !editingNote.body.trim()) return; setNotes(p=>p.map(x=>x.id===n.id?editingNote:x)); setEditingNote(null); toast("Note updated."); }} style={{ flex:1 }}>Save</Btn>
+                    <Btn sm onClick={() => {
+                      const hasChecklist = Array.isArray(editingNote.checklist) && editingNote.checklist.length>0;
+                      if (!editingNote.title.trim() && !editingNote.body.trim() && !hasChecklist) return;
+                      setNotes(p=>p.map(x=>x.id===n.id?editingNote:x)); setEditingNote(null); setEditNoteChecklistDraft(""); toast("Note updated.");
+                    }} style={{ flex:1 }}>Save</Btn>
                   </div>
                 </Card>
               ) : (
               <Card key={n.id} {...longPress(() => setActionSheet(holdActions({ title:n.title || "Untitled note", subtitle:n.date, onEdit:() => setEditingNote({...n}), list:notes, setList:setNotes, id:n.id, deletedLabel:"Note deleted." })))} style={{ marginBottom:10, cursor:"pointer", WebkitTouchCallout:"none", WebkitUserSelect:"none", userSelect:"none", }} onClick={() => setOpenNote(openNote===n.id?null:n.id)}>
                 <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:11 }}>
                   <div style={{ flex:1, minWidth:0 }}>
-                    <div style={{ fontWeight:700, fontSize:13, color:C.white, marginBottom:4 }}>{n.title || "Untitled note"}</div>
+                    <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:4 }}>
+                      {n.pinned && <NavIcon id="pin" size={11} color={C.accent} />}
+                      <div style={{ fontWeight:700, fontSize:13, color:C.white }}>{n.title || "Untitled note"}</div>
+                    </div>
                     <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:6, flexWrap:"wrap" }}>
                       <Mono style={{ color:C.soft }}>{n.date}</Mono>
+                      {Array.isArray(n.checklist) && n.checklist.length>0 && <Mono style={{ color:C.soft }}>· {n.checklist.filter(i=>i.done).length}/{n.checklist.length}</Mono>}
                       {n.contactId && contacts.find(c=>c.id===n.contactId) && <Tag tone="accent">{contacts.find(c=>c.id===n.contactId).name}</Tag>}
                     </div>
-                    <div style={{ fontSize:12, color:C.soft, lineHeight:1.6, whiteSpace:openNote===n.id?"pre-wrap":"nowrap", overflow:openNote===n.id?"visible":"hidden", textOverflow:"ellipsis" }}>{n.body}</div>
+                    {Array.isArray(n.checklist) ? (
+                      <div onClick={e=>e.stopPropagation()}>
+                        {(openNote===n.id ? n.checklist : n.checklist.slice(0,3)).map(item => (
+                          <div key={item.id} style={{ display:"flex", alignItems:"center", gap:8, padding:"3px 0" }}>
+                            <button onClick={()=>toggleNoteChecklistItem(n.id,item.id)} style={{ width:14, height:14, borderRadius:4, border:`1.5px solid ${item.done?C.accent:C.soft}`, background:item.done?C.accent:"transparent", cursor:"pointer", flexShrink:0, padding:0 }} />
+                            <div style={{ fontSize:12, color:C.soft, textDecoration:item.done?"line-through":"none", opacity:item.done?.6:1 }}>{item.text}</div>
+                          </div>
+                        ))}
+                        {openNote!==n.id && n.checklist.length>3 && <Mono style={{ color:C.muted, display:"block", marginTop:2 }}>+{n.checklist.length-3} more</Mono>}
+                      </div>
+                    ) : (
+                      <div style={{ fontSize:12, color:C.soft, lineHeight:1.6, whiteSpace:openNote===n.id?"pre-wrap":"nowrap", overflow:openNote===n.id?"visible":"hidden", textOverflow:"ellipsis" }}>{n.body}</div>
+                    )}
                   </div>
                   <div style={{ display:"flex", gap:6, flexShrink:0 }}>
-                    <Btn sm v="outline" onClick={e=>{e.stopPropagation();shareContent({title:n.title||"Note",text:`${n.title||"Note"}\n\n${n.body}`});}}>Share</Btn>
+                    <Btn sm v="outline" onClick={e=>{e.stopPropagation();toggleNotePinned(n.id);}}>{n.pinned?"Unpin":"Pin"}</Btn>
+                    <Btn sm v="outline" onClick={e=>{e.stopPropagation();shareContent({title:n.title||"Note",text:Array.isArray(n.checklist)?`${n.title||"Note"}\n\n${n.checklist.map(i=>`${i.done?"✓":"○"} ${i.text}`).join("\n")}`:`${n.title||"Note"}\n\n${n.body}`});}}>Share</Btn>
                     <Btn sm v="outline" onClick={e=>{e.stopPropagation();setEditingNote({...n});}}>Edit</Btn>
                   </div>
                 </div>
