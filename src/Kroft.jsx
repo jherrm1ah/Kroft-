@@ -5428,7 +5428,7 @@ ${voiceMode
 
   const reverseGeocode = async (lat, lng) => {
     try {
-      const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}`);
+      const res = await fetch(`/api/places?mode=reverse&lat=${lat}&lon=${lng}`);
       const data = await res.json();
       const city = data.address?.city || data.address?.town || data.address?.village || data.address?.county || "";
       const label = [city, data.address?.state, data.address?.country].filter(Boolean).join(", ");
@@ -5442,9 +5442,26 @@ ${voiceMode
     }
   };
 
-  const searchNearby = async (categoryOrQuery, isNaturalLanguage=false) => {
+  const searchNearby = async (categoryOrQuery, { isNaturalLanguage=false, categoryKey=null } = {}) => {
     if (!userCoords) { requestLocation(); return; }
     setAroundLoading(true); setAroundError(""); setAroundSearched(true); setAroundResults([]);
+
+    // Category browsing (the CATEGORIES grid, and "Feeling hungry?") goes straight to Overpass via
+    // the proxy, not Nominatim's free-text search — see api/places.js's comment for why a category
+    // label like "Restaurants" doesn't actually find real nearby restaurants there.
+    if (categoryKey) {
+      try {
+        const res = await fetch(`/api/places?mode=category&category=${encodeURIComponent(categoryKey)}&lat=${userCoords.lat}&lon=${userCoords.lng}`);
+        const data = await res.json();
+        const results = data.results || [];
+        setAroundResults(results);
+        if (results.length === 0) setAroundError(`No ${categoryOrQuery.toLowerCase()} found nearby. Try a different category or search.`);
+      } catch {
+        setAroundError("Couldn't reach the places service. Check your connection and try again.");
+      }
+      setAroundLoading(false);
+      return;
+    }
 
     let searchTerm = categoryOrQuery;
     if (isNaturalLanguage) {
@@ -5470,7 +5487,7 @@ ${voiceMode
 
     try {
       const viewbox = `${userCoords.lng-0.05},${userCoords.lat+0.05},${userCoords.lng+0.05},${userCoords.lat-0.05}`;
-      const res = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&q=${encodeURIComponent(searchTerm)}&viewbox=${viewbox}&bounded=1&limit=12`);
+      const res = await fetch(`/api/places?mode=search&q=${encodeURIComponent(searchTerm)}&viewbox=${encodeURIComponent(viewbox)}`);
       const data = await res.json();
       const results = (data||[]).map(p => ({
         id:p.place_id,
@@ -7806,7 +7823,7 @@ ${voiceMode
               <Card style={{ marginBottom:16, border:`1px solid ${C.soft}` }} hi>
                 <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:12 }}>
                   <div><div style={{ fontWeight:700, fontSize:14, color:C.white, marginBottom:3 }}>Feeling hungry?</div><Mono style={{ color:C.soft }}>Find a real restaurant near you right now.</Mono></div>
-                  <Btn onClick={() => { setHungry(true); setAroundCategory("restaurant"); setAroundQuery(""); searchNearby("Restaurants"); }}>Yes, I'm hungry</Btn>
+                  <Btn onClick={() => { setHungry(true); setAroundCategory("restaurant"); setAroundQuery(""); searchNearby("Restaurants", { categoryKey:"restaurant" }); }}>Yes, I'm hungry</Btn>
                 </div>
               </Card>
             ) : (
@@ -7885,10 +7902,10 @@ ${voiceMode
                 placeholder="Search nearby places…"
                 value={aroundQuery}
                 onChange={e => setAroundQuery(e.target.value)}
-                onKeyDown={e => { if (e.key==="Enter" && aroundQuery.trim()) searchNearby(aroundQuery, true); }}
+                onKeyDown={e => { if (e.key==="Enter" && aroundQuery.trim()) searchNearby(aroundQuery, { isNaturalLanguage:true }); }}
                 style={{ flex:1 }}
               />
-              <Btn onClick={() => aroundQuery.trim() && searchNearby(aroundQuery, true)} disabled={!aroundQuery.trim() || aroundLoading}>Search</Btn>
+              <Btn onClick={() => aroundQuery.trim() && searchNearby(aroundQuery, { isNaturalLanguage:true })} disabled={!aroundQuery.trim() || aroundLoading}>Search</Btn>
             </div>
 
             {/* Category grid */}
@@ -7897,7 +7914,7 @@ ${voiceMode
               {CATEGORIES.map(c => (
                 <button
                   key={c.key}
-                  onClick={() => { setAroundCategory(c.key); setAroundQuery(""); searchNearby(c.label); }}
+                  onClick={() => { setAroundCategory(c.key); setAroundQuery(""); searchNearby(c.label, { categoryKey:c.key }); }}
                   style={{
                     background: aroundCategory===c.key ? C.white : C.card,
                     border:`1px solid ${aroundCategory===c.key ? C.white : C.cardB}`,
@@ -7918,7 +7935,7 @@ ${voiceMode
             <Mono style={{ display:"block", color:C.soft, marginBottom:8, letterSpacing:.8 }}>Or ask naturally</Mono>
             <div style={{ display:"flex", flexWrap:"wrap", gap:7, marginBottom:22 }}>
               {["Find restaurants near me","Nearest pharmacy open now","Best café for remote work","Closest ATM","Nearby supermarkets","Hotels near me"].map(q => (
-                <button key={q} onClick={() => { setAroundQuery(q); searchNearby(q, true); }}
+                <button key={q} onClick={() => { setAroundQuery(q); searchNearby(q, { isNaturalLanguage:true }); }}
                   style={{ background:C.card, border:`1px solid ${C.cardB}`, borderRadius:7, padding:"6px 12px", cursor:"pointer", color:C.soft, fontSize:11, fontFamily:"'Space Grotesk',sans-serif" }}
                   onMouseEnter={e=>{e.target.style.borderColor=C.soft;e.target.style.color=C.white;}}
                   onMouseLeave={e=>{e.target.style.borderColor=C.cardB;e.target.style.color=C.border;}}>
