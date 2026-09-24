@@ -893,6 +893,8 @@ const NavIcon = ({ id, size=20, color="currentColor" }) => {
       return <svg viewBox="0 0 24 24" style={s}><path d="M5 9h11v6a4 4 0 0 1-4 4H9a4 4 0 0 1-4-4z" {...p} /><path d="M16 10.5h1.5a2.5 2.5 0 0 1 0 5H16" {...p} /><path d="M8 5.5v1.5M11 5.5v1.5M14 5.5v1.5" {...p} /></svg>;
     case "flame":
       return <svg viewBox="0 0 24 24" style={s}><path d="M12 3c1 3-3 4.5-3 8a3 3 0 0 0 6 0c1 1 1.5 2.3 1.5 3.5a4.5 4.5 0 0 1-9 0C7.5 10.5 10 8 12 3z" {...p} /></svg>;
+    case "pin":
+      return <svg viewBox="0 0 24 24" style={s}><path d="M12 3v6l4 3.5H8L12 9" {...p} /><path d="M12 12.5V21" {...p} /></svg>;
     case "send":
       return <svg viewBox="0 0 24 24" style={s}><path d="M4.5 12h14" {...p} /><path d="M12.5 5.5 19 12l-6.5 6.5" {...p} /></svg>;
     case "edit":
@@ -2273,10 +2275,14 @@ function KroftApp({ onFullReset } = {}) {
 
   // Workspace — Notes
   const [notes, setNotes] = useState([]);
-  const [newNote, setNewNote] = useState({ title:"", body:"", contactId:null });
+  // checklist:null = a plain text note; checklist:[{id,text,done}] (even empty) = a checklist
+  // note — toggled via the Text/Checklist switch on the New/Edit forms.
+  const [newNote, setNewNote] = useState({ title:"", body:"", contactId:null, checklist:null });
   const [showAddNote, setShowAddNote] = useState(false);
   const [openNote, setOpenNote] = useState(null);
   const [editingNote, setEditingNote] = useState(null);
+  const [newNoteChecklistDraft, setNewNoteChecklistDraft] = useState("");
+  const [editNoteChecklistDraft, setEditNoteChecklistDraft] = useState("");
 
   // Workspace — Tasks
   const [tasks, setTasks] = useState([]);
@@ -2294,6 +2300,29 @@ function KroftApp({ onFullReset } = {}) {
   const [openProject, setOpenProject] = useState(null);
   const [editingProject, setEditingProject] = useState(null);
   const [linkPicker, setLinkPicker] = useState(null); // { projectId, kind:"taskIds"|"noteIds"|"fileIds" }
+  // Quick-add a task straight from inside a project, instead of forcing a trip to the Tasks
+  // screen and back just to link it — addingTaskToProject holds which project's inline field
+  // is open (only one at a time, same as linkPicker above).
+  const [addingTaskToProject, setAddingTaskToProject] = useState(null);
+  const [projectTaskDraft, setProjectTaskDraft] = useState("");
+  // Milestones are the project's own big checkpoints ("Beta shipped", "Launched") — kept
+  // separate from Tasks (the day-to-day grind) rather than a flag on some tasks, so a
+  // project's goal progress reads at a glance instead of being buried in a task list.
+  // Owned by the project itself, not linked from a shared pool, so no linkPicker entry for it.
+  const [addingMilestoneToProject, setAddingMilestoneToProject] = useState(null);
+  const [milestoneDraft, setMilestoneDraft] = useState("");
+  // Same "+ New, auto-linked" pattern as Tasks/Milestones, extended to every other kind of
+  // project content — a note, document, file, or Finance entry made from inside a project
+  // never needs to be found again in the shared list, though it still lives in the one real
+  // Notes/Documents/Files list, or (for income/expense) the one real Finance ledger.
+  const [addingNoteToProject, setAddingNoteToProject] = useState(null);
+  const [projectNoteDraft, setProjectNoteDraft] = useState("");
+  const [addingDocumentToProject, setAddingDocumentToProject] = useState(null);
+  const [projectDocumentDraft, setProjectDocumentDraft] = useState("");
+  const projectFileUploadTarget = useRef(null);
+  const projectFileInputRef = useRef(null);
+  const [addEntryToProject, setAddEntryToProject] = useState(null); // { projectId, kind:"income"|"expense" }
+  const [projectEntryDraft, setProjectEntryDraft] = useState({ label:"", amount:"", cat:"", date:todayISO(), repeat:"none" });
 
   // Workspace — Voice Memos
   const [voiceMemos, setVoiceMemos] = useState([]);
@@ -3600,7 +3629,11 @@ function KroftApp({ onFullReset } = {}) {
   // Capped per-file rather than left unbounded, since a data: URL keeps the whole file in memory
   // and in kv_store's jsonb column, unlike a blob: URL which only ever held a lightweight handle.
   const MAX_UPLOAD_FILE_BYTES = 8 * 1024 * 1024;
-  const handleFilesUpload = e => {
+  // Optional projectId: when the upload was triggered from inside a project (its own "+ New"
+  // for Files, not the general Files screen), the new file(s) land in the one real Files list
+  // — still searchable/manageable from the Files screen — but get auto-linked to that project
+  // too, so the person never has to go pick them back out of the shared list afterward.
+  const handleFilesUpload = (e, projectId) => {
     const picked = Array.from(e.target.files || []);
     e.target.value = "";
     if (!picked.length) return;
@@ -3615,7 +3648,10 @@ function KroftApp({ onFullReset } = {}) {
       reader.readAsDataURL(f);
     }))).then(results => {
       const added = results.filter(Boolean);
-      if (added.length) { setFiles(p => [...added, ...p]); toast(`${added.length} file${added.length!==1?"s":""} added.`); }
+      if (!added.length) return;
+      setFiles(p => [...added, ...p]);
+      if (projectId) setProjects(p => p.map(pr => pr.id===projectId ? { ...pr, fileIds:[...(pr.fileIds||[]), ...added.map(a=>a.id)] } : pr));
+      toast(`${added.length} file${added.length!==1?"s":""} added${projectId?" to project.":"."}`);
     });
   };
 
@@ -5364,6 +5400,18 @@ ${voiceMode
     }));
   };
 
+  // Milestones live on the project itself (not a shared pool like tasks/notes/files), so they
+  // get their own toggle/add/remove instead of reusing toggleProjectLink.
+  const toggleMilestone = (projectId, milestoneId) => {
+    setProjects(p => p.map(pr => pr.id!==projectId ? pr : { ...pr, milestones:(pr.milestones||[]).map(m => m.id===milestoneId ? {...m,done:!m.done} : m) }));
+  };
+  const removeMilestone = (projectId, milestoneId) => {
+    setProjects(p => p.map(pr => pr.id!==projectId ? pr : { ...pr, milestones:(pr.milestones||[]).filter(m => m.id!==milestoneId) }));
+  };
+
+  const toggleNotePinned = noteId => setNotes(p => p.map(n => n.id===noteId ? { ...n, pinned:!n.pinned } : n));
+  const toggleNoteChecklistItem = (noteId, itemId) => setNotes(p => p.map(n => n.id!==noteId ? n : { ...n, checklist:(n.checklist||[]).map(it => it.id===itemId ? {...it,done:!it.done} : it) }));
+
   // Share anything — files, notes, documents — via the native share sheet where available,
   // falling back to copying to clipboard (e.g. desktop browsers without navigator.share).
   const shareContent = async ({ title, text, url }) => {
@@ -5915,7 +5963,7 @@ ${voiceMode
             {!isSupabaseConfigured && (
               <Mono style={{ display:"block", color:C.muted, fontSize:10, marginBottom:9 }}>Sign in with a real account (Supabase isn't configured) to connect an email or calendar provider.</Mono>
             )}
-            <div style={{ display:"flex", flexDirection:"column", gap:9 }}>
+            <div style={{ display:"flex", flexDirection:"column" }}>
               {/* Gmail+Calendar share one Google OAuth grant, and Outlook Mail+Calendar share
                   one Microsoft grant (both scopes requested together in api/google/start.js
                   and api/microsoft/start.js respectively) — so linking or unlinking either row
@@ -5925,18 +5973,27 @@ ${voiceMode
                   inbox/calendar rather than needing separate views per provider. Uber isn't
                   listed here at all: its ride-request deep link (see UberModal/
                   buildUberDeepLink above) needs no account connection or API key — it works
-                  the same for every user the moment they tap "Uber" anywhere in the app. */}
+                  the same for every user the moment they tap "Uber" anywhere in the app.
+                  Plain divided rows rather than a bordered box per account — four boxes back to
+                  back on an already-boxy signup flow just reads as clutter; the "Link"/"Unlink"
+                  button and a positive-tinted "Linked" label carry the state instead. */}
               {[
                 { k:"gmail", n:"Gmail", d:"Read & send real emails", linked:googleStatus.gmail, linking:googleLinking, connect:connectGoogle, disconnect:disconnectGoogle },
                 { k:"googleCalendar", n:"Google Calendar", d:"Sync appointments", linked:googleStatus.calendar, linking:googleLinking, connect:connectGoogle, disconnect:disconnectGoogle },
                 { k:"outlookMail", n:"Outlook Mail", d:"Read & send real emails", linked:microsoftStatus.mail, linking:microsoftLinking, connect:connectMicrosoft, disconnect:disconnectMicrosoft },
                 { k:"outlookCalendar", n:"Outlook Calendar", d:"Sync appointments", linked:microsoftStatus.calendar, linking:microsoftLinking, connect:connectMicrosoft, disconnect:disconnectMicrosoft },
-              ].map(a => (
-                <div key={a.k} style={{ background:a.linked?C.fillStrong:C.card, border:`1px solid ${a.linked?C.soft:C.cardB}`, borderRadius:10, padding:"11px 14px", display:"flex", alignItems:"center", gap:12 }}>
-                  <div style={{ flex:1 }}><div style={{ fontWeight:700, fontSize:13, color:C.white, marginBottom:1 }}>{a.n}</div><Mono style={{ color:C.muted, fontSize:10 }}>{a.d}</Mono></div>
-                  <Btn sm v={a.linked?"solid":"outline"} disabled={!isSupabaseConfigured||a.linking}
+              ].map((a, i, arr) => (
+                <div key={a.k} style={{ display:"flex", alignItems:"center", gap:12, padding:"12px 2px", borderBottom:i<arr.length-1?`1px solid ${C.cardB}`:"none" }}>
+                  <div style={{ flex:1 }}>
+                    <div style={{ display:"flex", alignItems:"center", gap:7 }}>
+                      <div style={{ fontWeight:700, fontSize:13, color:C.white }}>{a.n}</div>
+                      {a.linked && <Mono style={{ color:C.positive, fontSize:9, fontWeight:700, letterSpacing:.5 }}>LINKED</Mono>}
+                    </div>
+                    <Mono style={{ color:C.muted, fontSize:10 }}>{a.d}</Mono>
+                  </div>
+                  <Btn sm v={a.linked?"outline":"solid"} disabled={!isSupabaseConfigured||a.linking}
                     onClick={() => a.linked ? a.disconnect() : a.connect()}>
-                    {a.linking ? <Spinner size={14} color={a.linked?C.black:C.soft} thickness={2} /> : a.linked ? "Unlink" : "Link"}
+                    {a.linking ? <Spinner size={14} color={a.linked?C.soft:C.black} thickness={2} /> : a.linked ? "Unlink" : "Link"}
                   </Btn>
                 </div>
               ))}
@@ -5959,10 +6016,12 @@ ${voiceMode
             <div style={{ marginBottom:10 }}><Tag hi>Account Ready</Tag></div>
             <h2 style={{ fontSize:28, fontWeight:800, color:C.white, letterSpacing:-1, marginBottom:7, marginTop:12 }}>Ready, {user.name}.</h2>
             <Mono style={{ display:"block", color:C.muted, marginBottom:26, lineHeight:1.8 }}>Your KROFT account is set up.<br />Your personal AI assistant is ready.</Mono>
-            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:9, marginBottom:26, textAlign:"left" }}>
-              {[{k:"Name",v:user.name},{k:"Email",v:user.email||"—"},{k:"Business",v:user.businessName||"Not set"},{k:"Currency",v:user.currency},{k:"Apps",v:Object.values(user.connected).filter(Boolean).length+" linked"}].map(r => (
-                <div key={r.k} style={{ background:C.card, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"10px 13px" }}>
-                  <Mono style={{ display:"block", color:C.muted, marginBottom:3, letterSpacing:.8 }}>{r.k.toUpperCase()}</Mono>
+            {/* A plain divided list, not five boxes — the account summary is read once and never
+                touched again, so it doesn't need the visual weight of its own card per field. */}
+            <div style={{ marginBottom:26, textAlign:"left" }}>
+              {[{k:"Name",v:user.name},{k:"Email",v:user.email||"—"},{k:"Business",v:user.businessName||"Not set"},{k:"Currency",v:user.currency},{k:"Apps",v:Object.values(user.connected).filter(Boolean).length+" linked"}].map((r, i, arr) => (
+                <div key={r.k} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:10, padding:"9px 2px", borderBottom:i<arr.length-1?`1px solid ${C.cardB}`:"none" }}>
+                  <Mono style={{ color:C.muted, letterSpacing:.8 }}>{r.k.toUpperCase()}</Mono>
                   <div style={{ fontSize:12, fontWeight:700, color:C.white, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{r.v}</div>
                 </div>
               ))}
@@ -7050,7 +7109,7 @@ ${voiceMode
                   </div>
                 </Card>
               ) : (
-              <Card key={a.id} {...longPress(() => setActionSheet(holdActions({ title:a.title, subtitle:[a.time, fmtDate(a.date)].filter(Boolean).join(", "), onEdit:() => setEditingAppt({...a}), list:appts, setList:setAppts, id:a.id, deletedLabel:"Appointment deleted." })))} style={{ marginBottom:11, border:`1px solid ${a.urgent?C.soft:C.cardB}`, cursor:"pointer", WebkitTouchCallout:"none", WebkitUserSelect:"none", userSelect:"none", }} onClick={() => setOpenAppt(openAppt===a.id?null:a.id)}>
+              <Card key={a.id} {...longPress(() => setActionSheet(holdActions({ title:a.title, subtitle:[a.time, fmtDate(a.date)].filter(Boolean).join(", "), onEdit:() => setEditingAppt({...a}), list:appts, setList:setAppts, id:a.id, deletedLabel:"Appointment deleted." })))} style={{ marginBottom:11, borderRadius:16, background:a.urgent?C.negative+"0d":C.card, border:`1px solid ${a.urgent?C.negative+"33":C.cardB}`, cursor:"pointer", WebkitTouchCallout:"none", WebkitUserSelect:"none", userSelect:"none", }} onClick={() => setOpenAppt(openAppt===a.id?null:a.id)}>
                 <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", flexWrap:"wrap", gap:10 }}>
                   <div style={{ flex:1 }}>
                     <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:6, flexWrap:"wrap" }}>
@@ -7104,7 +7163,7 @@ ${voiceMode
               </Card>
             )}
             {[...emails].sort((a,b)=>(a.read===b.read)?(b.id-a.id):a.read?1:-1).map(e => (
-              <Card key={e.id} className="row" {...longPress(() => setActionSheet(holdActions({ title:e.subject, subtitle:e.from, list:emails, setList:setEmails, id:e.id, deletedLabel:"Email deleted." })))} style={{ marginBottom:10, border:`1px solid ${!e.read?C.soft:C.cardB}`, cursor:"pointer", WebkitTouchCallout:"none", WebkitUserSelect:"none", userSelect:"none", }} onClick={() => { setOpenEmail(openEmail===e.id?null:e.id); if (openEmail!==e.id) setEmails(p=>p.map(x=>x.id===e.id?{...x,read:true}:x)); }}>
+              <Card key={e.id} className="row" {...longPress(() => setActionSheet(holdActions({ title:e.subject, subtitle:e.from, list:emails, setList:setEmails, id:e.id, deletedLabel:"Email deleted." })))} style={{ marginBottom:10, borderRadius:16, background:!e.read?C.accentBg:C.card, border:`1px solid ${!e.read?C.accent+"33":C.cardB}`, cursor:"pointer", WebkitTouchCallout:"none", WebkitUserSelect:"none", userSelect:"none", }} onClick={() => { setOpenEmail(openEmail===e.id?null:e.id); if (openEmail!==e.id) setEmails(p=>p.map(x=>x.id===e.id?{...x,read:true}:x)); }}>
                 <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:11 }}>
                   <div style={{ flex:1, minWidth:0 }}>
                     <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:4, flexWrap:"wrap" }}>
@@ -7138,11 +7197,38 @@ ${voiceMode
               <Card style={{ marginBottom:13, border:`1px solid ${C.border}` }}>
                 <div style={{ fontSize:13, fontWeight:700, color:C.text, marginBottom:11 }}>New note</div>
                 <Inp placeholder="Title" value={newNote.title} onChange={e=>setNewNote(v=>({...v,title:e.target.value}))} style={{ marginBottom:9 }} />
-                <textarea placeholder="Write your note, checklist, or idea…" value={newNote.body} onChange={e=>setNewNote(v=>({...v,body:e.target.value}))} rows={4} style={{ width:"100%", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 14px", color:C.text, fontSize:13, fontFamily:"'Space Grotesk',sans-serif", outline:"none", resize:"vertical", boxSizing:"border-box", marginBottom:10 }} />
+                <div style={{ display:"flex", gap:7, marginBottom:9 }}>
+                  {[{checklist:false,l:"Text"},{checklist:true,l:"Checklist"}].map(o => (
+                    <button key={o.l} onClick={() => setNewNote(v=>({...v, checklist:o.checklist?(v.checklist||[]):null}))} style={{ flex:1, padding:"7px 10px", borderRadius:9, border:`1px solid ${!!newNote.checklist===o.checklist?C.white:C.cardB}`, background:!!newNote.checklist===o.checklist?"rgba(255,255,255,.1)":"transparent", color:!!newNote.checklist===o.checklist?C.white:C.muted, cursor:"pointer", fontSize:11, fontWeight:700, fontFamily:"'Space Grotesk',sans-serif" }}>{o.l}</button>
+                  ))}
+                </div>
+                {Array.isArray(newNote.checklist) ? (
+                  <div style={{ marginBottom:10 }}>
+                    {newNote.checklist.map((item,i) => (
+                      <div key={item.id} style={{ display:"flex", alignItems:"center", gap:8, padding:"4px 0" }}>
+                        <div style={{ width:14, height:14, borderRadius:4, border:`1.5px solid ${C.soft}`, flexShrink:0 }} />
+                        <Inp value={item.text} onChange={e=>setNewNote(v=>({...v,checklist:v.checklist.map((it,ix)=>ix===i?{...it,text:e.target.value}:it)}))} placeholder="List item" style={{ flex:1, padding:"7px 10px" }} />
+                        <button onClick={()=>setNewNote(v=>({...v,checklist:v.checklist.filter((_,ix)=>ix!==i)}))} style={{ background:"none", border:"none", color:C.soft, cursor:"pointer", fontSize:13, padding:"0 2px" }}>✕</button>
+                      </div>
+                    ))}
+                    <div style={{ display:"flex", gap:7, marginTop:6 }}>
+                      <Inp placeholder="Add item" value={newNoteChecklistDraft} onChange={e=>setNewNoteChecklistDraft(e.target.value)} onKeyDown={e=>{ if (e.key==="Enter") { e.preventDefault(); if (!newNoteChecklistDraft.trim()) return; setNewNote(v=>({...v,checklist:[...v.checklist,{id:uid(),text:newNoteChecklistDraft.trim(),done:false}]})); setNewNoteChecklistDraft(""); } }} style={{ flex:1 }} />
+                      <Btn sm v="outline" onClick={() => { if (!newNoteChecklistDraft.trim()) return; setNewNote(v=>({...v,checklist:[...v.checklist,{id:uid(),text:newNoteChecklistDraft.trim(),done:false}]})); setNewNoteChecklistDraft(""); }}>Add item</Btn>
+                    </div>
+                  </div>
+                ) : (
+                  <textarea placeholder="Write your note, checklist, or idea…" value={newNote.body} onChange={e=>setNewNote(v=>({...v,body:e.target.value}))} rows={4} style={{ width:"100%", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 14px", color:C.text, fontSize:13, fontFamily:"'Space Grotesk',sans-serif", outline:"none", resize:"vertical", boxSizing:"border-box", marginBottom:10 }} />
+                )}
                 <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
                   <Btn sm v="outline" onClick={toggleListen}>{listening ? "Stop" : "Voice"}</Btn>
                   {contacts.length > 0 && <ContactSelect value={newNote.contactId} onChange={id=>setNewNote(v=>({...v,contactId:id}))} contacts={contacts} />}
-                  <Btn sm onClick={() => { if (!newNote.title.trim() && !newNote.body.trim()) return; setNotes(p=>[{id:uid(),...newNote,date:dateStr()},...p]); setNewNote({title:"",body:"",contactId:null}); setShowAddNote(false); toast("Note saved."); }}>Save Note</Btn>
+                  <Btn sm onClick={() => {
+                    const hasChecklist = Array.isArray(newNote.checklist) && newNote.checklist.length>0;
+                    if (!newNote.title.trim() && !newNote.body.trim() && !hasChecklist) return;
+                    setNotes(p=>[{id:uid(),...newNote,date:dateStr()},...p]);
+                    setNewNote({title:"",body:"",contactId:null,checklist:null}); setNewNoteChecklistDraft("");
+                    setShowAddNote(false); toast("Note saved.");
+                  }}>Save Note</Btn>
                 </div>
               </Card>
             )}
@@ -7153,31 +7239,76 @@ ${voiceMode
                 <Btn sm onClick={() => setShowAddNote(true)}>+ New Note</Btn>
               </Card>
             )}
-            {notes.map(n => (
+            {/* Pinned notes float to the top (stable sort keeps everything else in its existing
+                order), same "surface what matters" idea as Tasks/Projects sorting by what's
+                actually pressing rather than just insertion order. */}
+            {[...notes].sort((a,b) => (b.pinned?1:0)-(a.pinned?1:0)).map(n => (
               editingNote && editingNote.id===n.id ? (
                 <Card key={n.id} style={{ marginBottom:10, border:`1px solid ${C.soft}` }}>
                   <div style={{ fontSize:13, fontWeight:700, color:C.text, marginBottom:11 }}>Edit note</div>
                   <Inp placeholder="Title" value={editingNote.title} onChange={e=>setEditingNote(v=>({...v,title:e.target.value}))} style={{ marginBottom:9 }} />
-                  <textarea placeholder="Write your note, checklist, or idea…" value={editingNote.body} onChange={e=>setEditingNote(v=>({...v,body:e.target.value}))} rows={4} style={{ width:"100%", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 14px", color:C.text, fontSize:13, fontFamily:"'Space Grotesk',sans-serif", outline:"none", resize:"vertical", boxSizing:"border-box", marginBottom:10 }} />
+                  <div style={{ display:"flex", gap:7, marginBottom:9 }}>
+                    {[{checklist:false,l:"Text"},{checklist:true,l:"Checklist"}].map(o => (
+                      <button key={o.l} onClick={() => setEditingNote(v=>({...v, checklist:o.checklist?(v.checklist||[]):null}))} style={{ flex:1, padding:"7px 10px", borderRadius:9, border:`1px solid ${!!editingNote.checklist===o.checklist?C.white:C.cardB}`, background:!!editingNote.checklist===o.checklist?"rgba(255,255,255,.1)":"transparent", color:!!editingNote.checklist===o.checklist?C.white:C.muted, cursor:"pointer", fontSize:11, fontWeight:700, fontFamily:"'Space Grotesk',sans-serif" }}>{o.l}</button>
+                    ))}
+                  </div>
+                  {Array.isArray(editingNote.checklist) ? (
+                    <div style={{ marginBottom:10 }}>
+                      {editingNote.checklist.map((item,i) => (
+                        <div key={item.id} style={{ display:"flex", alignItems:"center", gap:8, padding:"4px 0" }}>
+                          <button onClick={()=>setEditingNote(v=>({...v,checklist:v.checklist.map((it,ix)=>ix===i?{...it,done:!it.done}:it)}))} style={{ width:14, height:14, borderRadius:4, border:`1.5px solid ${item.done?C.white:C.soft}`, background:item.done?C.white:"transparent", cursor:"pointer", flexShrink:0, padding:0 }} />
+                          <Inp value={item.text} onChange={e=>setEditingNote(v=>({...v,checklist:v.checklist.map((it,ix)=>ix===i?{...it,text:e.target.value}:it)}))} placeholder="List item" style={{ flex:1, padding:"7px 10px" }} />
+                          <button onClick={()=>setEditingNote(v=>({...v,checklist:v.checklist.filter((_,ix)=>ix!==i)}))} style={{ background:"none", border:"none", color:C.soft, cursor:"pointer", fontSize:13, padding:"0 2px" }}>✕</button>
+                        </div>
+                      ))}
+                      <div style={{ display:"flex", gap:7, marginTop:6 }}>
+                        <Inp placeholder="Add item" value={editNoteChecklistDraft} onChange={e=>setEditNoteChecklistDraft(e.target.value)} onKeyDown={e=>{ if (e.key==="Enter") { e.preventDefault(); if (!editNoteChecklistDraft.trim()) return; setEditingNote(v=>({...v,checklist:[...v.checklist,{id:uid(),text:editNoteChecklistDraft.trim(),done:false}]})); setEditNoteChecklistDraft(""); } }} style={{ flex:1 }} />
+                        <Btn sm v="outline" onClick={() => { if (!editNoteChecklistDraft.trim()) return; setEditingNote(v=>({...v,checklist:[...v.checklist,{id:uid(),text:editNoteChecklistDraft.trim(),done:false}]})); setEditNoteChecklistDraft(""); }}>Add item</Btn>
+                      </div>
+                    </div>
+                  ) : (
+                    <textarea placeholder="Write your note, checklist, or idea…" value={editingNote.body} onChange={e=>setEditingNote(v=>({...v,body:e.target.value}))} rows={4} style={{ width:"100%", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 14px", color:C.text, fontSize:13, fontFamily:"'Space Grotesk',sans-serif", outline:"none", resize:"vertical", boxSizing:"border-box", marginBottom:10 }} />
+                  )}
                   <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
-                    <Btn sm v="outline" onClick={() => setEditingNote(null)} style={{ flex:1 }}>Cancel</Btn>
+                    <Btn sm v="outline" onClick={() => { setEditingNote(null); setEditNoteChecklistDraft(""); }} style={{ flex:1 }}>Cancel</Btn>
                     {contacts.length > 0 && <ContactSelect value={editingNote.contactId} onChange={id=>setEditingNote(v=>({...v,contactId:id}))} contacts={contacts} />}
-                    <Btn sm onClick={() => { if (!editingNote.title.trim() && !editingNote.body.trim()) return; setNotes(p=>p.map(x=>x.id===n.id?editingNote:x)); setEditingNote(null); toast("Note updated."); }} style={{ flex:1 }}>Save</Btn>
+                    <Btn sm onClick={() => {
+                      const hasChecklist = Array.isArray(editingNote.checklist) && editingNote.checklist.length>0;
+                      if (!editingNote.title.trim() && !editingNote.body.trim() && !hasChecklist) return;
+                      setNotes(p=>p.map(x=>x.id===n.id?editingNote:x)); setEditingNote(null); setEditNoteChecklistDraft(""); toast("Note updated.");
+                    }} style={{ flex:1 }}>Save</Btn>
                   </div>
                 </Card>
               ) : (
               <Card key={n.id} {...longPress(() => setActionSheet(holdActions({ title:n.title || "Untitled note", subtitle:n.date, onEdit:() => setEditingNote({...n}), list:notes, setList:setNotes, id:n.id, deletedLabel:"Note deleted." })))} style={{ marginBottom:10, cursor:"pointer", WebkitTouchCallout:"none", WebkitUserSelect:"none", userSelect:"none", }} onClick={() => setOpenNote(openNote===n.id?null:n.id)}>
                 <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:11 }}>
                   <div style={{ flex:1, minWidth:0 }}>
-                    <div style={{ fontWeight:700, fontSize:13, color:C.white, marginBottom:4 }}>{n.title || "Untitled note"}</div>
+                    <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:4 }}>
+                      {n.pinned && <NavIcon id="pin" size={11} color={C.accent} />}
+                      <div style={{ fontWeight:700, fontSize:13, color:C.white }}>{n.title || "Untitled note"}</div>
+                    </div>
                     <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:6, flexWrap:"wrap" }}>
                       <Mono style={{ color:C.soft }}>{n.date}</Mono>
+                      {Array.isArray(n.checklist) && n.checklist.length>0 && <Mono style={{ color:C.soft }}>· {n.checklist.filter(i=>i.done).length}/{n.checklist.length}</Mono>}
                       {n.contactId && contacts.find(c=>c.id===n.contactId) && <Tag tone="accent">{contacts.find(c=>c.id===n.contactId).name}</Tag>}
                     </div>
-                    <div style={{ fontSize:12, color:C.soft, lineHeight:1.6, whiteSpace:openNote===n.id?"pre-wrap":"nowrap", overflow:openNote===n.id?"visible":"hidden", textOverflow:"ellipsis" }}>{n.body}</div>
+                    {Array.isArray(n.checklist) ? (
+                      <div onClick={e=>e.stopPropagation()}>
+                        {(openNote===n.id ? n.checklist : n.checklist.slice(0,3)).map(item => (
+                          <div key={item.id} style={{ display:"flex", alignItems:"center", gap:8, padding:"3px 0" }}>
+                            <button onClick={()=>toggleNoteChecklistItem(n.id,item.id)} style={{ width:14, height:14, borderRadius:4, border:`1.5px solid ${item.done?C.accent:C.soft}`, background:item.done?C.accent:"transparent", cursor:"pointer", flexShrink:0, padding:0 }} />
+                            <div style={{ fontSize:12, color:C.soft, textDecoration:item.done?"line-through":"none", opacity:item.done?.6:1 }}>{item.text}</div>
+                          </div>
+                        ))}
+                        {openNote!==n.id && n.checklist.length>3 && <Mono style={{ color:C.muted, display:"block", marginTop:2 }}>+{n.checklist.length-3} more</Mono>}
+                      </div>
+                    ) : (
+                      <div style={{ fontSize:12, color:C.soft, lineHeight:1.6, whiteSpace:openNote===n.id?"pre-wrap":"nowrap", overflow:openNote===n.id?"visible":"hidden", textOverflow:"ellipsis" }}>{n.body}</div>
+                    )}
                   </div>
                   <div style={{ display:"flex", gap:6, flexShrink:0 }}>
-                    <Btn sm v="outline" onClick={e=>{e.stopPropagation();shareContent({title:n.title||"Note",text:`${n.title||"Note"}\n\n${n.body}`});}}>Share</Btn>
+                    <Btn sm v="outline" onClick={e=>{e.stopPropagation();toggleNotePinned(n.id);}}>{n.pinned?"Unpin":"Pin"}</Btn>
+                    <Btn sm v="outline" onClick={e=>{e.stopPropagation();shareContent({title:n.title||"Note",text:Array.isArray(n.checklist)?`${n.title||"Note"}\n\n${n.checklist.map(i=>`${i.done?"✓":"○"} ${i.text}`).join("\n")}`:`${n.title||"Note"}\n\n${n.body}`});}}>Share</Btn>
                     <Btn sm v="outline" onClick={e=>{e.stopPropagation();setEditingNote({...n});}}>Edit</Btn>
                   </div>
                 </div>
@@ -7253,7 +7384,11 @@ ${voiceMode
                   </div>
                 </Card>
               ) : (
-              <Card key={t.id} {...longPress(() => setActionSheet(holdActions({ title:t.title, subtitle:t.done ? "Completed" : t.priority, onEdit:() => setEditingTask({...t}), list:tasks, setList:setTasks, id:t.id, deletedLabel:"Task deleted." })))} style={{ marginBottom:9, opacity:t.done?.55:1, WebkitTouchCallout:"none", WebkitUserSelect:"none", userSelect:"none", }}>
+              // Urgent/High tasks get a soft tint of their own priority color — the same
+              // "color that means something" treatment as Wellness's mood chips — so the eye
+              // lands on what's actually pressing in a long list, not just its Tag text color.
+              (() => { const tColor = t.priority==="Urgent"?C.negative:t.priority==="High"?C.warning:null; const tinted = tColor && !t.done; return (
+              <Card key={t.id} {...longPress(() => setActionSheet(holdActions({ title:t.title, subtitle:t.done ? "Completed" : t.priority, onEdit:() => setEditingTask({...t}), list:tasks, setList:setTasks, id:t.id, deletedLabel:"Task deleted." })))} style={{ marginBottom:9, opacity:t.done?.55:1, borderRadius:16, background:tinted?tColor+"0d":C.card, border:`1px solid ${tinted?tColor+"33":C.cardB}`, WebkitTouchCallout:"none", WebkitUserSelect:"none", userSelect:"none", }}>
                 <div style={{ display:"flex", alignItems:"center", gap:12 }}>
                   <button key={`${t.id}-cb-${t.done}`} onClick={() => {
                     const completingThis = !t.done;
@@ -7294,8 +7429,8 @@ ${voiceMode
                   <Btn sm v="outline" onClick={() => setEditingTask({...t})}>Edit</Btn>
                 </div>
               </Card>
-              )
-            ))}
+              ); })()
+            )))}
           </div>
         )}
 
@@ -7412,20 +7547,47 @@ ${voiceMode
               <h2 style={{ fontSize:22, fontWeight:700, color:C.white, letterSpacing:-1 }}>Projects</h2>
               <Btn sm onClick={() => setShowAddProject(v=>!v)}>Create Project</Btn>
             </div>
+            {/* One shared file input and one shared AddEntryModal for every project's "+ New" on
+                Files/Income/Expenses, rather than mounting one per project card. */}
+            <input ref={projectFileInputRef} type="file" multiple style={{ display:"none" }} onChange={e => handleFilesUpload(e, projectFileUploadTarget.current)} />
+            {addEntryToProject && (
+              <AddEntryModal
+                kind={addEntryToProject.kind}
+                theme={theme}
+                value={projectEntryDraft}
+                onChange={setProjectEntryDraft}
+                cats={addEntryToProject.kind==="income"?incomeCats:expenseCats}
+                onAddCategory={c => addEntryToProject.kind==="income" ? setIncomeCats(p=>p.includes(c)?p:[...p,c]) : setExpenseCats(p=>p.includes(c)?p:[...p,c])}
+                onClose={() => setAddEntryToProject(null)}
+                onSubmit={() => {
+                  if (!projectEntryDraft.label) return;
+                  const amt = parseAmount(projectEntryDraft.amount);
+                  if (amt === null) { toast("Enter an amount greater than zero."); return; }
+                  const { projectId, kind } = addEntryToProject;
+                  const base = { id:uid(), ...projectEntryDraft, amount:amt, date:projectEntryDraft.date||todayISO(), cur:user.currency };
+                  if (base.repeat && base.repeat !== "none") base.nextDate = advanceRepeatDate(base.date, base.repeat);
+                  if (kind==="income") setIncome(p=>[...p,base]); else setExpenses(p=>[...p,base]);
+                  const idsKey = kind==="income"?"incomeIds":"expenseIds";
+                  setProjects(p=>p.map(pr=>pr.id===projectId?{...pr,[idsKey]:[...(pr[idsKey]||[]),base.id]}:pr));
+                  setAddEntryToProject(null);
+                  toast(`${kind==="income"?"Income":"Expense"} added to project.`);
+                }}
+              />
+            )}
             {showAddProject && (
               <Card style={{ marginBottom:13, border:`1px solid ${C.border}` }}>
                 <div style={{ fontSize:13, fontWeight:700, color:C.text, marginBottom:11 }}>New project</div>
                 <div style={{ display:"flex", flexDirection:"column", gap:9 }}>
                   <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
                     <Inp placeholder="Project name" value={newProject.name} onChange={e=>setNewProject(v=>({...v,name:e.target.value}))} style={{ flex:2, minWidth:140 }} />
-                    <Inp placeholder="Deadline e.g. Aug 15" value={newProject.deadline} onChange={e=>setNewProject(v=>({...v,deadline:e.target.value}))} style={{ flex:1, minWidth:120 }} />
+                    <input type="date" value={newProject.deadline} onChange={e=>setNewProject(v=>({...v,deadline:e.target.value}))} style={{ flex:1, minWidth:120, background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 12px", color:newProject.deadline?C.text:C.muted, fontSize:13, fontFamily:"'Space Grotesk',sans-serif", outline:"none", colorScheme:theme }} />
                   </div>
                   <Inp placeholder="What's this project about? (optional)" value={newProject.description} onChange={e=>setNewProject(v=>({...v,description:e.target.value}))} />
                   <div style={{ display:"flex", gap:8, alignItems:"center" }}>
                     <select value={newProject.status} onChange={e=>setNewProject(v=>({...v,status:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"10px 12px", color:C.text, fontSize:12, fontFamily:"'Space Grotesk',sans-serif", outline:"none" }}>
                       {["Not Started","In Progress","On Hold","Completed"].map(s => <option key={s}>{s}</option>)}
                     </select>
-                    <Btn onClick={() => { if (!newProject.name.trim()) return; setProjects(p=>[{id:uid(),...newProject,taskIds:[],noteIds:[],fileIds:[],documentIds:[]},...p]); setNewProject({name:"",deadline:"",description:"",status:"Not Started"}); setShowAddProject(false); toast("Project created."); }}>Create</Btn>
+                    <Btn onClick={() => { if (!newProject.name.trim()) return; setProjects(p=>[{id:uid(),...newProject,taskIds:[],noteIds:[],fileIds:[],documentIds:[],expenseIds:[],incomeIds:[],contactIds:[],milestones:[]},...p]); setNewProject({name:"",deadline:"",description:"",status:"Not Started"}); setShowAddProject(false); toast("Project created."); }}>Create</Btn>
                   </div>
                 </div>
               </Card>
@@ -7437,22 +7599,48 @@ ${voiceMode
                 <Btn sm onClick={() => setShowAddProject(true)}>Create Project</Btn>
               </Card>
             )}
-            {projects.map(pr => {
+            {/* Completed projects sink to the bottom, same as done tasks. Among the rest, one
+                past its own deadline outranks anything else — that's the one actually slipping —
+                then soonest deadline first; undated projects sort last within their tier. */}
+            {[...projects].sort((a,b) => {
+              const aDone = a.status==="Completed", bDone = b.status==="Completed";
+              if (aDone !== bDone) return aDone ? 1 : -1;
+              const today = todayISO();
+              const aOverdue = a.deadline && a.deadline < today && !aDone;
+              const bOverdue = b.deadline && b.deadline < today && !bDone;
+              if (aOverdue !== bOverdue) return aOverdue ? -1 : 1;
+              if (a.deadline && b.deadline) return a.deadline.localeCompare(b.deadline);
+              return a.deadline ? -1 : b.deadline ? 1 : 0;
+            }).map(pr => {
               const linkedTasks = tasks.filter(t => (pr.taskIds||[]).includes(t.id));
               const doneCount = linkedTasks.filter(t=>t.done).length;
               const progress = linkedTasks.length>0 ? Math.round((doneCount/linkedTasks.length)*100) : 0;
+              const milestones = pr.milestones||[];
+              const milestoneDoneCount = milestones.filter(m=>m.done).length;
+              const milestoneProgress = milestones.length>0 ? Math.round((milestoneDoneCount/milestones.length)*100) : 0;
               const linkedNotes = notes.filter(n => (pr.noteIds||[]).includes(n.id));
               const linkedFiles = files.filter(f => (pr.fileIds||[]).includes(f.id));
               const linkedDocuments = documents.filter(d => (pr.documentIds||[]).includes(d.id));
+              const linkedExpenses = expenses.filter(x => (pr.expenseIds||[]).includes(x.id));
+              const linkedIncome = income.filter(x => (pr.incomeIds||[]).includes(x.id));
+              const linkedContacts = contacts.filter(c => (pr.contactIds||[]).includes(c.id));
+              const totalSpent = linkedExpenses.reduce((s,x)=>s+x.amount,0);
+              const totalEarned = linkedIncome.reduce((s,x)=>s+x.amount,0);
               const isEditing = editingProject && editingProject.id===pr.id;
+              const isOverdue = pr.deadline && pr.status!=="Completed" && pr.deadline < todayISO();
+              // Same "color that means something" treatment as Tasks/Wellness — a project's
+              // status already drives its Tag color below, so the card background echoes it
+              // rather than introducing a second, unrelated color language. A blown deadline
+              // outranks status here, same as an overdue task outranking its own priority color.
+              const pColor = isOverdue?C.negative:pr.status==="In Progress"?C.accent:pr.status==="Completed"?C.positive:pr.status==="On Hold"?C.warning:null;
               return (
-              <Card key={pr.id} {...longPress(() => setActionSheet(holdActions({ title:pr.name, subtitle:pr.status, onEdit:() => setEditingProject({...pr}), list:projects, setList:setProjects, id:pr.id, deletedLabel:"Project deleted." })))} style={{ marginBottom:10, WebkitTouchCallout:"none", WebkitUserSelect:"none", userSelect:"none", }}>
+              <Card key={pr.id} {...longPress(() => setActionSheet(holdActions({ title:pr.name, subtitle:pr.status, onEdit:() => setEditingProject({...pr}), list:projects, setList:setProjects, id:pr.id, deletedLabel:"Project deleted." })))} style={{ marginBottom:10, borderRadius:16, background:pColor?pColor+"0d":C.card, border:`1px solid ${pColor?pColor+"33":C.cardB}`, WebkitTouchCallout:"none", WebkitUserSelect:"none", userSelect:"none", }}>
                 {isEditing ? (
                   <div style={{ display:"flex", flexDirection:"column", gap:9 }}>
                     <Mono style={{ display:"block", color:C.white, letterSpacing:.8 }}>Edit project</Mono>
                     <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
                       <Inp placeholder="Project name" value={editingProject.name} onChange={e=>setEditingProject(v=>({...v,name:e.target.value}))} style={{ flex:2, minWidth:140 }} />
-                      <Inp placeholder="Deadline" value={editingProject.deadline} onChange={e=>setEditingProject(v=>({...v,deadline:e.target.value}))} style={{ flex:1, minWidth:120 }} />
+                      <input type="date" value={editingProject.deadline||""} onChange={e=>setEditingProject(v=>({...v,deadline:e.target.value}))} style={{ flex:1, minWidth:120, background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 12px", color:C.text, fontSize:13, fontFamily:"'Space Grotesk',sans-serif", outline:"none", colorScheme:theme }} />
                     </div>
                     <Inp placeholder="Description" value={editingProject.description||""} onChange={e=>setEditingProject(v=>({...v,description:e.target.value}))} />
                     <select value={editingProject.status} onChange={e=>setEditingProject(v=>({...v,status:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"10px 12px", color:C.text, fontSize:12, fontFamily:"'Space Grotesk',sans-serif", outline:"none" }}>
@@ -7470,14 +7658,26 @@ ${voiceMode
                     <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap", marginBottom:4 }}>
                       <span style={{ fontWeight:700, fontSize:14, color:C.white }}>{pr.name}</span>
                       <Tag tone={pr.status==="In Progress"?"accent":pr.status==="Completed"?"positive":pr.status==="On Hold"?"warning":undefined}>{pr.status||"Not Started"}</Tag>
+                      {isOverdue && <Tag tone="negative">Overdue</Tag>}
                     </div>
                     {pr.description && <div style={{ fontSize:12, color:C.soft, marginBottom:6, lineHeight:1.5 }}>{pr.description}</div>}
-                    {pr.deadline && <Mono style={{ color:C.soft }}>Due {pr.deadline}</Mono>}
+                    {pr.deadline && <Mono style={{ color:isOverdue?C.negative:C.soft }}>Due {fmtDate(pr.deadline)}</Mono>}
                   </div>
                   <div style={{ display:"flex", gap:6, flexShrink:0 }}>
                     <Btn sm v="outline" onClick={e=>{e.stopPropagation();setEditingProject({...pr});}}>Edit</Btn>
                   </div>
                 </div>
+                {/* Milestone progress is the goal-level view (accent-colored, shown first);
+                    task progress right below it is the day-to-day view. Same data, two
+                    granularities, so a project reads at a glance without opening it. */}
+                {milestones.length>0 && (
+                  <div style={{ marginTop:10 }}>
+                    <div style={{ height:6, borderRadius:3, background:C.surface, overflow:"hidden" }}>
+                      <div style={{ height:"100%", width:`${milestoneProgress}%`, background:C.accent, borderRadius:3, transition:"width .3s ease" }} />
+                    </div>
+                    <Mono style={{ display:"block", color:C.soft, marginTop:5 }}>{milestoneDoneCount}/{milestones.length} milestones complete · {milestoneProgress}%</Mono>
+                  </div>
+                )}
                 {linkedTasks.length>0 && (
                   <div style={{ marginTop:10 }}>
                     <div style={{ height:6, borderRadius:3, background:C.surface, overflow:"hidden" }}>
@@ -7488,15 +7688,104 @@ ${voiceMode
                 )}
                 {openProject===pr.id && (
                   <div style={{ marginTop:12, paddingTop:12, borderTop:`1px solid ${C.div}`, display:"flex", flexDirection:"column", gap:14 }}>
-                    {[{kind:"taskIds",label:"Tasks",items:linkedTasks,pool:tasks,render:t=>t.title},
-                      {kind:"noteIds",label:"Notes",items:linkedNotes,pool:notes,render:n=>n.title||"Untitled note"},
-                      {kind:"fileIds",label:"Files",items:linkedFiles,pool:files,render:f=>f.name},
-                      {kind:"documentIds",label:"Documents",items:linkedDocuments,pool:documents,render:d=>d.title}].map(sec => (
+                    {/* Real numbers only — pulled from Finance entries actually linked below, never
+                        estimated. Hidden entirely until something's linked, same as every other
+                        section here, so an untouched project doesn't show a false $0 budget. */}
+                    {(linkedExpenses.length>0 || linkedIncome.length>0) && (
+                      <div style={{ display:"flex", gap:16, flexWrap:"wrap" }}>
+                        {linkedIncome.length>0 && <div><Mono style={{ display:"block", color:C.muted, marginBottom:2 }}>EARNED</Mono><div style={{ fontSize:15, fontWeight:700, color:C.positive }}>{fmtCur(totalEarned,user.currency)}</div></div>}
+                        {linkedExpenses.length>0 && <div><Mono style={{ display:"block", color:C.muted, marginBottom:2 }}>SPENT</Mono><div style={{ fontSize:15, fontWeight:700, color:C.negative }}>{fmtCur(totalSpent,user.currency)}</div></div>}
+                        {linkedIncome.length>0 && linkedExpenses.length>0 && <div><Mono style={{ display:"block", color:C.muted, marginBottom:2 }}>NET</Mono><div style={{ fontSize:15, fontWeight:700, color:(totalEarned-totalSpent)>=0?C.positive:C.negative }}>{fmtCur(totalEarned-totalSpent,user.currency)}</div></div>}
+                      </div>
+                    )}
+                    {/* Milestones: the project's own goal checkpoints, not a link to a shared
+                        pool — so this gets bespoke rendering (a checkbox + a real delete)
+                        instead of the generic link/unlink pattern the sections below use. */}
+                    <div>
+                      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:7 }}>
+                        <Mono style={{ color:C.white, letterSpacing:.8 }}>MILESTONES ({milestones.length})</Mono>
+                        <button onClick={() => { setAddingMilestoneToProject(addingMilestoneToProject===pr.id?null:pr.id); setMilestoneDraft(""); }} style={{ background:"none", border:"none", color:C.soft, cursor:"pointer", fontSize:11, fontFamily:"'Space Grotesk',sans-serif", textDecoration:"underline" }}>+ New</button>
+                      </div>
+                      {addingMilestoneToProject===pr.id && (
+                        <div style={{ display:"flex", gap:7, marginBottom:8 }}>
+                          <Inp placeholder="e.g. Beta shipped" value={milestoneDraft} onChange={e=>setMilestoneDraft(e.target.value)} style={{ flex:1 }} />
+                          <Btn sm onClick={() => {
+                            if (!milestoneDraft.trim()) return;
+                            setProjects(p=>p.map(x=>x.id===pr.id?{...x,milestones:[...(x.milestones||[]),{id:uid(),title:milestoneDraft.trim(),done:false}]}:x));
+                            setMilestoneDraft(""); setAddingMilestoneToProject(null);
+                          }}>Add</Btn>
+                        </div>
+                      )}
+                      {milestones.length===0 ? (
+                        <Mono style={{ color:C.soft, display:"block" }}>No milestones yet — add the big checkpoints on the way to done.</Mono>
+                      ) : milestones.map(m => (
+                        <div key={m.id} style={{ display:"flex", alignItems:"center", gap:10, padding:"6px 0" }}>
+                          <button onClick={() => toggleMilestone(pr.id, m.id)} style={{ width:18, height:18, borderRadius:5, border:`1.5px solid ${m.done?C.accent:C.soft}`, background:m.done?C.accent:"transparent", cursor:"pointer", flexShrink:0, display:"flex", alignItems:"center", justifyContent:"center", color:C.black, fontSize:11, fontWeight:900 }}>{m.done?"✓":""}</button>
+                          <div style={{ flex:1, fontSize:12, color:C.text, textDecoration:m.done?"line-through":"none", opacity:m.done?.6:1 }}>{m.title}</div>
+                          <button onClick={()=>removeMilestone(pr.id, m.id)} style={{ background:"none", border:"none", color:C.soft, cursor:"pointer", fontSize:11 }}>Remove</button>
+                        </div>
+                      ))}
+                    </div>
+                    {[{kind:"taskIds",label:"Tasks",items:linkedTasks,pool:tasks,render:t=>t.title,
+                        onNew:() => { setAddingTaskToProject(addingTaskToProject===pr.id?null:pr.id); setProjectTaskDraft(""); }},
+                      {kind:"noteIds",label:"Notes",items:linkedNotes,pool:notes,render:n=>n.title||"Untitled note",
+                        onNew:() => { setAddingNoteToProject(addingNoteToProject===pr.id?null:pr.id); setProjectNoteDraft(""); }},
+                      {kind:"fileIds",label:"Files",items:linkedFiles,pool:files,render:f=>f.name,
+                        onNew:() => { projectFileUploadTarget.current = pr.id; projectFileInputRef.current?.click(); }},
+                      {kind:"documentIds",label:"Documents",items:linkedDocuments,pool:documents,render:d=>d.title,
+                        onNew:() => { setAddingDocumentToProject(addingDocumentToProject===pr.id?null:pr.id); setProjectDocumentDraft(""); }},
+                      {kind:"contactIds",label:"Team",items:linkedContacts,pool:contacts,render:c=>c.name},
+                      {kind:"expenseIds",label:"Expenses",items:linkedExpenses,pool:expenses,render:x=>`${x.label} — ${fmtCur(x.amount,x.cur||user.currency)}`,
+                        onNew:() => { setAddEntryToProject({projectId:pr.id,kind:"expense"}); setProjectEntryDraft({label:"",amount:"",cat:expenseCats[0]||"Operations",date:todayISO(),repeat:"none"}); }},
+                      {kind:"incomeIds",label:"Income",items:linkedIncome,pool:income,render:x=>`${x.label} — ${fmtCur(x.amount,x.cur||user.currency)}`,
+                        onNew:() => { setAddEntryToProject({projectId:pr.id,kind:"income"}); setProjectEntryDraft({label:"",amount:"",cat:incomeCats[0]||"Invoice",date:todayISO(),repeat:"none"}); }}].map(sec => (
                       <div key={sec.kind}>
                         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:7 }}>
                           <Mono style={{ color:C.white, letterSpacing:.8 }}>{sec.label.toUpperCase()} ({sec.items.length})</Mono>
-                          <button onClick={() => setLinkPicker(linkPicker&&linkPicker.projectId===pr.id&&linkPicker.kind===sec.kind ? null : {projectId:pr.id,kind:sec.kind})} style={{ background:"none", border:"none", color:C.soft, cursor:"pointer", fontSize:11, fontFamily:"'Space Grotesk',sans-serif", textDecoration:"underline" }}>+ Link</button>
+                          <div style={{ display:"flex", gap:10 }}>
+                            {sec.onNew && <button onClick={sec.onNew} style={{ background:"none", border:"none", color:C.soft, cursor:"pointer", fontSize:11, fontFamily:"'Space Grotesk',sans-serif", textDecoration:"underline" }}>+ New</button>}
+                            <button onClick={() => setLinkPicker(linkPicker&&linkPicker.projectId===pr.id&&linkPicker.kind===sec.kind ? null : {projectId:pr.id,kind:sec.kind})} style={{ background:"none", border:"none", color:C.soft, cursor:"pointer", fontSize:11, fontFamily:"'Space Grotesk',sans-serif", textDecoration:"underline" }}>+ Link</button>
+                          </div>
                         </div>
+                        {sec.kind==="taskIds" && addingTaskToProject===pr.id && (
+                          <div style={{ display:"flex", gap:7, marginBottom:8 }}>
+                            <Inp placeholder="New task title" value={projectTaskDraft} onChange={e=>setProjectTaskDraft(e.target.value)} style={{ flex:1 }} />
+                            <Btn sm onClick={() => {
+                              if (!projectTaskDraft.trim()) return;
+                              const item = { id:uid(), title:projectTaskDraft.trim(), priority:"Normal", repeat:"none", contactId:null, dueDate:"", done:false };
+                              setTasks(p=>[item,...p]);
+                              toggleProjectLink(pr.id, "taskIds", item.id);
+                              setProjectTaskDraft(""); setAddingTaskToProject(null);
+                              toast("Task added to project.");
+                            }}>Add</Btn>
+                          </div>
+                        )}
+                        {sec.kind==="noteIds" && addingNoteToProject===pr.id && (
+                          <div style={{ display:"flex", gap:7, marginBottom:8 }}>
+                            <Inp placeholder="Quick note" value={projectNoteDraft} onChange={e=>setProjectNoteDraft(e.target.value)} style={{ flex:1 }} />
+                            <Btn sm onClick={() => {
+                              if (!projectNoteDraft.trim()) return;
+                              const item = { id:uid(), title:"", body:projectNoteDraft.trim(), date:dateStr(), contactId:null };
+                              setNotes(p=>[item,...p]);
+                              toggleProjectLink(pr.id, "noteIds", item.id);
+                              setProjectNoteDraft(""); setAddingNoteToProject(null);
+                              toast("Note added to project.");
+                            }}>Add</Btn>
+                          </div>
+                        )}
+                        {sec.kind==="documentIds" && addingDocumentToProject===pr.id && (
+                          <div style={{ display:"flex", gap:7, marginBottom:8 }}>
+                            <Inp placeholder="Document title" value={projectDocumentDraft} onChange={e=>setProjectDocumentDraft(e.target.value)} style={{ flex:1 }} />
+                            <Btn sm onClick={() => {
+                              if (!projectDocumentDraft.trim()) return;
+                              const item = { id:uid(), title:projectDocumentDraft.trim(), body:"", createdAt:dateStr(), editedAt:null };
+                              setDocuments(p=>[item,...p]);
+                              toggleProjectLink(pr.id, "documentIds", item.id);
+                              setProjectDocumentDraft(""); setAddingDocumentToProject(null);
+                              toast("Document added to project.");
+                            }}>Add</Btn>
+                          </div>
+                        )}
                         {sec.items.length===0 ? (
                           <Mono style={{ color:C.soft, display:"block" }}>Nothing linked yet.</Mono>
                         ) : sec.items.map(it => (
