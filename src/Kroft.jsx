@@ -8090,14 +8090,19 @@ ${voiceMode
             {wellnessTrend.length > 1 && (
               <Card style={{ marginBottom:14 }}>
                 <Mono style={{ display:"block", color:C.muted, marginBottom:12, letterSpacing:.8 }}>Score · last {wellnessTrend.length} days</Mono>
-                <ResponsiveContainer width="100%" height={150}>
-                  <ComposedChart data={wellnessTrend}>
+                {/* Bars instead of a line — today solid, every earlier day a lighter tint of the
+                    same color, so "which one is now" reads at a glance instead of needing to
+                    trace the line to the last point. */}
+                <ResponsiveContainer width="100%" height={160}>
+                  <BarChart data={wellnessTrend} margin={{ top:18, right:4, left:4, bottom:0 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke={C.cardB} vertical={false} />
                     <XAxis dataKey="label" tick={{ fill:C.muted, fontSize:10 }} axisLine={false} tickLine={false} />
-                    <YAxis domain={[0,100]} tick={{ fill:C.muted, fontSize:10 }} axisLine={false} tickLine={false} width={28} />
-                    <Tooltip formatter={v=>`${v}/100`} contentStyle={{ background:C.card, border:`1px solid ${C.cardB}`, borderRadius:12, fontSize:11, color:C.white }} />
-                    <Line type="monotone" dataKey="score" stroke={wColor} strokeWidth={2} dot={{ r:3, fill:wColor }} />
-                  </ComposedChart>
+                    <YAxis domain={[0,100]} hide />
+                    <Tooltip formatter={v=>`${v}/100`} contentStyle={{ background:C.card, border:`1px solid ${C.cardB}`, borderRadius:12, fontSize:11, color:C.white }} cursor={{ fill:C.surface }} />
+                    <Bar dataKey="score" radius={[6,6,0,0]} maxBarSize={28} label={{ position:"top", fill:C.muted, fontSize:10, fontFamily:"'Space Grotesk',sans-serif" }}>
+                      {wellnessTrend.map((e,i) => <Cell key={i} fill={e.label==="Today" ? wColor : wColor+"33"} />)}
+                    </Bar>
+                  </BarChart>
                 </ResponsiveContainer>
               </Card>
             )}
