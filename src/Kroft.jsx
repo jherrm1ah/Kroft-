@@ -2375,11 +2375,13 @@ function KroftApp({ onFullReset } = {}) {
   const [generatingRecap, setGeneratingRecap] = useState(false);
   const [editingEntry, setEditingEntry] = useState(null); // { kind:"income"|"expenses", id, label, amount, date, cat }
   const [remindersFired, setRemindersFired] = useState({ date:"", slots:[] }); // tracks which of today's 3 nudges already fired
-  const [emails, setEmails] = useState([
-    { id:1, from:"Amaka Obi <amaka@brightpath.co>", subject:"Follow-up on our call", tag:"Client", time:"9:14 AM", read:false, body:"Hi, thanks for the walkthrough yesterday — could you send over the pricing sheet we discussed? Also wanted to confirm the timeline for the first milestone." },
-    { id:2, from:"Sir Mubarak Isa Ibrahim <mi@ventures.ng>", subject:"Quick check-in", tag:"Investor", time:"Yesterday", read:false, body:"How's progress on the current build? Would like a short update whenever you have a moment — no rush." },
-    { id:3, from:"Notion <team@notion.so>", subject:"Your weekly workspace summary", tag:"", time:"2 days ago", read:true, body:"Here's what happened in your workspace this week. 3 pages edited, 1 new comment, 0 overdue tasks." },
-  ]);
+  // Previously seeded with three fabricated emails (a fake "investor", a fake "client", a fake
+  // Notion digest) shown to every user regardless of whether they'd actually connected an
+  // account — contradicting the "No email connected" state right next to them. An empty inbox
+  // until a real Gmail/Outlook account is connected (or a real reply arrives, see the simulated-
+  // reply comment on ComposeModal's onSend below) is the honest starting state, same as every
+  // other list in this app.
+  const [emails, setEmails] = useState([]);
   const [openEmail, setOpenEmail] = useState(null);
   const [composeDraft, setComposeDraft] = useState(null);
   const [appts, setAppts] = useState([]);
