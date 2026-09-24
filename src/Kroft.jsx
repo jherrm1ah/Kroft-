@@ -887,6 +887,10 @@ const NavIcon = ({ id, size=20, color="currentColor" }) => {
       return <svg viewBox="0 0 24 24" style={s}><path d="M4 8l6 6 4-4 6 8" {...p} /><path d="M15 18h5v-5" {...p} /></svg>;
     case "waveform":
       return <svg viewBox="0 0 24 24" style={s}><path d="M3 10v4M8 7v10M12 4v16M16 7v10M21 10v4" {...p} /></svg>;
+    case "droplet":
+      return <svg viewBox="0 0 24 24" style={s}><path d="M12 3.5c3.5 4.2 6 7.6 6 10.8a6 6 0 0 1-12 0c0-3.2 2.5-6.6 6-10.8z" {...p} /></svg>;
+    case "coffee":
+      return <svg viewBox="0 0 24 24" style={s}><path d="M5 9h11v6a4 4 0 0 1-4 4H9a4 4 0 0 1-4-4z" {...p} /><path d="M16 10.5h1.5a2.5 2.5 0 0 1 0 5H16" {...p} /><path d="M8 5.5v1.5M11 5.5v1.5M14 5.5v1.5" {...p} /></svg>;
     case "send":
       return <svg viewBox="0 0 24 24" style={s}><path d="M4.5 12h14" {...p} /><path d="M12.5 5.5 19 12l-6.5 6.5" {...p} /></svg>;
     case "edit":
@@ -8036,21 +8040,48 @@ ${voiceMode
           <div style={{ animation:"fadeUp .4s ease" }}>
             <h2 style={{ fontSize:22, fontWeight:700, color:C.white, letterSpacing:-1, marginBottom:18 }}>Wellness</h2>
             <Card style={{ marginBottom:14, border:`1px solid ${wColor}55` }}>
-              <Mono style={{ display:"block", color:wColor, letterSpacing:.8, marginBottom:9 }}>Wellness score today</Mono>
-              <div style={{ fontSize:58, fontWeight:700, color:wColor, letterSpacing:-3, lineHeight:1, marginBottom:8 }}>{wellness}<span style={{ fontSize:20, color:C.muted }}>/100</span></div>
-              <div style={{ background:C.surface, borderRadius:99, height:6, overflow:"hidden", marginBottom:14 }}><div style={{ height:"100%", width:`${wellness}%`, background:wColor, borderRadius:99, transition:"width .8s ease" }} /></div>
-              <div style={{ fontSize:13, color:C.soft, marginBottom:16 }}>{wellness>80?"You are thriving today.":wellness>60?"Doing well — watch your stress.":"Take a break — your body needs it."}</div>
-              <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
-                <Btn sm onClick={() => { const tip = rand(wellnessTips()).text; if (voiceReplies) speak(tip); toast(tip); }}>Get tip</Btn>
-                <Btn sm v="outline" onClick={() => { speak(`Wellness score: ${wellness} out of 100.`); toast("Reading score…"); }}>Read score</Btn>
-                <Btn sm v="outline" disabled={selfCare.breaks >= SELF_CARE_CAP.breaks}
-                  onClick={() => { setWellness(s=>Math.min(100,s+5)); setSelfCare(c=>({...c, breaks:c.breaks+1})); toast("Break logged. Wellness +5"); }}>
-                  {selfCare.breaks >= SELF_CARE_CAP.breaks ? "Breaks logged ✓" : `Took a break (${selfCare.breaks}/${SELF_CARE_CAP.breaks})`}
-                </Btn>
-                <Btn sm v="outline" disabled={selfCare.water >= SELF_CARE_CAP.water}
-                  onClick={() => { setWellness(s=>Math.min(100,s+3)); setSelfCare(c=>({...c, water:c.water+1})); toast("Water logged. Wellness +3"); }}>
-                  {selfCare.water >= SELF_CARE_CAP.water ? "Water logged ✓" : `Had water (${selfCare.water}/${SELF_CARE_CAP.water})`}
-                </Btn>
+              <Mono style={{ display:"block", color:wColor, letterSpacing:.8, marginBottom:14, textAlign:"center" }}>Wellness score today</Mono>
+              {/* A ring gauge reads as an actual wellness/fitness metric — the flat number-over-a-
+                  bar it replaces looked like any other stat tile in the app, nothing that said
+                  "this one is about you" the way a progress ring does. */}
+              <div style={{ position:"relative", width:132, height:132, margin:"0 auto 16px" }}>
+                <svg viewBox="0 0 132 132" style={{ width:132, height:132, transform:"rotate(-90deg)" }}>
+                  <circle cx="66" cy="66" r="56" fill="none" stroke={C.surface} strokeWidth="11" />
+                  <circle cx="66" cy="66" r="56" fill="none" stroke={wColor} strokeWidth="11" strokeLinecap="round"
+                    strokeDasharray={2*Math.PI*56} strokeDashoffset={2*Math.PI*56*(1-wellness/100)}
+                    style={{ transition:"stroke-dashoffset .8s ease" }} />
+                </svg>
+                <div style={{ position:"absolute", inset:0, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center" }}>
+                  <NavIcon id="wellness" size={16} color={wColor} />
+                  <div style={{ fontSize:34, fontWeight:700, color:wColor, letterSpacing:-1.5, lineHeight:1.2 }}>{wellness}</div>
+                  <Mono style={{ color:C.muted, fontSize:10 }}>/ 100</Mono>
+                </div>
+              </div>
+              <div style={{ fontSize:13, color:C.soft, marginBottom:16, textAlign:"center" }}>{wellness>80?"You are thriving today.":wellness>60?"Doing well — watch your stress.":"Take a break — your body needs it."}</div>
+              <div style={{ display:"flex", gap:8, marginBottom:12 }}>
+                <Btn sm onClick={() => { const tip = rand(wellnessTips()).text; if (voiceReplies) speak(tip); toast(tip); }} style={{ flex:1 }}>Get tip</Btn>
+                <Btn sm v="outline" onClick={() => { speak(`Wellness score: ${wellness} out of 100.`); toast("Reading score…"); }} style={{ flex:1 }}>Read score</Btn>
+              </div>
+              {/* Icon tiles instead of plain outlined pills — matching the quick-access language
+                  used elsewhere (Overview/Finance/Workspace) — and filled with the score's own
+                  color once logged, so progress is visible at a glance, not just in the label. */}
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:9 }}>
+                {[
+                  { id:"coffee", key:"breaks", label:"Took a break", done:"Breaks logged", bonus:5 },
+                  { id:"droplet", key:"water", label:"Had water", done:"Water logged", bonus:3 },
+                ].map(a => {
+                  const count = selfCare[a.key], cap = SELF_CARE_CAP[a.key], maxed = count >= cap;
+                  return (
+                    <button key={a.key} disabled={maxed} onClick={() => { setWellness(s=>Math.min(100,s+a.bonus)); setSelfCare(c=>({...c, [a.key]:c[a.key]+1})); toast(`${a.label==="Took a break"?"Break":"Water"} logged. Wellness +${a.bonus}`); }}
+                      style={{ background:maxed?wColor+"18":C.surface, border:`1px solid ${maxed?wColor+"66":C.cardB}`, borderRadius:14, padding:"12px 10px", cursor:maxed?"not-allowed":"pointer", textAlign:"left" }}>
+                      <div style={{ width:30, height:30, borderRadius:"50%", background:maxed?wColor+"22":C.card, border:`1px solid ${maxed?wColor:C.cardB}`, display:"flex", alignItems:"center", justifyContent:"center", marginBottom:8 }}>
+                        <NavIcon id={a.id} size={14} color={maxed?wColor:C.text} />
+                      </div>
+                      <div style={{ fontSize:12, fontWeight:700, color:C.white, marginBottom:2 }}>{maxed?a.done:a.label}</div>
+                      <Mono style={{ color:C.muted, fontSize:10 }}>{count}/{cap}{maxed?" ✓":""}</Mono>
+                    </button>
+                  );
+                })}
               </div>
             </Card>
             {/* The score only ever existed as a single "today" number — nothing showed whether
