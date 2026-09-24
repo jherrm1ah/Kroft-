@@ -873,6 +873,8 @@ const NavIcon = ({ id, size=20, color="currentColor" }) => {
       return <svg viewBox="0 0 24 24" style={s}><path d="M4.5 12a7.5 7.5 0 0 1 12.6-5.5M19.5 12a7.5 7.5 0 0 1-12.6 5.5" {...p} /><path d="M17.5 3.5v3.5H14" {...p} /><path d="M6.5 20.5V17H10" {...p} /></svg>;
     case "mic":
       return <svg viewBox="0 0 24 24" style={s}><rect x="9" y="3" width="6" height="11" rx="3" {...p} /><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0" {...p} /><path d="M12 18v3" {...p} /></svg>;
+    case "plus":
+      return <svg viewBox="0 0 24 24" style={s}><path d="M12 5v14M5 12h14" {...p} /></svg>;
     case "send":
       return <svg viewBox="0 0 24 24" style={s}><path d="M4.5 12h14" {...p} /><path d="M12.5 5.5 19 12l-6.5 6.5" {...p} /></svg>;
     case "edit":
@@ -2387,6 +2389,7 @@ function KroftApp({ onFullReset } = {}) {
   const [showChatHistory, setShowChatHistory] = useState(false);
   const [chatHistorySearch, setChatHistorySearch] = useState("");
   const [aiInput, setAiInput] = useState("");
+  const [aiInputFocused, setAiInputFocused] = useState(false);
   const [aiLoading, setAiLoading] = useState(false);
   // Drives the floating "scroll to bottom" button — shown only once someone has actually
   // scrolled up to re-read earlier messages, not on every render.
@@ -8244,7 +8247,17 @@ ${voiceMode
                 </Mono>
               </div>
             )}
-            <div style={{ borderTop:`1px solid ${C.cardB}`, padding:"12px 16px calc(12px + env(safe-area-inset-bottom))", display:"flex", gap:8, alignItems:"center", flexShrink:0, background:C.bg }}>
+            <div style={{ borderTop:`1px solid ${C.cardB}`, padding:"12px 16px calc(12px + env(safe-area-inset-bottom))", flexShrink:0, background:C.bg }}>
+              {/* One rounded card holding both the textarea and its controls, instead of a
+                  bare input row — the focus ring moves to this outer card (the textarea itself
+                  has no border of its own now) so typing and the button row read as one control,
+                  not two stacked ones. */}
+              <div style={{
+                background:C.surface, borderRadius:22, padding:"10px 10px 8px",
+                border:`1px solid ${aiInputFocused ? C.accent : C.cardB}`,
+                boxShadow:aiInputFocused ? `0 0 0 3px ${C.accentBg}` : "none",
+                transition:"border-color .18s, box-shadow .18s",
+              }}>
                 {/* A plain single-line <Inp> couldn't hold more than one line at all — pasting
                     or composing anything longer just scrolled the text sideways out of view.
                     This grows with the content (capped at ~5 lines, then scrolls internally)
@@ -8262,30 +8275,39 @@ ${voiceMode
                   onKeyDown={e => { if (e.key==="Enter" && !e.shiftKey) { e.preventDefault(); askKroft(); } }}
                   placeholder="Message KROFT…"
                   rows={1}
-                  style={{ flex:1, fontSize:13, fontFamily:"'Space Grotesk',sans-serif", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 14px", color:C.text, outline:"none", resize:"none", maxHeight:120, overflowY:"auto", lineHeight:1.4, boxSizing:"border-box", transition:"border-color .18s" }}
-                  onFocus={e => { e.target.style.borderColor=C.accent; e.target.style.boxShadow=`0 0 0 3px ${C.accentBg}`; }}
-                  onBlur={e => { e.target.style.borderColor=C.cardB; e.target.style.boxShadow="none"; }}
+                  style={{ width:"100%", fontSize:13, fontFamily:"'Space Grotesk',sans-serif", background:"transparent", border:"none", padding:"4px 6px", color:C.text, outline:"none", resize:"none", maxHeight:120, overflowY:"auto", lineHeight:1.4, boxSizing:"border-box" }}
+                  onFocus={() => setAiInputFocused(true)}
+                  onBlur={() => setAiInputFocused(false)}
                 />
-                {/* One button in one place: the mic sits there until you start typing, then it
-                    becomes Send. Showing both at once meant a permanently greyed-out Send
-                    taking up space next to a mic you'd use far more often. */}
-                {aiLoading ? (
-                  <button onClick={stopReply} aria-label="Stop generating" title="Stop"
-                    style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:"50%", width:44, height:44, flexShrink:0, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>
-                    <span style={{ width:12, height:12, borderRadius:3, background:C.text, display:"block" }} />
+                <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginTop:2 }}>
+                  {/* Reuses the existing "start over" action — there's no separate attach/upload
+                      feature to put here, and a dead "+" would be worse than none at all. */}
+                  <button onClick={startNewChat} aria-label="Start a new conversation" title="New chat"
+                    style={{ background:C.card, border:`1px solid ${C.cardB}`, borderRadius:"50%", width:34, height:34, flexShrink:0, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>
+                    <NavIcon id="plus" size={16} color={C.text} />
                   </button>
-                ) : aiInput.trim() ? (
-                  <button onClick={() => askKroft()} aria-label="Send message" title="Send"
-                    style={{ background:C.text, border:"none", borderRadius:"50%", width:44, height:44, flexShrink:0, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", animation:"pop .18s ease" }}>
-                    <NavIcon id="send" size={19} color={C.card} />
-                  </button>
-                ) : (
-                  <button onClick={() => { setVoiceOpen(true); setVoiceState("idle"); setVoiceError(""); }} aria-label="Open voice mode" title="Voice mode"
-                    style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:"50%", width:44, height:44, flexShrink:0, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>
-                    <NavIcon id="mic" size={19} color={C.text} />
-                  </button>
-                )}
+                  {/* One button in one place: the mic sits there until you start typing, then it
+                      becomes Send. Showing both at once meant a permanently greyed-out Send
+                      taking up space next to a mic you'd use far more often. */}
+                  {aiLoading ? (
+                    <button onClick={stopReply} aria-label="Stop generating" title="Stop"
+                      style={{ background:C.text, border:"none", borderRadius:"50%", width:36, height:36, flexShrink:0, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>
+                      <span style={{ width:11, height:11, borderRadius:3, background:C.card, display:"block" }} />
+                    </button>
+                  ) : aiInput.trim() ? (
+                    <button onClick={() => askKroft()} aria-label="Send message" title="Send"
+                      style={{ background:C.text, border:"none", borderRadius:"50%", width:36, height:36, flexShrink:0, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", animation:"pop .18s ease" }}>
+                      <NavIcon id="send" size={17} color={C.card} />
+                    </button>
+                  ) : (
+                    <button onClick={() => { setVoiceOpen(true); setVoiceState("idle"); setVoiceError(""); }} aria-label="Open voice mode" title="Voice mode"
+                      style={{ background:C.text, border:"none", borderRadius:"50%", width:36, height:36, flexShrink:0, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>
+                      <NavIcon id="mic" size={17} color={C.card} />
+                    </button>
+                  )}
+                </div>
               </div>
+            </div>
           </div>
         )}
 
