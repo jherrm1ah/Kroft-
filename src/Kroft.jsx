@@ -2305,6 +2305,18 @@ function KroftApp({ onFullReset } = {}) {
   // Owned by the project itself, not linked from a shared pool, so no linkPicker entry for it.
   const [addingMilestoneToProject, setAddingMilestoneToProject] = useState(null);
   const [milestoneDraft, setMilestoneDraft] = useState("");
+  // Same "+ New, auto-linked" pattern as Tasks/Milestones, extended to every other kind of
+  // project content — a note, document, file, or Finance entry made from inside a project
+  // never needs to be found again in the shared list, though it still lives in the one real
+  // Notes/Documents/Files list, or (for income/expense) the one real Finance ledger.
+  const [addingNoteToProject, setAddingNoteToProject] = useState(null);
+  const [projectNoteDraft, setProjectNoteDraft] = useState("");
+  const [addingDocumentToProject, setAddingDocumentToProject] = useState(null);
+  const [projectDocumentDraft, setProjectDocumentDraft] = useState("");
+  const projectFileUploadTarget = useRef(null);
+  const projectFileInputRef = useRef(null);
+  const [addEntryToProject, setAddEntryToProject] = useState(null); // { projectId, kind:"income"|"expense" }
+  const [projectEntryDraft, setProjectEntryDraft] = useState({ label:"", amount:"", cat:"", date:todayISO(), repeat:"none" });
 
   // Workspace — Voice Memos
   const [voiceMemos, setVoiceMemos] = useState([]);
@@ -3611,7 +3623,11 @@ function KroftApp({ onFullReset } = {}) {
   // Capped per-file rather than left unbounded, since a data: URL keeps the whole file in memory
   // and in kv_store's jsonb column, unlike a blob: URL which only ever held a lightweight handle.
   const MAX_UPLOAD_FILE_BYTES = 8 * 1024 * 1024;
-  const handleFilesUpload = e => {
+  // Optional projectId: when the upload was triggered from inside a project (its own "+ New"
+  // for Files, not the general Files screen), the new file(s) land in the one real Files list
+  // — still searchable/manageable from the Files screen — but get auto-linked to that project
+  // too, so the person never has to go pick them back out of the shared list afterward.
+  const handleFilesUpload = (e, projectId) => {
     const picked = Array.from(e.target.files || []);
     e.target.value = "";
     if (!picked.length) return;
@@ -3626,7 +3642,10 @@ function KroftApp({ onFullReset } = {}) {
       reader.readAsDataURL(f);
     }))).then(results => {
       const added = results.filter(Boolean);
-      if (added.length) { setFiles(p => [...added, ...p]); toast(`${added.length} file${added.length!==1?"s":""} added.`); }
+      if (!added.length) return;
+      setFiles(p => [...added, ...p]);
+      if (projectId) setProjects(p => p.map(pr => pr.id===projectId ? { ...pr, fileIds:[...(pr.fileIds||[]), ...added.map(a=>a.id)] } : pr));
+      toast(`${added.length} file${added.length!==1?"s":""} added${projectId?" to project.":"."}`);
     });
   };
 
@@ -7447,6 +7466,33 @@ ${voiceMode
               <h2 style={{ fontSize:22, fontWeight:700, color:C.white, letterSpacing:-1 }}>Projects</h2>
               <Btn sm onClick={() => setShowAddProject(v=>!v)}>Create Project</Btn>
             </div>
+            {/* One shared file input and one shared AddEntryModal for every project's "+ New" on
+                Files/Income/Expenses, rather than mounting one per project card. */}
+            <input ref={projectFileInputRef} type="file" multiple style={{ display:"none" }} onChange={e => handleFilesUpload(e, projectFileUploadTarget.current)} />
+            {addEntryToProject && (
+              <AddEntryModal
+                kind={addEntryToProject.kind}
+                theme={theme}
+                value={projectEntryDraft}
+                onChange={setProjectEntryDraft}
+                cats={addEntryToProject.kind==="income"?incomeCats:expenseCats}
+                onAddCategory={c => addEntryToProject.kind==="income" ? setIncomeCats(p=>p.includes(c)?p:[...p,c]) : setExpenseCats(p=>p.includes(c)?p:[...p,c])}
+                onClose={() => setAddEntryToProject(null)}
+                onSubmit={() => {
+                  if (!projectEntryDraft.label) return;
+                  const amt = parseAmount(projectEntryDraft.amount);
+                  if (amt === null) { toast("Enter an amount greater than zero."); return; }
+                  const { projectId, kind } = addEntryToProject;
+                  const base = { id:uid(), ...projectEntryDraft, amount:amt, date:projectEntryDraft.date||todayISO(), cur:user.currency };
+                  if (base.repeat && base.repeat !== "none") base.nextDate = advanceRepeatDate(base.date, base.repeat);
+                  if (kind==="income") setIncome(p=>[...p,base]); else setExpenses(p=>[...p,base]);
+                  const idsKey = kind==="income"?"incomeIds":"expenseIds";
+                  setProjects(p=>p.map(pr=>pr.id===projectId?{...pr,[idsKey]:[...(pr[idsKey]||[]),base.id]}:pr));
+                  setAddEntryToProject(null);
+                  toast(`${kind==="income"?"Income":"Expense"} added to project.`);
+                }}
+              />
+            )}
             {showAddProject && (
               <Card style={{ marginBottom:13, border:`1px solid ${C.border}` }}>
                 <div style={{ fontSize:13, fontWeight:700, color:C.text, marginBottom:11 }}>New project</div>
@@ -7599,18 +7645,24 @@ ${voiceMode
                         </div>
                       ))}
                     </div>
-                    {[{kind:"taskIds",label:"Tasks",items:linkedTasks,pool:tasks,render:t=>t.title},
-                      {kind:"noteIds",label:"Notes",items:linkedNotes,pool:notes,render:n=>n.title||"Untitled note"},
-                      {kind:"fileIds",label:"Files",items:linkedFiles,pool:files,render:f=>f.name},
-                      {kind:"documentIds",label:"Documents",items:linkedDocuments,pool:documents,render:d=>d.title},
+                    {[{kind:"taskIds",label:"Tasks",items:linkedTasks,pool:tasks,render:t=>t.title,
+                        onNew:() => { setAddingTaskToProject(addingTaskToProject===pr.id?null:pr.id); setProjectTaskDraft(""); }},
+                      {kind:"noteIds",label:"Notes",items:linkedNotes,pool:notes,render:n=>n.title||"Untitled note",
+                        onNew:() => { setAddingNoteToProject(addingNoteToProject===pr.id?null:pr.id); setProjectNoteDraft(""); }},
+                      {kind:"fileIds",label:"Files",items:linkedFiles,pool:files,render:f=>f.name,
+                        onNew:() => { projectFileUploadTarget.current = pr.id; projectFileInputRef.current?.click(); }},
+                      {kind:"documentIds",label:"Documents",items:linkedDocuments,pool:documents,render:d=>d.title,
+                        onNew:() => { setAddingDocumentToProject(addingDocumentToProject===pr.id?null:pr.id); setProjectDocumentDraft(""); }},
                       {kind:"contactIds",label:"Team",items:linkedContacts,pool:contacts,render:c=>c.name},
-                      {kind:"expenseIds",label:"Expenses",items:linkedExpenses,pool:expenses,render:x=>`${x.label} — ${fmtCur(x.amount,x.cur||user.currency)}`},
-                      {kind:"incomeIds",label:"Income",items:linkedIncome,pool:income,render:x=>`${x.label} — ${fmtCur(x.amount,x.cur||user.currency)}`}].map(sec => (
+                      {kind:"expenseIds",label:"Expenses",items:linkedExpenses,pool:expenses,render:x=>`${x.label} — ${fmtCur(x.amount,x.cur||user.currency)}`,
+                        onNew:() => { setAddEntryToProject({projectId:pr.id,kind:"expense"}); setProjectEntryDraft({label:"",amount:"",cat:expenseCats[0]||"Operations",date:todayISO(),repeat:"none"}); }},
+                      {kind:"incomeIds",label:"Income",items:linkedIncome,pool:income,render:x=>`${x.label} — ${fmtCur(x.amount,x.cur||user.currency)}`,
+                        onNew:() => { setAddEntryToProject({projectId:pr.id,kind:"income"}); setProjectEntryDraft({label:"",amount:"",cat:incomeCats[0]||"Invoice",date:todayISO(),repeat:"none"}); }}].map(sec => (
                       <div key={sec.kind}>
                         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:7 }}>
                           <Mono style={{ color:C.white, letterSpacing:.8 }}>{sec.label.toUpperCase()} ({sec.items.length})</Mono>
                           <div style={{ display:"flex", gap:10 }}>
-                            {sec.kind==="taskIds" && <button onClick={() => { setAddingTaskToProject(addingTaskToProject===pr.id?null:pr.id); setProjectTaskDraft(""); }} style={{ background:"none", border:"none", color:C.soft, cursor:"pointer", fontSize:11, fontFamily:"'Space Grotesk',sans-serif", textDecoration:"underline" }}>+ New</button>}
+                            {sec.onNew && <button onClick={sec.onNew} style={{ background:"none", border:"none", color:C.soft, cursor:"pointer", fontSize:11, fontFamily:"'Space Grotesk',sans-serif", textDecoration:"underline" }}>+ New</button>}
                             <button onClick={() => setLinkPicker(linkPicker&&linkPicker.projectId===pr.id&&linkPicker.kind===sec.kind ? null : {projectId:pr.id,kind:sec.kind})} style={{ background:"none", border:"none", color:C.soft, cursor:"pointer", fontSize:11, fontFamily:"'Space Grotesk',sans-serif", textDecoration:"underline" }}>+ Link</button>
                           </div>
                         </div>
@@ -7624,6 +7676,32 @@ ${voiceMode
                               toggleProjectLink(pr.id, "taskIds", item.id);
                               setProjectTaskDraft(""); setAddingTaskToProject(null);
                               toast("Task added to project.");
+                            }}>Add</Btn>
+                          </div>
+                        )}
+                        {sec.kind==="noteIds" && addingNoteToProject===pr.id && (
+                          <div style={{ display:"flex", gap:7, marginBottom:8 }}>
+                            <Inp placeholder="Quick note" value={projectNoteDraft} onChange={e=>setProjectNoteDraft(e.target.value)} style={{ flex:1 }} />
+                            <Btn sm onClick={() => {
+                              if (!projectNoteDraft.trim()) return;
+                              const item = { id:uid(), title:"", body:projectNoteDraft.trim(), date:dateStr(), contactId:null };
+                              setNotes(p=>[item,...p]);
+                              toggleProjectLink(pr.id, "noteIds", item.id);
+                              setProjectNoteDraft(""); setAddingNoteToProject(null);
+                              toast("Note added to project.");
+                            }}>Add</Btn>
+                          </div>
+                        )}
+                        {sec.kind==="documentIds" && addingDocumentToProject===pr.id && (
+                          <div style={{ display:"flex", gap:7, marginBottom:8 }}>
+                            <Inp placeholder="Document title" value={projectDocumentDraft} onChange={e=>setProjectDocumentDraft(e.target.value)} style={{ flex:1 }} />
+                            <Btn sm onClick={() => {
+                              if (!projectDocumentDraft.trim()) return;
+                              const item = { id:uid(), title:projectDocumentDraft.trim(), body:"", createdAt:dateStr(), editedAt:null };
+                              setDocuments(p=>[item,...p]);
+                              toggleProjectLink(pr.id, "documentIds", item.id);
+                              setProjectDocumentDraft(""); setAddingDocumentToProject(null);
+                              toast("Document added to project.");
                             }}>Add</Btn>
                           </div>
                         )}
