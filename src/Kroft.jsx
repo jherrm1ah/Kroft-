@@ -3452,10 +3452,9 @@ function KroftApp({ onFullReset } = {}) {
   };
 
   // Pulls the real inbox from whichever email account(s) are connected (Gmail, Outlook, or
-  // both — api/mail/messages.js merges them) and replaces the local `emails` list with it —
-  // including the very first pull, which is exactly what should happen to the three seed/mock
-  // emails this app starts with (see the emails useState above): connecting a real inbox
-  // should show that real inbox, not a real inbox appended after fake sample data.
+  // both — api/mail/messages.js merges them) and replaces the local `emails` list with it,
+  // rather than appending to whatever was there before (which, before an account is connected,
+  // is nothing — see the emails useState above).
   const syncMail = async () => {
     setSyncingMail(true);
     try {
