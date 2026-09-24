@@ -1024,84 +1024,17 @@ function ActionSheet({ title, subtitle, actions, onClose }) {
 // is displaced by summed sine waves so the surface rolls organically instead of pulsing as a
 // rigid ball. Live mic level pushes that displacement further, so the shape reacts to the
 // voice rather than animating on a fixed loop.
-function VoiceOrb({ state, levelRef, size = 300 }) {
-  const canvasRef = useRef(null);
-  const stateRef = useRef(state);
-  stateRef.current = state;
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    canvas.width = size * dpr;
-    canvas.height = size * dpr;
-    ctx.scale(dpr, dpr);
-
-    const COUNT = 2600;
-    const pts = [];
-    const golden = Math.PI * (3 - Math.sqrt(5));
-    for (let i = 0; i < COUNT; i++) {
-      const y = 1 - (i / (COUNT - 1)) * 2;
-      const r = Math.sqrt(Math.max(0, 1 - y * y));
-      const th = golden * i;
-      pts.push({ x: Math.cos(th) * r, y, z: Math.sin(th) * r });
-    }
-
-    let raf, t = 0, smooth = 0;
-    const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
-    const cx = size / 2, cy = size / 2, R = size * 0.33;
-
-    const draw = () => {
-      const st = stateRef.current;
-      // Idle breathes gently; listening tracks the mic; thinking churns; speaking swells.
-      const target = st === "listening" ? (levelRef?.current ?? 0) : st === "speaking" ? 0.55 : st === "thinking" ? 0.3 : 0.12;
-      smooth += (target - smooth) * 0.12;
-      t += reduce ? 0.002 : (st === "thinking" ? 0.016 : 0.009);
-
-      ctx.clearRect(0, 0, size, size);
-      const spin = t * (st === "thinking" ? 0.9 : 0.45);
-      const cosS = Math.cos(spin), sinS = Math.sin(spin);
-
-      for (let i = 0; i < COUNT; i++) {
-        const p = pts[i];
-        // Organic displacement — three sine waves at different frequencies so the surface
-        // never repeats in an obviously periodic way.
-        const n =
-          Math.sin(p.x * 2.6 + t * 1.5) * 0.5 +
-          Math.sin(p.y * 3.1 - t * 1.1) * 0.4 +
-          Math.sin(p.z * 2.2 + t * 0.8) * 0.35 +
-          Math.sin((p.x + p.y) * 4.1 - t * 0.6) * 0.2;
-        const rad = 1 + n * (0.14 + smooth * 0.26);
-
-        let x = p.x * rad, y = p.y * rad, z = p.z * rad;
-        const rx = x * cosS - z * sinS;
-        const rz = x * sinS + z * cosS;
-        x = rx; z = rz;
-
-        const persp = 1 / (1.9 - z * 0.55);
-        const sx = cx + x * R * persp * 1.9;
-        const sy = cy + y * R * persp * 1.9;
-        const depth = (z + 1) / 2;
-
-        // Cyan at the top, through blue, to magenta at the base — y runs downward in screen
-        // space, so the ramp follows +y rather than against it.
-        const hue = 192 + ((y + 1) / 2) * 98;
-        const alpha = (0.25 + depth * 0.72) * (st === "idle" ? 0.8 : 1);
-        const dot = 0.6 + depth * 1.7;
-
-        ctx.fillStyle = `hsla(${hue}, 95%, ${60 + depth * 12}%, ${alpha})`;
-        ctx.beginPath();
-        ctx.arc(sx, sy, dot, 0, 6.283);
-        ctx.fill();
-      }
-      raf = requestAnimationFrame(draw);
-    };
-    draw();
-    return () => cancelAnimationFrame(raf);
-  }, [size]);
-
-  return <canvas ref={canvasRef} style={{ width:size, height:size, display:"block" }} />;
+// A static eclipse-style disc — solid black, with a soft glow halo behind it — replacing the
+// earlier spinning particle-sphere animation. `state`/`levelRef` are accepted but unused now: the
+// point was to have one clean, calm mark regardless of listening/thinking/speaking, not something
+// that visibly "does stuff" without actually reflecting anything real about the call.
+function VoiceOrb({ size = 300 }) {
+  return (
+    <div style={{
+      width: size, height: size, borderRadius: "50%", background: "#050505", flexShrink: 0,
+      boxShadow: `0 0 ${size*0.4}px ${size*0.1}px rgba(255,255,255,.18), 0 0 ${size*0.16}px ${size*0.03}px rgba(255,255,255,.3)`,
+    }} />
+  );
 }
 
 // Full-screen one-on-one voice conversation. Entered deliberately rather than running
