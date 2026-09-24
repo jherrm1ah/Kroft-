@@ -54,15 +54,25 @@ export async function callGemini(rawBody, apiKey) {
   const method = isStreaming ? "streamGenerateContent" : "generateContent";
   const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:${method}${isStreaming ? "?alt=sse" : ""}`;
 
+  // Gemini's shared free/low-tier capacity throws a transient 503 ("model overloaded") often
+  // enough in practice that surfacing it straight to the user reads as "the AI is broken" for
+  // something that a single immediate retry usually clears on its own. One retry only, and only
+  // for 503/a dropped connection — a 429 is a real rate limit an instant retry won't fix, and
+  // every other status (400 malformed, 403 bad key, 404 unknown model) is not transient at all.
   let upstream;
-  try {
-    upstream = await fetch(endpoint, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
-      body: JSON.stringify(geminiBody),
-    });
-  } catch {
-    return jsonResponse({ error: "Could not reach the AI service." }, 502);
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      upstream = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
+        body: JSON.stringify(geminiBody),
+      });
+    } catch {
+      if (attempt === 0) { await new Promise(r => setTimeout(r, 500)); continue; }
+      return jsonResponse({ error: "Could not reach the AI service." }, 502);
+    }
+    if (upstream.status === 503 && attempt === 0) { await new Promise(r => setTimeout(r, 500)); continue; }
+    break;
   }
 
   if (!upstream.ok) {
