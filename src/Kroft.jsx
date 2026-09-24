@@ -11,15 +11,15 @@ const DARK = {
   // Cards were previously #0d0d0d — barely lighter than the #000 page behind them, so every
   // card leaned on its border alone for definition (the opposite of, e.g., ChatGPT's dark
   // settings rows, which are a genuinely solid, visible grey with no border needed at all).
-  // Raised to a real grey, then dialed back down twice from the first pass (which read too
-  // bright) — still clearly its own surface at a glance, just a darker one.
-  card:"#1e1e1e", cardB:"#282828", surface:"#141414",
-  hover:"#242424", white:"#ffffff", black:"#000000",
+  // Raised to a real grey, then dialed back down several times from the first pass (which read
+  // too bright) — still clearly its own surface at a glance, just a darker one.
+  card:"#181818", cardB:"#202020", surface:"#141414",
+  hover:"#1c1c1c", white:"#ffffff", black:"#000000",
   offWhite:"#f4f2ee",
   text:"#ffffff",        // primary text — pure white on black, max contrast
   soft:"#dcd8d0",        // secondary text — bright off-white, clearly readable (was low-contrast grey)
   muted:"#9a968e",       // tertiary/placeholder — still readable, used sparingly
-  border:"#333333",      // visible borders / dividers on dark surfaces — bumped alongside card/
+  border:"#2a2a2a",      // visible borders / dividers on dark surfaces — bumped alongside card/
                           // cardB above so a `hi` card's emphasis border/ring still reads clearly
                           // against the now-lighter card fill instead of nearly vanishing into it.
   div:"#1c1c1c",
