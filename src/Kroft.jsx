@@ -2299,6 +2299,12 @@ function KroftApp({ onFullReset } = {}) {
   // is open (only one at a time, same as linkPicker above).
   const [addingTaskToProject, setAddingTaskToProject] = useState(null);
   const [projectTaskDraft, setProjectTaskDraft] = useState("");
+  // Milestones are the project's own big checkpoints ("Beta shipped", "Launched") — kept
+  // separate from Tasks (the day-to-day grind) rather than a flag on some tasks, so a
+  // project's goal progress reads at a glance instead of being buried in a task list.
+  // Owned by the project itself, not linked from a shared pool, so no linkPicker entry for it.
+  const [addingMilestoneToProject, setAddingMilestoneToProject] = useState(null);
+  const [milestoneDraft, setMilestoneDraft] = useState("");
 
   // Workspace — Voice Memos
   const [voiceMemos, setVoiceMemos] = useState([]);
@@ -5369,6 +5375,15 @@ ${voiceMode
     }));
   };
 
+  // Milestones live on the project itself (not a shared pool like tasks/notes/files), so they
+  // get their own toggle/add/remove instead of reusing toggleProjectLink.
+  const toggleMilestone = (projectId, milestoneId) => {
+    setProjects(p => p.map(pr => pr.id!==projectId ? pr : { ...pr, milestones:(pr.milestones||[]).map(m => m.id===milestoneId ? {...m,done:!m.done} : m) }));
+  };
+  const removeMilestone = (projectId, milestoneId) => {
+    setProjects(p => p.map(pr => pr.id!==projectId ? pr : { ...pr, milestones:(pr.milestones||[]).filter(m => m.id!==milestoneId) }));
+  };
+
   // Share anything — files, notes, documents — via the native share sheet where available,
   // falling back to copying to clipboard (e.g. desktop browsers without navigator.share).
   const shareContent = async ({ title, text, url }) => {
@@ -7445,7 +7460,7 @@ ${voiceMode
                     <select value={newProject.status} onChange={e=>setNewProject(v=>({...v,status:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"10px 12px", color:C.text, fontSize:12, fontFamily:"'Space Grotesk',sans-serif", outline:"none" }}>
                       {["Not Started","In Progress","On Hold","Completed"].map(s => <option key={s}>{s}</option>)}
                     </select>
-                    <Btn onClick={() => { if (!newProject.name.trim()) return; setProjects(p=>[{id:uid(),...newProject,taskIds:[],noteIds:[],fileIds:[],documentIds:[],expenseIds:[],incomeIds:[],contactIds:[]},...p]); setNewProject({name:"",deadline:"",description:"",status:"Not Started"}); setShowAddProject(false); toast("Project created."); }}>Create</Btn>
+                    <Btn onClick={() => { if (!newProject.name.trim()) return; setProjects(p=>[{id:uid(),...newProject,taskIds:[],noteIds:[],fileIds:[],documentIds:[],expenseIds:[],incomeIds:[],contactIds:[],milestones:[]},...p]); setNewProject({name:"",deadline:"",description:"",status:"Not Started"}); setShowAddProject(false); toast("Project created."); }}>Create</Btn>
                   </div>
                 </div>
               </Card>
@@ -7473,6 +7488,9 @@ ${voiceMode
               const linkedTasks = tasks.filter(t => (pr.taskIds||[]).includes(t.id));
               const doneCount = linkedTasks.filter(t=>t.done).length;
               const progress = linkedTasks.length>0 ? Math.round((doneCount/linkedTasks.length)*100) : 0;
+              const milestones = pr.milestones||[];
+              const milestoneDoneCount = milestones.filter(m=>m.done).length;
+              const milestoneProgress = milestones.length>0 ? Math.round((milestoneDoneCount/milestones.length)*100) : 0;
               const linkedNotes = notes.filter(n => (pr.noteIds||[]).includes(n.id));
               const linkedFiles = files.filter(f => (pr.fileIds||[]).includes(f.id));
               const linkedDocuments = documents.filter(d => (pr.documentIds||[]).includes(d.id));
@@ -7522,6 +7540,17 @@ ${voiceMode
                     <Btn sm v="outline" onClick={e=>{e.stopPropagation();setEditingProject({...pr});}}>Edit</Btn>
                   </div>
                 </div>
+                {/* Milestone progress is the goal-level view (accent-colored, shown first);
+                    task progress right below it is the day-to-day view. Same data, two
+                    granularities, so a project reads at a glance without opening it. */}
+                {milestones.length>0 && (
+                  <div style={{ marginTop:10 }}>
+                    <div style={{ height:6, borderRadius:3, background:C.surface, overflow:"hidden" }}>
+                      <div style={{ height:"100%", width:`${milestoneProgress}%`, background:C.accent, borderRadius:3, transition:"width .3s ease" }} />
+                    </div>
+                    <Mono style={{ display:"block", color:C.soft, marginTop:5 }}>{milestoneDoneCount}/{milestones.length} milestones complete · {milestoneProgress}%</Mono>
+                  </div>
+                )}
                 {linkedTasks.length>0 && (
                   <div style={{ marginTop:10 }}>
                     <div style={{ height:6, borderRadius:3, background:C.surface, overflow:"hidden" }}>
@@ -7542,6 +7571,34 @@ ${voiceMode
                         {linkedIncome.length>0 && linkedExpenses.length>0 && <div><Mono style={{ display:"block", color:C.muted, marginBottom:2 }}>NET</Mono><div style={{ fontSize:15, fontWeight:700, color:(totalEarned-totalSpent)>=0?C.positive:C.negative }}>{fmtCur(totalEarned-totalSpent,user.currency)}</div></div>}
                       </div>
                     )}
+                    {/* Milestones: the project's own goal checkpoints, not a link to a shared
+                        pool — so this gets bespoke rendering (a checkbox + a real delete)
+                        instead of the generic link/unlink pattern the sections below use. */}
+                    <div>
+                      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:7 }}>
+                        <Mono style={{ color:C.white, letterSpacing:.8 }}>MILESTONES ({milestones.length})</Mono>
+                        <button onClick={() => { setAddingMilestoneToProject(addingMilestoneToProject===pr.id?null:pr.id); setMilestoneDraft(""); }} style={{ background:"none", border:"none", color:C.soft, cursor:"pointer", fontSize:11, fontFamily:"'Space Grotesk',sans-serif", textDecoration:"underline" }}>+ New</button>
+                      </div>
+                      {addingMilestoneToProject===pr.id && (
+                        <div style={{ display:"flex", gap:7, marginBottom:8 }}>
+                          <Inp placeholder="e.g. Beta shipped" value={milestoneDraft} onChange={e=>setMilestoneDraft(e.target.value)} style={{ flex:1 }} />
+                          <Btn sm onClick={() => {
+                            if (!milestoneDraft.trim()) return;
+                            setProjects(p=>p.map(x=>x.id===pr.id?{...x,milestones:[...(x.milestones||[]),{id:uid(),title:milestoneDraft.trim(),done:false}]}:x));
+                            setMilestoneDraft(""); setAddingMilestoneToProject(null);
+                          }}>Add</Btn>
+                        </div>
+                      )}
+                      {milestones.length===0 ? (
+                        <Mono style={{ color:C.soft, display:"block" }}>No milestones yet — add the big checkpoints on the way to done.</Mono>
+                      ) : milestones.map(m => (
+                        <div key={m.id} style={{ display:"flex", alignItems:"center", gap:10, padding:"6px 0" }}>
+                          <button onClick={() => toggleMilestone(pr.id, m.id)} style={{ width:18, height:18, borderRadius:5, border:`1.5px solid ${m.done?C.accent:C.soft}`, background:m.done?C.accent:"transparent", cursor:"pointer", flexShrink:0, display:"flex", alignItems:"center", justifyContent:"center", color:C.black, fontSize:11, fontWeight:900 }}>{m.done?"✓":""}</button>
+                          <div style={{ flex:1, fontSize:12, color:C.text, textDecoration:m.done?"line-through":"none", opacity:m.done?.6:1 }}>{m.title}</div>
+                          <button onClick={()=>removeMilestone(pr.id, m.id)} style={{ background:"none", border:"none", color:C.soft, cursor:"pointer", fontSize:11 }}>Remove</button>
+                        </div>
+                      ))}
+                    </div>
                     {[{kind:"taskIds",label:"Tasks",items:linkedTasks,pool:tasks,render:t=>t.title},
                       {kind:"noteIds",label:"Notes",items:linkedNotes,pool:notes,render:n=>n.title||"Untitled note"},
                       {kind:"fileIds",label:"Files",items:linkedFiles,pool:files,render:f=>f.name},
