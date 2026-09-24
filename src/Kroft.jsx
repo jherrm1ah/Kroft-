@@ -570,12 +570,15 @@ function generatePassword() {
 //   base   — the default content card (unchanged from before, so existing usage is untouched)
 //   inset  — nested rows inside another card; tighter radius, border only, no shadow
 const CARD_LEVELS = {
-  // Radii pulled in from 22/18/12 — large rounding reads fine on one card, but stacking several
-  // per screen (Finance alone now runs eight-plus) turned every one of them into an obviously
-  // separate bubble instead of one calm layout.
-  raised: { radius:18, pad:20, shadow:() => C.shadowRaised },
-  base:   { radius:14, pad:16, shadow:() => C.shadowBase },
-  inset:  { radius:10, pad:12, shadow:() => "none" },
+  // Radii pulled in from 22/18/12 (see below) then nudged back up a couple px from that — large
+  // rounding reads fine on one card, but stacking several per screen (Finance alone runs
+  // eight-plus) turned every one of them into an obviously separate bubble instead of one calm
+  // layout. 20/16/12 is the modest middle: every card in the app reads at the same softness as
+  // the ones already tuned individually this way (Tasks/Projects/Calendar/Email), without going
+  // back to the bubble-y original.
+  raised: { radius:20, pad:20, shadow:() => C.shadowRaised },
+  base:   { radius:16, pad:16, shadow:() => C.shadowBase },
+  inset:  { radius:12, pad:12, shadow:() => "none" },
 };
 const Card = ({ children, style, onClick, hi, level="base", ...rest }) => {
   const L = CARD_LEVELS[level] || CARD_LEVELS.base;
