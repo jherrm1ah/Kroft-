@@ -6275,6 +6275,7 @@ ${voiceMode
     try {
       const res = await fetch(`/api/places?mode=reverse&lat=${lat}&lon=${lng}`);
       const data = await res.json();
+      if (!res.ok || data.error) throw new Error(data.error || "Places service unavailable");
       const city = data.address?.city || data.address?.town || data.address?.village || data.address?.county || "";
       const label = [city, data.address?.state, data.address?.country].filter(Boolean).join(", ");
       setLocationLabel(label || "Current location");
@@ -6306,8 +6307,13 @@ ${voiceMode
         const results = data.results || [];
         setAroundResults(results);
         if (results.length === 0) setAroundError(`No ${categoryOrQuery.toLowerCase()} found nearby. Try a different category or search.`);
-      } catch {
-        setAroundError("Couldn't reach the places service. Check your connection and try again.");
+      } catch (e) {
+        // The proxy distinguishes a slow/overloaded upstream (both Overpass mirrors timed out)
+        // from an outright failure — worth telling the person apart, since one suggests "try
+        // again in a bit" and the other suggests "check your connection."
+        setAroundError(e.message === "Places service timed out"
+          ? "The places service is taking too long to respond. Try again in a moment."
+          : "Couldn't reach the places service. Check your connection and try again.");
       }
       setAroundLoading(false);
       return;
@@ -6352,8 +6358,10 @@ ${voiceMode
       }));
       setAroundResults(results);
       if (results.length === 0) setAroundError(`No results found for "${searchTerm}" nearby. Try a different search.`);
-    } catch {
-      setAroundError("Couldn't reach the places service. Check your connection and try again.");
+    } catch (e) {
+      setAroundError(e.message === "Places service timed out"
+        ? "The places service is taking too long to respond. Try again in a moment."
+        : "Couldn't reach the places service. Check your connection and try again.");
     }
     setAroundLoading(false);
   };
