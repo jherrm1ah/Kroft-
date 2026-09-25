@@ -1029,6 +1029,19 @@ const NavIcon = ({ id, size=20, color="currentColor" }) => {
       return <svg viewBox="0 0 24 24" style={s}><path d="M5 12v.01M8.5 8v8M12 5v14M15.5 8v8M19 12v.01" {...p} /></svg>;
     case "contacts":
       return <svg viewBox="0 0 24 24" style={s}><circle cx="9" cy="8.5" r="2.6" {...p} /><path d="M4 19c0-2.8 2.2-5 5-5s5 2.2 5 5" {...p} /><circle cx="17" cy="9" r="2.2" {...p} /><path d="M14.5 19c.2-2.3 1.8-4 3.5-4 1.9 0 3.5 1.8 3.7 4" {...p} /></svg>;
+    // ---- Wellness feature icons ----
+    case "moon": // Sleep
+      return <svg viewBox="0 0 24 24" style={s}><path d="M18.5 14.5A7.5 7.5 0 0 1 9.5 5.5a7.5 7.5 0 1 0 9 9z" {...p} /></svg>;
+    case "bolt": // Energy
+      return <svg viewBox="0 0 24 24" style={s}><path d="M13 3 6 13.5h5L11 21l7-10.5h-5z" {...p} /></svg>;
+    case "pulse": // Stress check
+      return <svg viewBox="0 0 24 24" style={s}><circle cx="12" cy="12" r="8.5" {...p} /><path d="M8 12h1.7l1.3-3 2 6 1.3-3H17" {...p} /></svg>;
+    case "journal": // Wellness Journal
+      return <svg viewBox="0 0 24 24" style={s}><path d="M6.5 4h9.5a1.5 1.5 0 0 1 1.5 1.5v14l-2.5-1.5-2.5 1.5-2.5-1.5-2.5 1.5v-14A1.5 1.5 0 0 1 6.5 4z" {...p} /><path d="M9 8.5h6M9 11.5h6" {...p} /></svg>;
+    case "patterns": // Your Patterns
+      return <svg viewBox="0 0 24 24" style={s}><circle cx="6" cy="17" r="2" {...p} /><circle cx="12" cy="7" r="2" {...p} /><circle cx="18" cy="14" r="2" {...p} /><path d="M7.7 15.7 10.4 8.8M13.6 8.3l2.9 4.2" {...p} /></svg>;
+    case "timer": // Quick Reset
+      return <svg viewBox="0 0 24 24" style={s}><circle cx="12" cy="13" r="8" {...p} /><path d="M12 13V9M9.5 3.5h5" {...p} /></svg>;
     default:
       return null;
   }
@@ -1354,6 +1367,69 @@ function UberModal({ dest, onClose }) {
   );
 }
 
+// The guided countdown for an in-progress Quick Reset session. `session` is Kroft.jsx's own
+// activeReset state ({ key, label, guide, seconds, total }); the countdown itself lives there too
+// (ticked once a second by an effect in KroftApp) so this component stays a pure display of it.
+function QuickResetModal({ session, onCancel }) {
+  const pct = 1 - session.seconds / session.total;
+  const mm = Math.floor(session.seconds / 60), ss = session.seconds % 60;
+  return (
+    <div role="dialog" aria-modal="true" aria-label={session.label} style={{ position:"fixed", inset:0, zIndex:1300, background:C.bg, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:24 }}>
+      <Mono style={{ color:C.muted, letterSpacing:.8, marginBottom:22 }}>{session.label}</Mono>
+      <div style={{ position:"relative", width:180, height:180, marginBottom:26 }}>
+        <svg viewBox="0 0 180 180" style={{ width:180, height:180, transform:"rotate(-90deg)" }}>
+          <circle cx="90" cy="90" r="76" fill="none" stroke={C.card} strokeWidth="10" />
+          <circle cx="90" cy="90" r="76" fill="none" stroke={C.accent} strokeWidth="10" strokeLinecap="round"
+            strokeDasharray={2*Math.PI*76} strokeDashoffset={2*Math.PI*76*(1-pct)}
+            style={{ transition:"stroke-dashoffset 1s linear" }} />
+        </svg>
+        <div style={{ position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center", fontSize:38, fontWeight:700, color:C.white, letterSpacing:-1 }}>
+          {mm}:{String(ss).padStart(2,"0")}
+        </div>
+      </div>
+      <div style={{ fontSize:14, color:C.soft, textAlign:"center", maxWidth:280, lineHeight:1.6, marginBottom:34 }}>{session.guide}</div>
+      <Btn v="outline" onClick={onCancel}>End early</Btn>
+    </div>
+  );
+}
+
+// The detail view behind tapping a card in "Your Patterns" — every field here (insight, the two
+// group averages, observation count, explanation) comes straight off the pattern object the
+// Pattern Engine computed (see wellnessPatterns in KroftApp); nothing here is a separate hardcoded
+// sentence, and the disclaimer is fixed and always shown, per the spec's own requirement that this
+// never reads as a medical conclusion.
+function PatternDetailModal({ pattern, onClose }) {
+  const maxAvg = Math.max(...pattern.groups.map(g => g.avg), 0.01);
+  return (
+    <div style={{ position:"fixed", inset:0, zIndex:950, background:"rgba(0,0,0,.93)", display:"flex", alignItems:"center", justifyContent:"center", padding:24 }} onClick={onClose}>
+      <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:18, padding:26, maxWidth:420, width:"100%", animation:"pop .3s ease" }} onClick={e => e.stopPropagation()}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:10, marginBottom:14 }}>
+          <div style={{ fontSize:16, fontWeight:700, color:C.white, lineHeight:1.4 }}>{pattern.insight}</div>
+          <button onClick={onClose} aria-label="Close" style={{ background:"none", border:"none", color:C.muted, fontSize:20, cursor:"pointer", padding:2, lineHeight:1, flexShrink:0 }}>✕</button>
+        </div>
+        <Mono style={{ display:"block", color:C.muted, marginBottom:16 }}>Last {pattern.period} days · {pattern.observations} days observed</Mono>
+        <div style={{ display:"flex", flexDirection:"column", gap:10, marginBottom:16 }}>
+          {pattern.groups.map((g,i) => (
+            <div key={i}>
+              <div style={{ display:"flex", justifyContent:"space-between", marginBottom:4 }}>
+                <Mono style={{ color:C.soft }}>{g.label}</Mono>
+                <Mono style={{ color:C.white }}>{g.avg.toFixed(1)} · {g.n} day{g.n!==1?"s":""}</Mono>
+              </div>
+              <div style={{ background:C.surface, borderRadius:8, height:8, overflow:"hidden" }}>
+                <div style={{ width:`${Math.max(4, g.avg/maxAvg*100)}%`, height:"100%", background:i===0?C.accent:C.muted, borderRadius:8 }} />
+              </div>
+            </div>
+          ))}
+        </div>
+        <div style={{ fontSize:12.5, color:C.text, lineHeight:1.7, marginBottom:14 }}>{pattern.explanation}</div>
+        <div style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"10px 12px", fontSize:11, color:C.muted, lineHeight:1.6 }}>
+          This is a pattern in your personal data, not a medical conclusion.
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ComposeModal({ draft, onChange, onSend, onClose }) {
   const ref = useModalA11y(onClose);
   return (
@@ -1617,7 +1693,7 @@ function ProfileSwitch({ value, onChange }) {
   );
 }
 
-function ProfileSection({ user, onUpdateName, onEditPreferences, onEditBusinessDetails, onSignOut, theme, onToggleTheme, toast, subscribed, subscriptionStatus, autoRenews, billingLoading, onUpgrade, onManageBilling, usageStats, voiceReplies, onSetVoiceReplies, proactiveInsights, onSetProactiveInsights, voicePref, onSetVoicePref, voiceSpeed, onSetVoiceSpeed, onSetupBiometric, onRemoveBiometric, onExportData, onImportData, notifPermission, notifPrefs, onEnableNotifications, onSetNotifPref, onTestNotification, voiceTurnsCount, voiceLimit }) {
+function ProfileSection({ user, onUpdateName, onEditPreferences, onEditBusinessDetails, onSignOut, theme, onToggleTheme, toast, subscribed, subscriptionStatus, autoRenews, billingLoading, onUpgrade, onManageBilling, usageStats, voiceReplies, onSetVoiceReplies, proactiveInsights, onSetProactiveInsights, wellnessAiContext, onSetWellnessAiContext, voicePref, onSetVoicePref, voiceSpeed, onSetVoiceSpeed, onSetupBiometric, onRemoveBiometric, onExportData, onImportData, notifPermission, notifPrefs, onEnableNotifications, onSetNotifPref, onTestNotification, voiceTurnsCount, voiceLimit }) {
   // null = main hub. Otherwise one of: "ai" | "productivity" | "privacy" | "subscription" | "support"
   const [screen, setScreen] = useState(null);
   const [openRow, setOpenRow] = useState(null);
@@ -1819,6 +1895,12 @@ function ProfileSection({ user, onUpdateName, onEditPreferences, onEditBusinessD
         </ProfileRow>
         <ProfileRow label="Privacy Controls" sub="Data sharing, visibility" expanded={openRow==="privacy"} onToggle={()=>toggle("privacy")}>
           <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>Your data stays scoped to your own account and is never shared with other KROFT users.</Mono>
+        </ProfileRow>
+        <ProfileRow label="Wellness Data in KROFT Chat" sub={wellnessAiContext ? "KROFT can reference your wellness data" : "Off"} expanded={openRow==="wellnessai"} onToggle={()=>toggle("wellnessai")}
+          right={<ProfileSwitch value={wellnessAiContext} onChange={onSetWellnessAiContext} />}>
+          <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>{wellnessAiContext
+            ? "KROFT Chat can reference your mood, sleep, energy, stress, journal and pattern data to answer wellness questions — always as observations from your own data, never as a diagnosis. Your Wellness tab keeps working the same either way."
+            : "KROFT Chat will not see or reference any wellness data — mood, sleep, energy, stress, journal entries or Your Patterns stay out of its context entirely. The Wellness tab itself is unaffected."}</Mono>
         </ProfileRow>
         <ProfileRow label="Backup & Restore" sub="Download a copy of everything" expanded={openRow==="data"} onToggle={()=>toggle("data")}>
           <Mono style={{ display:"block", color:C.soft, lineHeight:1.7, marginBottom:12 }}>
@@ -2171,6 +2253,31 @@ const STORAGE_KEYS = {
   filesData: "kroft:files",
 };
 
+// Config tables for the manual wellness check-ins (Energy/Stress/Quick Reset) — module-level, and
+// shared between the button rows that render them and the handlers that log them, so the label
+// shown to the user and the label used in a toast/pattern sentence can never drift apart.
+const ENERGY_LEVELS = [
+  { key:"low", label:"Low", emoji:"🔋", tone:"negative" },
+  { key:"okay", label:"Okay", emoji:"🙂", tone:"warning" },
+  { key:"good", label:"Good", emoji:"😊", tone:"accent" },
+  { key:"great", label:"Great", emoji:"⚡", tone:"positive" },
+];
+const STRESS_LEVELS = [
+  { key:"calm", label:"Calm", emoji:"😌", tone:"positive" },
+  { key:"neutral", label:"Neutral", emoji:"😐", tone:"accent" },
+  { key:"worried", label:"Worried", emoji:"😟", tone:"warning" },
+  { key:"overwhelmed", label:"Overwhelmed", emoji:"😣", tone:"negative" },
+];
+// seconds:0 marks the "close your eyes" session, whose duration the user picks freely rather than
+// the app dictating one.
+const QUICK_RESET_KINDS = [
+  { key:"breathe1", label:"1-min breathing", seconds:60, guide:"Breathe in slowly through your nose, then out through your mouth." },
+  { key:"breathe3", label:"3-min breathing", seconds:180, guide:"Breathe in slowly through your nose, then out through your mouth." },
+  { key:"breathe5", label:"5-min breathing", seconds:300, guide:"Breathe in slowly through your nose, then out through your mouth." },
+  { key:"stretch", label:"Short stretch", seconds:120, guide:"Stand up and stretch — arms, shoulders, neck, whatever feels tight." },
+  { key:"eyes", label:"Close your eyes", seconds:90, guide:"Close your eyes and let your mind rest for a moment." },
+];
+
 function KroftApp({ onFullReset } = {}) {
   // Theme: "dark" or "light". C's properties are reassigned in place (see effect below)
   // rather than swapping which object C points to, since ~250 style props across this file
@@ -2236,6 +2343,12 @@ function KroftApp({ onFullReset } = {}) {
   // Proactive Insights preference — same reasoning: gates the passive 3x-daily finance nudge
   // below. When off, KROFT should only respond when asked, not surface unprompted toasts.
   const [proactiveInsights, setProactiveInsights] = useState(true);
+
+  // Wellness data/pattern access for KROFT Chat — gates the WELLNESS section of krofSysPrompt
+  // (see there). Off means the AI never sees mood/sleep/energy/stress/journal/pattern data at
+  // all, even if asked about it directly; the Wellness tab itself still works either way, since
+  // this only controls what leaves the Wellness feature into the AI's context.
+  const [wellnessAiContext, setWellnessAiContext] = useState(true);
 
   // Which of the four KROFT voices (Ben/Atlas/Mira/Nova — see VOICE_PROFILES) KROFT speaks
   // with — persisted per-account like every other preference here. Kept in sync with the
@@ -2521,6 +2634,31 @@ function KroftApp({ onFullReset } = {}) {
   // Counts today's self-care taps so they can't be farmed to 100.
   const [selfCare, setSelfCare] = useState({ breaks:0, water:0 });
   const SELF_CARE_CAP = { breaks:4, water:6 };
+  // One entry per day the rollover effect has processed, mirroring wellnessHistory — lets the
+  // Pattern Engine look at actual break/water counts over time instead of only today's live tally.
+  const [selfCareHistory, setSelfCareHistory] = useState([]);
+  // Wellness signals below are all manual check-ins today. HealthKit/Health Connect could one day
+  // populate sleepLog automatically (there's no browser API for either — this only runs as a web
+  // app), but the shape (one entry per check-in, capped array, restored/saved like moodLog) is
+  // deliberately identical either way, so a future native auto-collector can just push into the
+  // same array without any of this code changing.
+  const [sleepLog, setSleepLog] = useState([]); // {id, date, time, hours, bedtime, wakeTime, quality}
+  const [energyLog, setEnergyLog] = useState([]); // {id, date, time, level: "low"|"okay"|"good"|"great"}
+  const [stressLog, setStressLog] = useState([]); // {id, date, time, level: "calm"|"neutral"|"worried"|"overwhelmed"}
+  const [journalEntries, setJournalEntries] = useState([]); // {id, date, time, text}
+  const [quickResetLog, setQuickResetLog] = useState([]); // {id, date, time, kind, seconds}
+  // The in-progress guided countdown, or null when no Quick Reset session is running. Deliberately
+  // separate from quickResetLog (which only ever gets a row once a session actually finishes) —
+  // closing out early logs nothing, matching how the spec frames these as optional resets, not
+  // tasks to complete.
+  const [activeReset, setActiveReset] = useState(null); // { key, label, seconds, total, guide }
+  // "Your Patterns" view state — which time range is selected and which pattern's detail view (if
+  // any) is open. Neither needs persisting: it's just what the user is currently looking at, not
+  // data.
+  const [patternRange, setPatternRange] = useState(30);
+  const [patternDetail, setPatternDetail] = useState(null);
+  const [journalDraft, setJournalDraft] = useState("");
+  const [sleepForm, setSleepForm] = useState({ hours:"", bedtime:"", wakeTime:"", quality:"" });
   const [listening, setListening] = useState(false);
   const [transcript, setTranscript] = useState("");
   const [toasts, setToasts] = useState([]);
@@ -2560,6 +2698,12 @@ function KroftApp({ onFullReset } = {}) {
   const aiAbortRef = useRef(null);
   const chatEnd = useRef(null);
   const recRef = useRef(null);
+  // A separate recognizer/ref pair for the Wellness Journal's "speak an entry" button — toggleListen
+  // above is hardcoded to always hand its transcript to the AI chat input and jump to that tab
+  // (setAiInput/setTab("nova")), which is exactly wrong here: journal dictation needs to land in
+  // journalDraft and stay on the Wellness tab. Same SpeechRecognition usage, different destination.
+  const journalRecRef = useRef(null);
+  const [journalListening, setJournalListening] = useState(false);
 
   // Subscription — real, session-local state. No payment processor is available in this
   // environment, so "upgrading" flips this flag rather than charging anything.
@@ -2632,6 +2776,7 @@ function KroftApp({ onFullReset } = {}) {
       if (p.theme) setTheme(p.theme);
       if (typeof p.voiceReplies === "boolean") setVoiceReplies(p.voiceReplies);
       if (typeof p.proactiveInsights === "boolean") setProactiveInsights(p.proactiveInsights);
+      if (typeof p.wellnessAiContext === "boolean") setWellnessAiContext(p.wellnessAiContext);
       // resolveVoiceId maps a pre-persona save (the old female-1/male-2/etc. slot keys) forward
       // to its nearest new persona, so a returning user's saved choice never silently resets.
       if (typeof p.voicePref === "string") setVoicePref(resolveVoiceId(p.voicePref));
@@ -2684,6 +2829,12 @@ function KroftApp({ onFullReset } = {}) {
       // Backfill ids on entries saved before they carried one, so every row has a stable
       // handle for React keys and for deletion.
       if (Array.isArray(w.moodLog)) setMoodLog(w.moodLog.map(m => m.id ? m : { ...m, id:uid() }));
+      if (Array.isArray(w.selfCareHistory)) setSelfCareHistory(w.selfCareHistory);
+      if (Array.isArray(w.sleepLog)) setSleepLog(w.sleepLog.map(e => e.id ? e : { ...e, id:uid() }));
+      if (Array.isArray(w.energyLog)) setEnergyLog(w.energyLog.map(e => e.id ? e : { ...e, id:uid() }));
+      if (Array.isArray(w.stressLog)) setStressLog(w.stressLog.map(e => e.id ? e : { ...e, id:uid() }));
+      if (Array.isArray(w.journalEntries)) setJournalEntries(w.journalEntries.map(e => e.id ? e : { ...e, id:uid() }));
+      if (Array.isArray(w.quickResetLog)) setQuickResetLog(w.quickResetLog.map(e => e.id ? e : { ...e, id:uid() }));
     }
     // Read/unread and deletions were lost on every reload — the inbox silently reset to
     // all-unread, so marking things read never stuck.
@@ -2741,13 +2892,13 @@ function KroftApp({ onFullReset } = {}) {
   // subscribed is deliberately excluded — see hydrateAllGroups's comment on why it's never
   // restored from this same blob; persisting it here would just re-create the value this app
   // must never trust from client storage in the first place.
-  const saveProfileNow = () => window.storage.set(STORAGE_KEYS.profile, JSON.stringify({ user, theme, voiceReplies, proactiveInsights, voicePref, voiceSpeed, incomeCats, expenseCats, notifPrefs, dailyBriefSentDate, voiceTurnsCount, voiceTurnsDate, taxSetAsidePct }), false);
+  const saveProfileNow = () => window.storage.set(STORAGE_KEYS.profile, JSON.stringify({ user, theme, voiceReplies, proactiveInsights, wellnessAiContext, voicePref, voiceSpeed, incomeCats, expenseCats, notifPrefs, dailyBriefSentDate, voiceTurnsCount, voiceTurnsDate, taxSetAsidePct }), false);
 
   useEffect(() => {
     if (!dataLoaded) return;
     const t = setTimeout(() => { saveProfileNow().catch(()=>{}); }, 900);
     return () => clearTimeout(t);
-  }, [dataLoaded, user, theme, voiceReplies, proactiveInsights, voicePref, voiceSpeed, incomeCats, expenseCats, notifPrefs, dailyBriefSentDate, voiceTurnsCount, voiceTurnsDate, taxSetAsidePct]);
+  }, [dataLoaded, user, theme, voiceReplies, proactiveInsights, wellnessAiContext, voicePref, voiceSpeed, incomeCats, expenseCats, notifPrefs, dailyBriefSentDate, voiceTurnsCount, voiceTurnsDate, taxSetAsidePct]);
 
   useEffect(() => {
     if (!dataLoaded) return;
@@ -2814,9 +2965,14 @@ function KroftApp({ onFullReset } = {}) {
     if (!dataLoaded) return;
     // Mood entries are capped so the log can't grow without bound; 120 covers a couple of months
     // of normal use.
-    const t = setTimeout(() => { window.storage.set(STORAGE_KEYS.wellnessData, JSON.stringify({ wellness, wellnessDate, wellnessHistory: wellnessHistory.slice(-90), selfCare, mood, moodLog: moodLog.slice(-120) }), false).catch(()=>{}); }, 900);
+    const t = setTimeout(() => { window.storage.set(STORAGE_KEYS.wellnessData, JSON.stringify({
+      wellness, wellnessDate, wellnessHistory: wellnessHistory.slice(-90), selfCare, mood, moodLog: moodLog.slice(-120),
+      selfCareHistory: selfCareHistory.slice(-90),
+      sleepLog: sleepLog.slice(-120), energyLog: energyLog.slice(-120), stressLog: stressLog.slice(-120),
+      journalEntries: journalEntries.slice(-200), quickResetLog: quickResetLog.slice(-180),
+    }), false).catch(()=>{}); }, 900);
     return () => clearTimeout(t);
-  }, [dataLoaded, wellness, wellnessDate, wellnessHistory, selfCare, mood, moodLog]);
+  }, [dataLoaded, wellness, wellnessDate, wellnessHistory, selfCare, mood, moodLog, selfCareHistory, sleepLog, energyLog, stressLog, journalEntries, quickResetLog]);
 
   useEffect(() => {
     if (!dataLoaded) return;
@@ -2933,6 +3089,120 @@ function KroftApp({ onFullReset } = {}) {
     }
     return streak;
   }, [moodLog]);
+
+  // ---- Pattern Engine -------------------------------------------------------------------------
+  // Turns whichever real wellness signals the user actually has into "Your Patterns" insights.
+  // Deliberately generic rather than a list of hardcoded sentences: every signal is normalized to
+  // one numeric "how good was this day" value per day (see wellnessDayMaps below), then every
+  // configured predictor/outcome PAIR is tested the same way — split the days into two buckets by
+  // the predictor, compare the outcome's average between buckets, and only surface it if there's
+  // both enough data and a real enough difference to say something. A signal nobody has logged
+  // (e.g. no sleepLog entries) simply produces an empty map, so every pair that needs it drops out
+  // on its own — no special-casing, and nothing is ever invented to fill a gap. Adding a future
+  // signal (e.g. real HealthKit sleep or step data) means adding one entry to wellnessDayMaps and
+  // WELLNESS_METRIC_META and any PATTERN_PAIRS it belongs in — this loop and the UI that reads its
+  // output never need to change. See krofSysPrompt's WELLNESS section for the AI-facing consumer.
+  const moodToScore = m => ({ happy:4, calm:3, stressed:2, angry:1 }[m] ?? null);
+  const energyToScore = l => ({ low:1, okay:2, good:3, great:4 }[l] ?? null);
+  // Inverted so higher always means "better" here, same polarity as every other metric below —
+  // lets every pair share one "higher is more of the good thing" comparison instead of some
+  // metrics needing their difference sign flipped and others not.
+  const stressToScore = l => ({ overwhelmed:1, worried:2, neutral:3, calm:4 }[l] ?? null);
+
+  const wellnessDayMaps = useMemo(() => {
+    const maps = { mood:new Map(), energy:new Map(), stress:new Map(), sleep:new Map(), wellness:new Map(), breaks:new Map(), water:new Map(), quickReset:new Map() };
+    const moodByDay = {};
+    moodLog.forEach(m => { const s = moodToScore(m.mood); if (s==null || !m.date) return; (moodByDay[m.date] ||= []).push(s); });
+    Object.entries(moodByDay).forEach(([d,arr]) => maps.mood.set(d, arr.reduce((a,b)=>a+b,0)/arr.length));
+
+    energyLog.forEach(e => { const s = energyToScore(e.level); if (s!=null && e.date) maps.energy.set(e.date, s); });
+    stressLog.forEach(e => { const s = stressToScore(e.level); if (s!=null && e.date) maps.stress.set(e.date, s); });
+    sleepLog.forEach(e => { if (typeof e.hours === "number" && !Number.isNaN(e.hours) && e.date) maps.sleep.set(e.date, e.hours); });
+
+    const today = todayISO();
+    wellnessHistory.forEach(h => { if (h.date) maps.wellness.set(h.date, h.score); });
+    maps.wellness.set(today, wellness);
+
+    selfCareHistory.forEach(h => { if (!h.date) return; maps.breaks.set(h.date, h.breaks||0); maps.water.set(h.date, h.water||0); });
+    maps.breaks.set(today, selfCare.breaks);
+    maps.water.set(today, selfCare.water);
+
+    const qrByDay = {};
+    quickResetLog.forEach(q => { if (q.date) qrByDay[q.date] = (qrByDay[q.date]||0) + 1; });
+    Object.entries(qrByDay).forEach(([d,c]) => maps.quickReset.set(d, c));
+
+    return maps;
+  }, [moodLog, energyLog, stressLog, sleepLog, wellnessHistory, wellness, selfCareHistory, selfCare, quickResetLog]);
+
+  // groupDesc.true/false describe "days where [condition]" in plain language, for whichever side
+  // of the split turns out to hold the higher average. effect is the smallest difference in this
+  // metric's own units worth mentioning as a pattern — below it, a "difference" is more likely
+  // noise than a real pattern, so nothing is surfaced.
+  const WELLNESS_METRIC_META = {
+    mood: { label:"mood", isGood:v=>v>=3, effect:0.5, groupDesc:{ true:"you report a more positive mood", false:"your mood is lower" } },
+    energy: { label:"energy", isGood:v=>v>=3, effect:0.5, groupDesc:{ true:"your energy is higher", false:"your energy is lower" } },
+    stress: { label:"stress level", isGood:v=>v>=3, effect:0.5, groupDesc:{ true:"you report feeling calmer", false:"you report feeling more stressed" } },
+    sleep: { label:"sleep", isGood:v=>v>=7, effect:0.75, groupDesc:{ true:"you sleep 7 or more hours", false:"you sleep less than 7 hours" } },
+    wellness: { label:"wellness score", isGood:v=>v>=70, effect:6, groupDesc:{ true:"your wellness score is higher", false:"your wellness score is lower" } },
+    breaks: { label:"breaks taken", isGood:v=>v>=1, effect:0.5, groupDesc:{ true:"you log at least one break", false:"you don't log a break" } },
+    water: { label:"water intake", isGood:v=>v>=3, effect:0.5, groupDesc:{ true:"you log 3 or more glasses of water", false:"you log fewer than 3 glasses of water" } },
+    quickReset: { label:"Quick Reset use", isGood:v=>v>=1, effect:0.4, groupDesc:{ true:"you complete a Quick Reset session", false:"you don't do a Quick Reset" } },
+  };
+  // Curated predictor->outcome pairs worth asking about at all — not every combination of signals
+  // implies a sensible real-world question, so this is a fixed list rather than every permutation.
+  const PATTERN_PAIRS = [
+    ["sleep","energy"], ["sleep","mood"], ["sleep","wellness"], ["sleep","stress"],
+    ["mood","energy"], ["mood","wellness"],
+    ["breaks","wellness"], ["breaks","stress"], ["breaks","energy"],
+    ["water","wellness"], ["water","energy"], ["water","mood"],
+    ["quickReset","wellness"], ["quickReset","stress"], ["quickReset","energy"],
+  ];
+  // A pattern needs at least this many days on EACH side of the split, and this many total paired
+  // observations, before it's treated as more than a coincidence. Both thresholds are intentionally
+  // low (this is personal, sparse, self-reported data, not a clinical study) but non-zero — the
+  // spec's own bar is "don't fabricate," not "wait for a large sample."
+  const PATTERN_MIN_GROUP = 3;
+  const PATTERN_MIN_TOTAL = 6;
+
+  const wellnessPatterns = useMemo(() => {
+    const today = todayISO();
+    const cutoff = new Date(today + "T00:00:00Z");
+    cutoff.setUTCDate(cutoff.getUTCDate() - (patternRange - 1));
+    const cutoffISO = cutoff.toISOString().slice(0, 10);
+    const inRange = date => date >= cutoffISO && date <= today;
+
+    const results = [];
+    PATTERN_PAIRS.forEach(([predKey, outKey]) => {
+      const predMap = wellnessDayMaps[predKey], outMap = wellnessDayMaps[outKey];
+      const predMeta = WELLNESS_METRIC_META[predKey], outMeta = WELLNESS_METRIC_META[outKey];
+      const groupTrue = [], groupFalse = [];
+      predMap.forEach((pVal, date) => {
+        if (!inRange(date) || !outMap.has(date)) return;
+        (predMeta.isGood(pVal) ? groupTrue : groupFalse).push(outMap.get(date));
+      });
+      const total = groupTrue.length + groupFalse.length;
+      if (groupTrue.length < PATTERN_MIN_GROUP || groupFalse.length < PATTERN_MIN_GROUP || total < PATTERN_MIN_TOTAL) return;
+      const avgTrue = groupTrue.reduce((a,b)=>a+b,0) / groupTrue.length;
+      const avgFalse = groupFalse.reduce((a,b)=>a+b,0) / groupFalse.length;
+      const diff = avgTrue - avgFalse;
+      if (Math.abs(diff) < outMeta.effect) return;
+      const higher = diff > 0;
+      results.push({
+        id: `${predKey}_${outKey}`,
+        insight: `Your ${outMeta.label} tends to be ${higher ? "higher" : "lower"} on days ${predMeta.groupDesc.true}.`,
+        predictorLabel: predMeta.label, outcomeLabel: outMeta.label,
+        period: patternRange, observations: total,
+        groups: [
+          { label: `Days ${predMeta.groupDesc.true}`, n: groupTrue.length, avg: avgTrue },
+          { label: `Days ${predMeta.groupDesc.false}`, n: groupFalse.length, avg: avgFalse },
+        ],
+        explanation: `Based on ${total} days in the last ${patternRange} where both ${predMeta.label} and ${outMeta.label} were recorded, days ${predMeta.groupDesc.true} averaged ${avgTrue.toFixed(1)} for ${outMeta.label} versus ${avgFalse.toFixed(1)} on days ${predMeta.groupDesc.false}.`,
+      });
+    });
+    // Most-observed pattern first — the one backed by the most data is the one most worth leading
+    // with, not an arbitrary/config-order list.
+    return results.sort((a,b) => b.observations - a.observations);
+  }, [wellnessDayMaps, patternRange]);
 
   // Weeks of the visible month for the calendar grid, Sunday-first, padded with the trailing days
   // of the previous/next month so every week row is a full 7 cells — those padding cells are
@@ -3131,6 +3401,80 @@ function KroftApp({ onFullReset } = {}) {
     } else if (m==="happy") { setWellness(s => Math.min(100, s+7)); toast("Great energy. Wellness score up."); }
     else toast(`Mood: ${m}`);
   };
+
+  // One check-in per day per signal (Energy/Stress) — a second tap the same day replaces the
+  // first rather than appending a duplicate, so the Pattern Engine's "one row per day" grouping
+  // (see wellnessPatterns below) isn't skewed by someone tapping around to see the options.
+  const applyEnergy = level => {
+    haptic(8);
+    const today = todayISO();
+    setEnergyLog(p => [...p.filter(e => e.date !== today), { id:uid(), date:today, time:timeStr(), level }]);
+    toast(`Energy: ${ENERGY_LEVELS.find(l => l.key===level)?.label || level}`);
+  };
+
+  const applyStress = level => {
+    haptic(level==="overwhelmed" ? [10,30,10] : 8);
+    const today = todayISO();
+    setStressLog(p => [...p.filter(e => e.date !== today), { id:uid(), date:today, time:timeStr(), level }]);
+    if (level==="overwhelmed") {
+      const tip = rand(["Take 5 slow breaths.","Step away for a few minutes.","A short walk resets your focus.","Try a Quick Reset breathing session."]);
+      if (voiceReplies) speak(`${firstNameOf(user.name)||"Hey"}, that sounds like a lot right now. ${tip}`, { context:"sensitive" });
+      toast(tip);
+    } else toast(`Stress check-in saved: ${STRESS_LEVELS.find(l => l.key===level)?.label || level}`);
+  };
+
+  // Sleep is a manual entry today (see the sleepLog state comment) — one entry per night, keyed by
+  // the date it's logged for rather than "today" specifically, since people often log last night's
+  // sleep the next morning.
+  const logSleep = ({ hours, bedtime, wakeTime, quality }) => {
+    haptic(8);
+    const today = todayISO();
+    setSleepLog(p => [...p.filter(e => e.date !== today), { id:uid(), date:today, time:timeStr(), hours, bedtime, wakeTime, quality: quality || null }]);
+    toast(`Sleep logged: ${hours}h`);
+  };
+
+  const addJournalEntry = text => {
+    const trimmed = (text || "").trim();
+    if (!trimmed) return;
+    haptic(8);
+    setJournalEntries(p => [...p, { id:uid(), date:todayISO(), time:timeStr(), text: trimmed }]);
+    toast("Journal entry saved.");
+  };
+
+  const deleteJournalEntry = id => setJournalEntries(p => p.filter(e => e.id !== id));
+
+  const logQuickReset = (kind, seconds) => {
+    haptic([10,20,10]);
+    setQuickResetLog(p => [...p, { id:uid(), date:todayISO(), time:timeStr(), kind, seconds }]);
+    setWellness(s => Math.min(100, s + 2));
+    toast("Nice reset. Wellness score up.");
+  };
+
+  const startQuickReset = kindKey => {
+    const cfg = QUICK_RESET_KINDS.find(k => k.key === kindKey);
+    if (!cfg) return;
+    haptic(8);
+    setActiveReset({ key: cfg.key, label: cfg.label, guide: cfg.guide, seconds: cfg.seconds, total: cfg.seconds });
+  };
+  const cancelQuickReset = () => setActiveReset(null);
+
+  // Ticks the active Quick Reset countdown once a second, same setInterval-in-an-effect shape as
+  // the login lockout timer above — a dedicated 1s timer rather than the shared 30s heartbeat,
+  // since this needs to visibly count down while its screen is open, not just wake periodically.
+  useEffect(() => {
+    if (!activeReset || activeReset.seconds <= 0) return;
+    const iv = setInterval(() => {
+      setActiveReset(prev => {
+        if (!prev) return prev;
+        if (prev.seconds <= 1) {
+          logQuickReset(prev.key, prev.total);
+          return null;
+        }
+        return { ...prev, seconds: prev.seconds - 1 };
+      });
+    }, 1000);
+    return () => clearInterval(iv);
+  }, [activeReset]);
 
   // True only once an account actually exists on this device. Local-only-mode fallback only —
   // with Supabase configured, doLogin asks the server instead of checking anything local, since
@@ -4216,6 +4560,23 @@ function KroftApp({ onFullReset } = {}) {
     recRef.current = r; r.start();
   }, [listening]);
 
+  // Wellness Journal's own dictation — see journalRecRef's comment above for why this can't just
+  // reuse toggleListen. Appends the finished phrase to whatever's already been typed/spoken rather
+  // than replacing it, so speaking is a way to keep adding to an entry, not to overwrite it.
+  const toggleJournalListen = useCallback(() => {
+    if (journalListening) { journalRecRef.current?.stop(); setJournalListening(false); return; }
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) { toast("Speech recognition needs Chrome or Edge."); return; }
+    const r = new SR(); r.continuous=false; r.interimResults=false; r.lang=speechLang();
+    r.onstart = () => setJournalListening(true); r.onend = () => setJournalListening(false);
+    r.onresult = e => {
+      const t = Array.from(e.results).map(x => x[0].transcript).join("");
+      if (t) setJournalDraft(p => (p ? p.replace(/\s+$/, "") + " " : "") + t);
+    };
+    r.onerror = () => { setJournalListening(false); toast("Mic error — check permissions."); };
+    journalRecRef.current = r; r.start();
+  }, [journalListening]);
+
   // Voice Memos — real MediaRecorder audio capture, with live transcript via SpeechRecognition
   const toggleVoiceMemo = useCallback(async () => {
     if (recordingMemo) {
@@ -4304,6 +4665,25 @@ function KroftApp({ onFullReset } = {}) {
     const unread = emails.filter(e => !e.read);
     const firstName = firstNameOf(user.name);
 
+    // WELLNESS: only ever built from signals that actually have entries — a signal nobody has
+    // logged (e.g. no sleepLog) is simply left out, never padded with an invented value. Gated
+    // entirely by wellnessAiContext (see its own state comment and the Privacy Controls toggle
+    // it powers) — off means the model gets a single line saying so and nothing else from here.
+    const wellnessSection = !wellnessAiContext
+      ? "Wellness data sharing with KROFT Chat is turned off in this user's Privacy settings. Do not reference mood, sleep, energy, stress, journal, or wellness pattern data even if asked — say wellness data sharing is off and suggest they check Wellness > Privacy Controls."
+      : (() => {
+          const lines = [`Current wellness score: ${wellness}/100.`];
+          if (mood) lines.push(`Current mood: ${mood}.`);
+          if (energyLog.length) lines.push(`Recent energy check-ins: ${list(energyLog.slice(-7).reverse(), 7, e => `${e.date} ${e.level}`)}.`);
+          if (stressLog.length) lines.push(`Recent stress check-ins: ${list(stressLog.slice(-7).reverse(), 7, e => `${e.date} ${e.level}`)}.`);
+          if (sleepLog.length) lines.push(`Recent sleep logs: ${list(sleepLog.slice(-7).reverse(), 7, e => `${e.date} ${e.hours}h${e.quality?` (${e.quality} quality)`:""}`)}.`);
+          if (quickResetLog.length) lines.push(`Quick Reset sessions: ${quickResetLog.length} completed total, ${quickResetLog.filter(q => q.date===today).length} today.`);
+          if (selfCare.breaks || selfCare.water) lines.push(`Today's self-care: ${selfCare.breaks} break(s), ${selfCare.water} glass(es) of water logged.`);
+          if (journalEntries.length) lines.push(`Wellness Journal: ${journalEntries.length} private entries saved — content is private and not included here.`);
+          if (wellnessPatterns.length) lines.push(`Patterns detected in the user's own data (last ${patternRange} days, from the Pattern Engine — every figure below is real, not invented): ${wellnessPatterns.map(p => p.insight).join(" ")}`);
+          return lines.join("\n");
+        })();
+
     return `You are KROFT, a personal AI assistant by Virt Technologies. You can answer any question on any topic, and you also have live access to this user's own data (below). Use it whenever the question touches their money, schedule, work or people — quote real figures and real titles rather than speaking generally. If the data below doesn't cover something, say so plainly instead of guessing. Always reply in the same language the user just wrote or spoke in, not English by default — this app's voice input already recognizes speech in the device's own configured language, not only English.
 
 CURRENT MOMENT
@@ -4343,6 +4723,10 @@ NOTES (${notes.length}): ${list(notes, 8, n => n.title || "untitled")}
 DOCUMENTS (${documents.length}): ${list(documents, 8, d => d.title || "untitled")}
 CONTACTS (${contacts.length}): ${list(contacts, 12, c => `${c.name}${c.email?` <${c.email}>`:""} (${c.category})`)}
 EMAIL: ${unread.length} unread${unread.length?` — recent: ${list(unread, 5, m => `"${m.subject}" from ${m.from}`)}`:""}
+
+WELLNESS
+${wellnessSection}
+Wellness rules: only reference a wellness signal that actually appears above — never invent or assume sleep, energy, stress, mood, or other data that isn't listed, and if something isn't there (e.g. no sleep logged), say so plainly and suggest logging it rather than guessing. When answering a wellness question, ground it in the real numbers above and any listed pattern, phrased as an observation about their own data ("your data shows...", "you tend to...") — never as a medical diagnosis, clinical assessment, or professional health advice. If a question sounds medical (symptoms, a condition, treatment), share what their own data shows if relevant, but say plainly that a real diagnosis needs a qualified healthcare professional.
 
 STYLE
 Talk like a sharp, genuinely warm human assistant who knows this person well — never like an AI describing itself. Never say things like "As an AI," "I don't have personal experiences," or any other AI-disclaimer or meta-commentary about what you are — just answer, the way a person would. Use contractions and plain, natural sentences; vary how you open a reply instead of starting the same way every time. Address ${firstName||"them"} by their first name every so often — a greeting, good news, a heads-up — not stapled onto every single reply, which reads as scripted rather than natural. Keep answers tight — a couple of short paragraphs unless asked for depth. Prefer plain sentences over headings and bullet lists; replies are often read aloud.
@@ -5289,7 +5673,13 @@ ${voiceMode
         return Math.round(75 + (prev - 75) * 0.35);
       });
       setWellnessDate(today);
-      setSelfCare({ breaks:0, water:0 });
+      // Same "read via the updater's own prev" reasoning as wellness above — selfCare's own values
+      // can only be captured here, at the moment they're about to be reset, not via wellnessDate's
+      // closure.
+      setSelfCare(prev => {
+        setSelfCareHistory(h => [...h.filter(e => e.date !== wellnessDate), { date: wellnessDate, breaks: prev.breaks, water: prev.water }]);
+        return { breaks:0, water:0 };
+      });
     };
     rollover();
     return heartbeat(rollover);
@@ -6350,6 +6740,8 @@ ${voiceMode
         />
       )}
       {actionSheet && <ActionSheet {...actionSheet} onClose={() => setActionSheet(null)} />}
+      {activeReset && <QuickResetModal session={activeReset} onCancel={cancelQuickReset} />}
+      {patternDetail && <PatternDetailModal pattern={patternDetail} onClose={() => setPatternDetail(null)} />}
       {contactActivity && (
         <ContactActivityModal
           contact={contacts.find(c => c.id === contactActivity.id) || contactActivity}
@@ -8627,6 +9019,129 @@ ${voiceMode
                 </ResponsiveContainer>
               </Card>
             )}
+            {/* Your Patterns — the intelligence layer over every other signal on this page. Reads
+                wellnessPatterns (the Pattern Engine, defined above this component's JSX), which
+                only ever returns something once real paired data clears its sample-size and
+                effect-size bars — so this card's empty state is the expected, honest state for a
+                new or lightly-used account, not an error. */}
+            <Card style={{ marginBottom:14, borderRadius:22 }}>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:13, gap:8, flexWrap:"wrap" }}>
+                <div style={{ display:"flex", alignItems:"center", gap:7 }}>
+                  <NavIcon id="patterns" size={14} color={C.accent} />
+                  <Mono style={{ color:C.muted, letterSpacing:.8 }}>Your Patterns</Mono>
+                </div>
+                <div style={{ display:"flex", gap:4 }}>
+                  {[7,30,90].map(r => (
+                    <button key={r} onClick={() => setPatternRange(r)}
+                      style={{ background:patternRange===r?C.accent:C.surface, border:`1px solid ${patternRange===r?C.accent:C.cardB}`, borderRadius:8, padding:"4px 9px", cursor:"pointer", color:patternRange===r?C.black:C.soft, fontSize:10, fontWeight:700 }}>
+                      {r}d
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {wellnessPatterns.length === 0 ? (
+                <Mono style={{ color:C.soft, display:"block", padding:"8px 0", lineHeight:1.6 }}>
+                  We're still learning your patterns. Keep using KROFT and we'll start showing connections in your wellness data.
+                </Mono>
+              ) : (
+                <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+                  {wellnessPatterns.map(p => (
+                    <button key={p.id} onClick={() => setPatternDetail(p)}
+                      style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:10, textAlign:"left", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:14, padding:"12px 13px", cursor:"pointer" }}>
+                      <div style={{ fontSize:12.5, color:C.text, lineHeight:1.5 }}>{p.insight}</div>
+                      <NavIcon id="trendUp" size={13} color={C.muted} />
+                    </button>
+                  ))}
+                </div>
+              )}
+            </Card>
+            <Card style={{ marginBottom:14, borderRadius:22 }}>
+              <div style={{ display:"flex", alignItems:"center", gap:7, marginBottom:13 }}>
+                <NavIcon id="timer" size={14} color={C.accent} />
+                <Mono style={{ color:C.muted, letterSpacing:.8 }}>Quick Reset</Mono>
+              </div>
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:9 }}>
+                {QUICK_RESET_KINDS.map(k => (
+                  <button key={k.key} onClick={() => startQuickReset(k.key)}
+                    style={{ background:C.card, border:`1px solid ${C.accent}2a`, borderRadius:14, padding:"11px 10px", cursor:"pointer", textAlign:"left" }}>
+                    <div style={{ fontSize:12, fontWeight:700, color:C.white, marginBottom:2 }}>{k.label}</div>
+                    <Mono style={{ color:C.muted, fontSize:10 }}>{k.seconds < 60 ? `${k.seconds}s` : `${Math.round(k.seconds/60)} min`}</Mono>
+                  </button>
+                ))}
+              </div>
+              {quickResetLog.length > 0 && (
+                <Mono style={{ display:"block", color:C.muted, marginTop:10 }}>{quickResetLog.length} session{quickResetLog.length!==1?"s":""} completed</Mono>
+              )}
+            </Card>
+            <Card style={{ marginBottom:14, borderRadius:22 }}>
+              <Mono style={{ display:"block", color:C.muted, letterSpacing:.8, marginBottom:10 }}>How's your energy today?</Mono>
+              <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:7, marginBottom:16 }}>
+                {ENERGY_LEVELS.map(l => {
+                  const today = todayISO();
+                  const active = energyLog.find(e => e.date===today)?.level === l.key;
+                  const lColor = C[l.tone];
+                  return (
+                    <button key={l.key} onClick={() => applyEnergy(l.key)}
+                      style={{ background:active?lColor+"22":C.surface, border:`1.5px solid ${active?lColor:C.cardB}`, borderRadius:12, padding:"10px 4px", cursor:"pointer", textAlign:"center" }}>
+                      <div style={{ fontSize:16, marginBottom:3 }}>{l.emoji}</div>
+                      <Mono style={{ color:active?lColor:C.soft, fontSize:10, fontWeight:700 }}>{l.label}</Mono>
+                    </button>
+                  );
+                })}
+              </div>
+              <Mono style={{ display:"block", color:C.muted, letterSpacing:.8, marginBottom:10 }}>How stressed are you right now?</Mono>
+              <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:7 }}>
+                {STRESS_LEVELS.map(l => {
+                  const today = todayISO();
+                  const active = stressLog.find(e => e.date===today)?.level === l.key;
+                  const lColor = C[l.tone];
+                  return (
+                    <button key={l.key} onClick={() => applyStress(l.key)}
+                      style={{ background:active?lColor+"22":C.surface, border:`1.5px solid ${active?lColor:C.cardB}`, borderRadius:12, padding:"10px 4px", cursor:"pointer", textAlign:"center" }}>
+                      <div style={{ fontSize:16, marginBottom:3 }}>{l.emoji}</div>
+                      <Mono style={{ color:active?lColor:C.soft, fontSize:10, fontWeight:700 }}>{l.label}</Mono>
+                    </button>
+                  );
+                })}
+              </div>
+            </Card>
+            <Card style={{ marginBottom:14, borderRadius:22 }}>
+              <div style={{ display:"flex", alignItems:"center", gap:7, marginBottom:13 }}>
+                <NavIcon id="moon" size={14} color={C.accent} />
+                <Mono style={{ color:C.muted, letterSpacing:.8 }}>Sleep</Mono>
+              </div>
+              <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:10 }}>
+                <Inp placeholder="Hours slept" type="number" min="0" max="24" step="0.25" value={sleepForm.hours} onChange={e => setSleepForm(v=>({...v,hours:e.target.value}))} style={{ flex:1, minWidth:100 }} />
+                <select value={sleepForm.quality} onChange={e => setSleepForm(v=>({...v,quality:e.target.value}))} style={{ flex:1, minWidth:100, background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 12px", color:C.text, fontSize:12, fontFamily:"'Space Grotesk',sans-serif", outline:"none" }}>
+                  <option value="">Quality (optional)</option>
+                  <option value="poor">Poor</option>
+                  <option value="fair">Fair</option>
+                  <option value="good">Good</option>
+                  <option value="great">Great</option>
+                </select>
+              </div>
+              <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:12 }}>
+                <div style={{ flex:1, minWidth:100 }}>
+                  <Mono style={{ display:"block", color:C.muted, marginBottom:4 }}>Bedtime</Mono>
+                  <input type="time" value={sleepForm.bedtime} onChange={e => setSleepForm(v=>({...v,bedtime:e.target.value}))} style={{ width:"100%", boxSizing:"border-box", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"10px 12px", color:C.text, fontSize:12, fontFamily:"'Space Grotesk',sans-serif", outline:"none", colorScheme:theme }} />
+                </div>
+                <div style={{ flex:1, minWidth:100 }}>
+                  <Mono style={{ display:"block", color:C.muted, marginBottom:4 }}>Wake time</Mono>
+                  <input type="time" value={sleepForm.wakeTime} onChange={e => setSleepForm(v=>({...v,wakeTime:e.target.value}))} style={{ width:"100%", boxSizing:"border-box", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"10px 12px", color:C.text, fontSize:12, fontFamily:"'Space Grotesk',sans-serif", outline:"none", colorScheme:theme }} />
+                </div>
+              </div>
+              {/* Manual entry today — see sleepLog's own state comment on why the shape here is
+                  already what a future HealthKit/Health Connect auto-collector would populate. */}
+              <Btn sm full disabled={!sleepForm.hours} onClick={() => {
+                const hours = parseFloat(sleepForm.hours);
+                if (!(hours >= 0)) return;
+                logSleep({ hours, bedtime: sleepForm.bedtime || null, wakeTime: sleepForm.wakeTime || null, quality: sleepForm.quality || null });
+                setSleepForm({ hours:"", bedtime:"", wakeTime:"", quality:"" });
+              }}>Log sleep</Btn>
+              {sleepLog.length > 0 && (
+                <Mono style={{ display:"block", color:C.muted, marginTop:10 }}>Last logged: {sleepLog[sleepLog.length-1].hours}h on {fmtDate(sleepLog[sleepLog.length-1].date)}</Mono>
+              )}
+            </Card>
             <Card style={{ marginBottom:14, borderRadius:22 }}>
               <Mono style={{ display:"block", color:C.muted, letterSpacing:.8, marginBottom:13 }}>Mood log</Mono>
               {moodLog.length===0 ? <Mono style={{ color:C.soft, display:"block", padding:"8px 0" }}>No mood entries yet. Set your mood from the Overview tab.</Mono> : (() => {
@@ -8674,6 +9189,48 @@ ${voiceMode
                   ),
                 ];
               })()}
+            </Card>
+            {/* Wellness Journal — private to this account like everything else in Wellness (see
+                the top-level privacy note: nothing here is shared between users). Typed or spoken
+                (toggleJournalListen, a dictation path separate from the AI chat's own mic button —
+                see its own comment for why). KROFT may look for recurring themes here later, but
+                never as a diagnosis — same rule as every other signal on this page. */}
+            <Card style={{ marginBottom:14, borderRadius:22 }}>
+              <div style={{ display:"flex", alignItems:"center", gap:7, marginBottom:13 }}>
+                <NavIcon id="journal" size={14} color={C.accent} />
+                <Mono style={{ color:C.muted, letterSpacing:.8 }}>Wellness Journal</Mono>
+              </div>
+              <textarea value={journalDraft} onChange={e => setJournalDraft(e.target.value)} placeholder="What's on your mind?" rows={3}
+                style={{ width:"100%", boxSizing:"border-box", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:14, padding:"11px 13px", color:C.text, fontSize:12.5, fontFamily:"'Space Grotesk',sans-serif", outline:"none", resize:"vertical", marginBottom:10 }} />
+              <div style={{ display:"flex", gap:8 }}>
+                <button onClick={toggleJournalListen} aria-label={journalListening ? "Stop dictation" : "Speak entry"} title={journalListening ? "Stop dictation" : "Speak entry"}
+                  style={{ background:journalListening?C.negativeBg:C.surface, border:`1px solid ${journalListening?C.negative:C.cardB}`, borderRadius:12, padding:"10px 13px", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>
+                  <NavIcon id="mic" size={15} color={journalListening?C.negative:C.soft} />
+                </button>
+                <Btn sm disabled={!journalDraft.trim()} onClick={() => { addJournalEntry(journalDraft); setJournalDraft(""); }} style={{ flex:1 }}>Save entry</Btn>
+              </div>
+              {journalEntries.length > 0 && (
+                <div style={{ marginTop:14 }}>
+                  {journalEntries.slice().reverse().slice(0, 5).map(en => (
+                    <div key={en.id} {...longPress(() => setActionSheet({
+                        title: fmtDate(en.date),
+                        subtitle: en.time,
+                        actions:[{ label:"Delete entry", destructive:true, confirmText:"This permanently removes this journal entry.", onClick:() => {
+                          const prev = journalEntries;
+                          deleteJournalEntry(en.id);
+                          toast("Journal entry deleted.", () => setJournalEntries(prev));
+                        }}],
+                      }))}
+                      style={{ padding:"10px 12px", marginBottom:6, borderRadius:12, background:C.surface, WebkitTouchCallout:"none", WebkitUserSelect:"none", userSelect:"none" }}>
+                      <Mono style={{ display:"block", color:C.muted, marginBottom:4 }}>{en.date===todayISO() ? "Today" : fmtDate(en.date)} · {en.time}</Mono>
+                      <div style={{ fontSize:12.5, color:C.text, lineHeight:1.5 }}>{en.text}</div>
+                    </div>
+                  ))}
+                  {journalEntries.length > 5 && (
+                    <Mono style={{ display:"block", color:C.muted, padding:"6px 0 2px" }}>Showing your 5 most recent entries. {journalEntries.length - 5} earlier {journalEntries.length - 5 === 1 ? "entry is" : "entries are"} still saved.</Mono>
+                  )}
+                </div>
+              )}
             </Card>
             <Card style={{ borderRadius:22 }}>
               <Mono style={{ display:"block", color:C.muted, letterSpacing:.8, marginBottom:13 }}>Daily recommendations</Mono>
@@ -9027,6 +9584,8 @@ ${voiceMode
               onSetVoiceReplies={setVoiceReplies}
               proactiveInsights={proactiveInsights}
               onSetProactiveInsights={setProactiveInsights}
+              wellnessAiContext={wellnessAiContext}
+              onSetWellnessAiContext={setWellnessAiContext}
               voicePref={voicePref}
               onSetVoicePref={setVoicePref}
               voiceSpeed={voiceSpeed}
