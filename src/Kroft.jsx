@@ -2657,6 +2657,10 @@ function KroftApp({ onFullReset } = {}) {
   // data.
   const [patternRange, setPatternRange] = useState(30);
   const [patternDetail, setPatternDetail] = useState(null);
+  // Which of the Wellness tab's pull-out rows (Your Patterns/Quick Reset/Energy & Stress/Sleep/
+  // Journal) is expanded — same single-row accordion as ProfileRow/openRow in ProfileSection, so
+  // five feature sections collapse into a handful of compact rows instead of five full cards.
+  const [openWellnessRow, setOpenWellnessRow] = useState(null);
   const [journalDraft, setJournalDraft] = useState("");
   const [sleepForm, setSleepForm] = useState({ hours:"", bedtime:"", wakeTime:"", quality:"" });
   const [listening, setListening] = useState(false);
@@ -9019,18 +9023,19 @@ ${voiceMode
                 </ResponsiveContainer>
               </Card>
             )}
-            {/* Your Patterns — the intelligence layer over every other signal on this page. Reads
-                wellnessPatterns (the Pattern Engine, defined above this component's JSX), which
-                only ever returns something once real paired data clears its sample-size and
-                effect-size bars — so this card's empty state is the expected, honest state for a
-                new or lightly-used account, not an error. */}
-            <Card style={{ marginBottom:14, borderRadius:22 }}>
-              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:13, gap:8, flexWrap:"wrap" }}>
-                <div style={{ display:"flex", alignItems:"center", gap:7 }}>
-                  <NavIcon id="patterns" size={14} color={C.accent} />
-                  <Mono style={{ color:C.muted, letterSpacing:.8 }}>Your Patterns</Mono>
-                </div>
-                <div style={{ display:"flex", gap:4 }}>
+            {/* The five new Wellness features (Your Patterns, Quick Reset, Energy & Stress, Sleep,
+                Journal) live as pull-out rows in one Card — the same collapsed-row/expand-in-place
+                pattern as ProfileRow in the Profile tab (see its own comment) — rather than five
+                separate full-height cards. Collapsed, each row's sub-line already says the honest
+                current state (a real count or "not logged yet"), so the page reads as a compact
+                list until you actually want to act on one of them. */}
+            <Card style={{ marginBottom:14, borderRadius:22, padding:"4px 16px" }}>
+              <ProfileRow
+                label="Your Patterns"
+                sub={wellnessPatterns.length > 0 ? `${wellnessPatterns.length} pattern${wellnessPatterns.length!==1?"s":""} found` : "Keep logging to find patterns"}
+                expanded={openWellnessRow==="patterns"}
+                onToggle={() => setOpenWellnessRow(v => v==="patterns" ? null : "patterns")}>
+                <div style={{ display:"flex", justifyContent:"flex-end", gap:4, marginBottom:11 }}>
                   {[7,30,90].map(r => (
                     <button key={r} onClick={() => setPatternRange(r)}
                       style={{ background:patternRange===r?C.accent:C.surface, border:`1px solid ${patternRange===r?C.accent:C.cardB}`, borderRadius:8, padding:"4px 9px", cursor:"pointer", color:patternRange===r?C.black:C.soft, fontSize:10, fontWeight:700 }}>
@@ -9038,109 +9043,155 @@ ${voiceMode
                     </button>
                   ))}
                 </div>
-              </div>
-              {wellnessPatterns.length === 0 ? (
-                <Mono style={{ color:C.soft, display:"block", padding:"8px 0", lineHeight:1.6 }}>
-                  We're still learning your patterns. Keep using KROFT and we'll start showing connections in your wellness data.
-                </Mono>
-              ) : (
-                <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
-                  {wellnessPatterns.map(p => (
-                    <button key={p.id} onClick={() => setPatternDetail(p)}
-                      style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:10, textAlign:"left", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:14, padding:"12px 13px", cursor:"pointer" }}>
-                      <div style={{ fontSize:12.5, color:C.text, lineHeight:1.5 }}>{p.insight}</div>
-                      <NavIcon id="trendUp" size={13} color={C.muted} />
+                {wellnessPatterns.length === 0 ? (
+                  <Mono style={{ color:C.soft, display:"block", padding:"0 0 6px", lineHeight:1.6 }}>
+                    We're still learning your patterns. Keep using KROFT and we'll start showing connections in your wellness data.
+                  </Mono>
+                ) : (
+                  <div style={{ display:"flex", flexDirection:"column", gap:8, paddingBottom:4 }}>
+                    {wellnessPatterns.map(p => (
+                      <button key={p.id} onClick={() => setPatternDetail(p)}
+                        style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:10, textAlign:"left", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:14, padding:"12px 13px", cursor:"pointer" }}>
+                        <div style={{ fontSize:12.5, color:C.text, lineHeight:1.5 }}>{p.insight}</div>
+                        <NavIcon id="trendUp" size={13} color={C.muted} />
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </ProfileRow>
+              <ProfileRow
+                label="Quick Reset"
+                sub={quickResetLog.length > 0 ? `${quickResetLog.length} session${quickResetLog.length!==1?"s":""} completed` : "5 guided sessions"}
+                expanded={openWellnessRow==="reset"}
+                onToggle={() => setOpenWellnessRow(v => v==="reset" ? null : "reset")}>
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:9, paddingBottom:4 }}>
+                  {QUICK_RESET_KINDS.map(k => (
+                    <button key={k.key} onClick={() => startQuickReset(k.key)}
+                      style={{ background:C.card, border:`1px solid ${C.accent}2a`, borderRadius:14, padding:"11px 10px", cursor:"pointer", textAlign:"left" }}>
+                      <div style={{ fontSize:12, fontWeight:700, color:C.white, marginBottom:2 }}>{k.label}</div>
+                      <Mono style={{ color:C.muted, fontSize:10 }}>{k.seconds < 60 ? `${k.seconds}s` : `${Math.round(k.seconds/60)} min`}</Mono>
                     </button>
                   ))}
                 </div>
-              )}
-            </Card>
-            <Card style={{ marginBottom:14, borderRadius:22 }}>
-              <div style={{ display:"flex", alignItems:"center", gap:7, marginBottom:13 }}>
-                <NavIcon id="timer" size={14} color={C.accent} />
-                <Mono style={{ color:C.muted, letterSpacing:.8 }}>Quick Reset</Mono>
-              </div>
-              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:9 }}>
-                {QUICK_RESET_KINDS.map(k => (
-                  <button key={k.key} onClick={() => startQuickReset(k.key)}
-                    style={{ background:C.card, border:`1px solid ${C.accent}2a`, borderRadius:14, padding:"11px 10px", cursor:"pointer", textAlign:"left" }}>
-                    <div style={{ fontSize:12, fontWeight:700, color:C.white, marginBottom:2 }}>{k.label}</div>
-                    <Mono style={{ color:C.muted, fontSize:10 }}>{k.seconds < 60 ? `${k.seconds}s` : `${Math.round(k.seconds/60)} min`}</Mono>
-                  </button>
-                ))}
-              </div>
-              {quickResetLog.length > 0 && (
-                <Mono style={{ display:"block", color:C.muted, marginTop:10 }}>{quickResetLog.length} session{quickResetLog.length!==1?"s":""} completed</Mono>
-              )}
-            </Card>
-            <Card style={{ marginBottom:14, borderRadius:22 }}>
-              <Mono style={{ display:"block", color:C.muted, letterSpacing:.8, marginBottom:10 }}>How's your energy today?</Mono>
-              <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:7, marginBottom:16 }}>
-                {ENERGY_LEVELS.map(l => {
+              </ProfileRow>
+              <ProfileRow
+                label="Energy & Stress"
+                sub={(() => {
                   const today = todayISO();
-                  const active = energyLog.find(e => e.date===today)?.level === l.key;
-                  const lColor = C[l.tone];
-                  return (
-                    <button key={l.key} onClick={() => applyEnergy(l.key)}
-                      style={{ background:active?lColor+"22":C.surface, border:`1.5px solid ${active?lColor:C.cardB}`, borderRadius:12, padding:"10px 4px", cursor:"pointer", textAlign:"center" }}>
-                      <div style={{ fontSize:16, marginBottom:3 }}>{l.emoji}</div>
-                      <Mono style={{ color:active?lColor:C.soft, fontSize:10, fontWeight:700 }}>{l.label}</Mono>
-                    </button>
-                  );
-                })}
-              </div>
-              <Mono style={{ display:"block", color:C.muted, letterSpacing:.8, marginBottom:10 }}>How stressed are you right now?</Mono>
-              <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:7 }}>
-                {STRESS_LEVELS.map(l => {
-                  const today = todayISO();
-                  const active = stressLog.find(e => e.date===today)?.level === l.key;
-                  const lColor = C[l.tone];
-                  return (
-                    <button key={l.key} onClick={() => applyStress(l.key)}
-                      style={{ background:active?lColor+"22":C.surface, border:`1.5px solid ${active?lColor:C.cardB}`, borderRadius:12, padding:"10px 4px", cursor:"pointer", textAlign:"center" }}>
-                      <div style={{ fontSize:16, marginBottom:3 }}>{l.emoji}</div>
-                      <Mono style={{ color:active?lColor:C.soft, fontSize:10, fontWeight:700 }}>{l.label}</Mono>
-                    </button>
-                  );
-                })}
-              </div>
-            </Card>
-            <Card style={{ marginBottom:14, borderRadius:22 }}>
-              <div style={{ display:"flex", alignItems:"center", gap:7, marginBottom:13 }}>
-                <NavIcon id="moon" size={14} color={C.accent} />
-                <Mono style={{ color:C.muted, letterSpacing:.8 }}>Sleep</Mono>
-              </div>
-              <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:10 }}>
-                <Inp placeholder="Hours slept" type="number" min="0" max="24" step="0.25" value={sleepForm.hours} onChange={e => setSleepForm(v=>({...v,hours:e.target.value}))} style={{ flex:1, minWidth:100 }} />
-                <select value={sleepForm.quality} onChange={e => setSleepForm(v=>({...v,quality:e.target.value}))} style={{ flex:1, minWidth:100, background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 12px", color:C.text, fontSize:12, fontFamily:"'Space Grotesk',sans-serif", outline:"none" }}>
-                  <option value="">Quality (optional)</option>
-                  <option value="poor">Poor</option>
-                  <option value="fair">Fair</option>
-                  <option value="good">Good</option>
-                  <option value="great">Great</option>
-                </select>
-              </div>
-              <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:12 }}>
-                <div style={{ flex:1, minWidth:100 }}>
-                  <Mono style={{ display:"block", color:C.muted, marginBottom:4 }}>Bedtime</Mono>
-                  <input type="time" value={sleepForm.bedtime} onChange={e => setSleepForm(v=>({...v,bedtime:e.target.value}))} style={{ width:"100%", boxSizing:"border-box", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"10px 12px", color:C.text, fontSize:12, fontFamily:"'Space Grotesk',sans-serif", outline:"none", colorScheme:theme }} />
+                  const e = energyLog.find(x => x.date===today), s = stressLog.find(x => x.date===today);
+                  if (!e && !s) return "Not checked in today";
+                  return [e && `Energy: ${ENERGY_LEVELS.find(l=>l.key===e.level)?.label}`, s && `Stress: ${STRESS_LEVELS.find(l=>l.key===s.level)?.label}`].filter(Boolean).join(" · ");
+                })()}
+                expanded={openWellnessRow==="energy"}
+                onToggle={() => setOpenWellnessRow(v => v==="energy" ? null : "energy")}>
+                <div style={{ paddingBottom:4 }}>
+                  <Mono style={{ display:"block", color:C.muted, letterSpacing:.8, marginBottom:10 }}>How's your energy today?</Mono>
+                  <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:7, marginBottom:16 }}>
+                    {ENERGY_LEVELS.map(l => {
+                      const today = todayISO();
+                      const active = energyLog.find(e => e.date===today)?.level === l.key;
+                      const lColor = C[l.tone];
+                      return (
+                        <button key={l.key} onClick={() => applyEnergy(l.key)}
+                          style={{ background:active?lColor+"22":C.surface, border:`1.5px solid ${active?lColor:C.cardB}`, borderRadius:12, padding:"10px 4px", cursor:"pointer", textAlign:"center" }}>
+                          <div style={{ fontSize:16, marginBottom:3 }}>{l.emoji}</div>
+                          <Mono style={{ color:active?lColor:C.soft, fontSize:10, fontWeight:700 }}>{l.label}</Mono>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <Mono style={{ display:"block", color:C.muted, letterSpacing:.8, marginBottom:10 }}>How stressed are you right now?</Mono>
+                  <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:7 }}>
+                    {STRESS_LEVELS.map(l => {
+                      const today = todayISO();
+                      const active = stressLog.find(e => e.date===today)?.level === l.key;
+                      const lColor = C[l.tone];
+                      return (
+                        <button key={l.key} onClick={() => applyStress(l.key)}
+                          style={{ background:active?lColor+"22":C.surface, border:`1.5px solid ${active?lColor:C.cardB}`, borderRadius:12, padding:"10px 4px", cursor:"pointer", textAlign:"center" }}>
+                          <div style={{ fontSize:16, marginBottom:3 }}>{l.emoji}</div>
+                          <Mono style={{ color:active?lColor:C.soft, fontSize:10, fontWeight:700 }}>{l.label}</Mono>
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
-                <div style={{ flex:1, minWidth:100 }}>
-                  <Mono style={{ display:"block", color:C.muted, marginBottom:4 }}>Wake time</Mono>
-                  <input type="time" value={sleepForm.wakeTime} onChange={e => setSleepForm(v=>({...v,wakeTime:e.target.value}))} style={{ width:"100%", boxSizing:"border-box", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"10px 12px", color:C.text, fontSize:12, fontFamily:"'Space Grotesk',sans-serif", outline:"none", colorScheme:theme }} />
+              </ProfileRow>
+              <ProfileRow
+                label="Sleep"
+                sub={sleepLog.length > 0 ? `Last: ${sleepLog[sleepLog.length-1].hours}h on ${fmtDate(sleepLog[sleepLog.length-1].date)}` : "Not logged yet"}
+                expanded={openWellnessRow==="sleep"}
+                onToggle={() => setOpenWellnessRow(v => v==="sleep" ? null : "sleep")}>
+                <div style={{ paddingBottom:4 }}>
+                  <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:10 }}>
+                    <Inp placeholder="Hours slept" type="number" min="0" max="24" step="0.25" value={sleepForm.hours} onChange={e => setSleepForm(v=>({...v,hours:e.target.value}))} style={{ flex:1, minWidth:100 }} />
+                    <select value={sleepForm.quality} onChange={e => setSleepForm(v=>({...v,quality:e.target.value}))} style={{ flex:1, minWidth:100, background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 12px", color:C.text, fontSize:12, fontFamily:"'Space Grotesk',sans-serif", outline:"none" }}>
+                      <option value="">Quality (optional)</option>
+                      <option value="poor">Poor</option>
+                      <option value="fair">Fair</option>
+                      <option value="good">Good</option>
+                      <option value="great">Great</option>
+                    </select>
+                  </div>
+                  <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:12 }}>
+                    <div style={{ flex:1, minWidth:100 }}>
+                      <Mono style={{ display:"block", color:C.muted, marginBottom:4 }}>Bedtime</Mono>
+                      <input type="time" value={sleepForm.bedtime} onChange={e => setSleepForm(v=>({...v,bedtime:e.target.value}))} style={{ width:"100%", boxSizing:"border-box", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"10px 12px", color:C.text, fontSize:12, fontFamily:"'Space Grotesk',sans-serif", outline:"none", colorScheme:theme }} />
+                    </div>
+                    <div style={{ flex:1, minWidth:100 }}>
+                      <Mono style={{ display:"block", color:C.muted, marginBottom:4 }}>Wake time</Mono>
+                      <input type="time" value={sleepForm.wakeTime} onChange={e => setSleepForm(v=>({...v,wakeTime:e.target.value}))} style={{ width:"100%", boxSizing:"border-box", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"10px 12px", color:C.text, fontSize:12, fontFamily:"'Space Grotesk',sans-serif", outline:"none", colorScheme:theme }} />
+                    </div>
+                  </div>
+                  {/* Manual entry today — see sleepLog's own state comment on why the shape here is
+                      already what a future HealthKit/Health Connect auto-collector would populate. */}
+                  <Btn sm full disabled={!sleepForm.hours} onClick={() => {
+                    const hours = parseFloat(sleepForm.hours);
+                    if (!(hours >= 0)) return;
+                    logSleep({ hours, bedtime: sleepForm.bedtime || null, wakeTime: sleepForm.wakeTime || null, quality: sleepForm.quality || null });
+                    setSleepForm({ hours:"", bedtime:"", wakeTime:"", quality:"" });
+                  }}>Log sleep</Btn>
                 </div>
-              </div>
-              {/* Manual entry today — see sleepLog's own state comment on why the shape here is
-                  already what a future HealthKit/Health Connect auto-collector would populate. */}
-              <Btn sm full disabled={!sleepForm.hours} onClick={() => {
-                const hours = parseFloat(sleepForm.hours);
-                if (!(hours >= 0)) return;
-                logSleep({ hours, bedtime: sleepForm.bedtime || null, wakeTime: sleepForm.wakeTime || null, quality: sleepForm.quality || null });
-                setSleepForm({ hours:"", bedtime:"", wakeTime:"", quality:"" });
-              }}>Log sleep</Btn>
-              {sleepLog.length > 0 && (
-                <Mono style={{ display:"block", color:C.muted, marginTop:10 }}>Last logged: {sleepLog[sleepLog.length-1].hours}h on {fmtDate(sleepLog[sleepLog.length-1].date)}</Mono>
-              )}
+              </ProfileRow>
+              <ProfileRow
+                label="Wellness Journal"
+                sub={journalEntries.length > 0 ? `${journalEntries.length} entr${journalEntries.length!==1?"ies":"y"} saved` : "No entries yet"}
+                expanded={openWellnessRow==="journal"}
+                onToggle={() => setOpenWellnessRow(v => v==="journal" ? null : "journal")}>
+                <div style={{ paddingBottom:4 }}>
+                  <textarea value={journalDraft} onChange={e => setJournalDraft(e.target.value)} placeholder="What's on your mind?" rows={3}
+                    style={{ width:"100%", boxSizing:"border-box", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:14, padding:"11px 13px", color:C.text, fontSize:12.5, fontFamily:"'Space Grotesk',sans-serif", outline:"none", resize:"vertical", marginBottom:10 }} />
+                  <div style={{ display:"flex", gap:8 }}>
+                    <button onClick={toggleJournalListen} aria-label={journalListening ? "Stop dictation" : "Speak entry"} title={journalListening ? "Stop dictation" : "Speak entry"}
+                      style={{ background:journalListening?C.negativeBg:C.surface, border:`1px solid ${journalListening?C.negative:C.cardB}`, borderRadius:12, padding:"10px 13px", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>
+                      <NavIcon id="mic" size={15} color={journalListening?C.negative:C.soft} />
+                    </button>
+                    <Btn sm disabled={!journalDraft.trim()} onClick={() => { addJournalEntry(journalDraft); setJournalDraft(""); }} style={{ flex:1 }}>Save entry</Btn>
+                  </div>
+                  {journalEntries.length > 0 && (
+                    <div style={{ marginTop:14 }}>
+                      {journalEntries.slice().reverse().slice(0, 5).map(en => (
+                        <div key={en.id} {...longPress(() => setActionSheet({
+                            title: fmtDate(en.date),
+                            subtitle: en.time,
+                            actions:[{ label:"Delete entry", destructive:true, confirmText:"This permanently removes this journal entry.", onClick:() => {
+                              const prev = journalEntries;
+                              deleteJournalEntry(en.id);
+                              toast("Journal entry deleted.", () => setJournalEntries(prev));
+                            }}],
+                          }))}
+                          style={{ padding:"10px 12px", marginBottom:6, borderRadius:12, background:C.surface, WebkitTouchCallout:"none", WebkitUserSelect:"none", userSelect:"none" }}>
+                          <Mono style={{ display:"block", color:C.muted, marginBottom:4 }}>{en.date===todayISO() ? "Today" : fmtDate(en.date)} · {en.time}</Mono>
+                          <div style={{ fontSize:12.5, color:C.text, lineHeight:1.5 }}>{en.text}</div>
+                        </div>
+                      ))}
+                      {journalEntries.length > 5 && (
+                        <Mono style={{ display:"block", color:C.muted, padding:"6px 0 2px" }}>Showing your 5 most recent entries. {journalEntries.length - 5} earlier {journalEntries.length - 5 === 1 ? "entry is" : "entries are"} still saved.</Mono>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </ProfileRow>
             </Card>
             <Card style={{ marginBottom:14, borderRadius:22 }}>
               <Mono style={{ display:"block", color:C.muted, letterSpacing:.8, marginBottom:13 }}>Mood log</Mono>
@@ -9189,48 +9240,6 @@ ${voiceMode
                   ),
                 ];
               })()}
-            </Card>
-            {/* Wellness Journal — private to this account like everything else in Wellness (see
-                the top-level privacy note: nothing here is shared between users). Typed or spoken
-                (toggleJournalListen, a dictation path separate from the AI chat's own mic button —
-                see its own comment for why). KROFT may look for recurring themes here later, but
-                never as a diagnosis — same rule as every other signal on this page. */}
-            <Card style={{ marginBottom:14, borderRadius:22 }}>
-              <div style={{ display:"flex", alignItems:"center", gap:7, marginBottom:13 }}>
-                <NavIcon id="journal" size={14} color={C.accent} />
-                <Mono style={{ color:C.muted, letterSpacing:.8 }}>Wellness Journal</Mono>
-              </div>
-              <textarea value={journalDraft} onChange={e => setJournalDraft(e.target.value)} placeholder="What's on your mind?" rows={3}
-                style={{ width:"100%", boxSizing:"border-box", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:14, padding:"11px 13px", color:C.text, fontSize:12.5, fontFamily:"'Space Grotesk',sans-serif", outline:"none", resize:"vertical", marginBottom:10 }} />
-              <div style={{ display:"flex", gap:8 }}>
-                <button onClick={toggleJournalListen} aria-label={journalListening ? "Stop dictation" : "Speak entry"} title={journalListening ? "Stop dictation" : "Speak entry"}
-                  style={{ background:journalListening?C.negativeBg:C.surface, border:`1px solid ${journalListening?C.negative:C.cardB}`, borderRadius:12, padding:"10px 13px", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>
-                  <NavIcon id="mic" size={15} color={journalListening?C.negative:C.soft} />
-                </button>
-                <Btn sm disabled={!journalDraft.trim()} onClick={() => { addJournalEntry(journalDraft); setJournalDraft(""); }} style={{ flex:1 }}>Save entry</Btn>
-              </div>
-              {journalEntries.length > 0 && (
-                <div style={{ marginTop:14 }}>
-                  {journalEntries.slice().reverse().slice(0, 5).map(en => (
-                    <div key={en.id} {...longPress(() => setActionSheet({
-                        title: fmtDate(en.date),
-                        subtitle: en.time,
-                        actions:[{ label:"Delete entry", destructive:true, confirmText:"This permanently removes this journal entry.", onClick:() => {
-                          const prev = journalEntries;
-                          deleteJournalEntry(en.id);
-                          toast("Journal entry deleted.", () => setJournalEntries(prev));
-                        }}],
-                      }))}
-                      style={{ padding:"10px 12px", marginBottom:6, borderRadius:12, background:C.surface, WebkitTouchCallout:"none", WebkitUserSelect:"none", userSelect:"none" }}>
-                      <Mono style={{ display:"block", color:C.muted, marginBottom:4 }}>{en.date===todayISO() ? "Today" : fmtDate(en.date)} · {en.time}</Mono>
-                      <div style={{ fontSize:12.5, color:C.text, lineHeight:1.5 }}>{en.text}</div>
-                    </div>
-                  ))}
-                  {journalEntries.length > 5 && (
-                    <Mono style={{ display:"block", color:C.muted, padding:"6px 0 2px" }}>Showing your 5 most recent entries. {journalEntries.length - 5} earlier {journalEntries.length - 5 === 1 ? "entry is" : "entries are"} still saved.</Mono>
-                  )}
-                </div>
-              )}
             </Card>
             <Card style={{ borderRadius:22 }}>
               <Mono style={{ display:"block", color:C.muted, letterSpacing:.8, marginBottom:13 }}>Daily recommendations</Mono>
