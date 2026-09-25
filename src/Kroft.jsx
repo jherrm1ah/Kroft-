@@ -2664,6 +2664,12 @@ function KroftApp({ onFullReset } = {}) {
   const [newExp, setNewExp] = useState({ label:"", amount:"", cat:"Operations", date:todayISO(), repeat:"none" });
   const [showAddInc, setShowAddInc] = useState(false);
   const [showAddExp, setShowAddExp] = useState(false);
+  // Entry History: a single combined, reverse-chronological feed of every income and expense
+  // entry — the inline Transactions section below already lists everything, but as two separate
+  // per-type cards, each independently sorted, so there's nowhere that shows "what did I log on
+  // this date" across both at once.
+  const [showEntryHistory, setShowEntryHistory] = useState(false);
+  const [entryHistoryQuery, setEntryHistoryQuery] = useState("");
   const [monthlyReport, setMonthlyReport] = useState(null);
   const [generatingReport, setGeneratingReport] = useState(false);
   const [weeklyRecap, setWeeklyRecap] = useState(null);
@@ -3220,6 +3226,14 @@ function KroftApp({ onFullReset } = {}) {
     const total = Object.values(byCat).reduce((s,v) => s+v, 0);
     return Object.entries(byCat).sort((a,b) => b[1]-a[1]).map(([cat, amt]) => ({ cat, amt, pct: total ? amt/total : 0 }));
   }, [expenses]);
+
+  // Every income and expense entry ever logged, combined into one reverse-chronological feed for
+  // Entry History — same merge shape exportFinanceCsv already uses, just newest first instead of
+  // oldest first, since a review view leads with what was just added.
+  const allEntries = useMemo(() => (
+    [...income.map(r => ({ ...r, kind:"income" })), ...expenses.map(r => ({ ...r, kind:"expenses" }))]
+      .sort((a,b) => (b.date||"").localeCompare(a.date||""))
+  ), [income, expenses]);
 
   // Every future occurrence (not just each template's single next one) of every recurring income
   // or expense due in the next 30 days, simulated forward from nextDate without actually posting
@@ -6935,6 +6949,53 @@ ${voiceMode
           </div>
         );
       })()}
+      {showEntryHistory && (() => {
+        const q = entryHistoryQuery.trim().toLowerCase();
+        const filtered = q ? allEntries.filter(e => `${e.label} ${e.cat}`.toLowerCase().includes(q)) : allEntries;
+        return (
+          <div role="dialog" aria-modal="true" aria-label="Entry history" style={{ position:"fixed", inset:0, zIndex:310, background:C.bg, display:"flex", flexDirection:"column" }}>
+            <div style={{ display:"flex", alignItems:"center", gap:10, padding:"12px 16px", borderBottom:`1px solid ${C.cardB}`, flexShrink:0 }}>
+              <button onClick={() => { setShowEntryHistory(false); setEntryHistoryQuery(""); }} aria-label="Close entry history" style={{ background:"none", border:"none", color:C.white, cursor:"pointer", fontSize:20, padding:"2px 4px", lineHeight:1 }}>←</button>
+              <h2 style={{ fontSize:17, fontWeight:700, color:C.white, letterSpacing:-.5, flex:1 }}>Entry history</h2>
+            </div>
+            <div style={{ flex:1, minHeight:0, overflowY:"auto", padding:16 }}>
+              {allEntries.length > 0 && (
+                <Inp placeholder="Search description or category…" value={entryHistoryQuery} onChange={e=>setEntryHistoryQuery(e.target.value)} style={{ marginBottom:16, width:"100%", boxSizing:"border-box" }} />
+              )}
+              {allEntries.length === 0 ? (
+                <Card level="inset" style={{ textAlign:"center", padding:26, borderStyle:"dashed" }}>
+                  <div style={{ fontSize:15, fontWeight:600, color:C.white, marginBottom:6 }}>No entries yet</div>
+                  <Mono style={{ display:"block", color:C.soft }}>Every income and expense you add shows up here, newest first.</Mono>
+                </Card>
+              ) : filtered.length === 0 ? (
+                <Card level="inset" style={{ textAlign:"center", padding:26, borderStyle:"dashed" }}>
+                  <Mono style={{ color:C.soft }}>Nothing matches "{entryHistoryQuery}".</Mono>
+                </Card>
+              ) : (
+                <div style={{ display:"flex", flexDirection:"column", gap:9 }}>
+                  {filtered.map(e => (
+                    <Card key={`${e.kind}-${e.id}`} style={{ minWidth:0 }}>
+                      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:10 }}>
+                        <div style={{ minWidth:0, flex:1 }}>
+                          <Mono style={{ color:C.soft, fontSize:9, letterSpacing:.5, display:"block", marginBottom:3 }}>{fmtDate(e.date)}</Mono>
+                          <div style={{ fontSize:13, fontWeight:600, color:C.white, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{e.label}</div>
+                          <div style={{ marginTop:4, display:"flex", gap:5, flexWrap:"wrap" }}>
+                            <Tag>{e.cat}</Tag>
+                            {e.repeat && e.repeat !== "none" && <Tag tone="accent">Repeats {e.repeat}</Tag>}
+                          </div>
+                        </div>
+                        <Mono style={{ color:e.kind==="income"?C.positive:C.negative, fontSize:13, fontWeight:700, flexShrink:0 }}>
+                          {e.kind==="income"?"+":"-"}{fmtCur(e.amount, e.cur || user.currency)}
+                        </Mono>
+                      </div>
+                    </Card>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })()}
       {uberDest && <UberModal dest={uberDest} onClose={() => setUberDest(null)} />}
       {composeDraft && <ComposeModal draft={composeDraft} onChange={setComposeDraft} onSend={async d => {
         // Real send when a real email account is connected — otherwise fall back to the
@@ -7250,7 +7311,10 @@ ${voiceMode
           <div style={{ animation:"fadeUp .4s ease" }}>
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:18 }}>
               <h2 style={{ fontSize:22, fontWeight:700, color:C.white, letterSpacing:-1 }}>Finance</h2>
-              <div style={{ display:"flex", gap:8, flexWrap:"wrap", justifyContent:"flex-end" }}>
+              <div style={{ display:"flex", gap:8, flexWrap:"wrap", justifyContent:"flex-end", alignItems:"center" }}>
+                <button onClick={() => setShowEntryHistory(true)} aria-label="Entry history" title="Entry history" style={{ background:"none", border:"none", color:C.white, cursor:"pointer", padding:6, lineHeight:1, display:"flex" }}>
+                  <NavIcon id="history" size={19} color={C.white} />
+                </button>
                 <Btn sm onClick={() => { setShowAddInc(v=>!v); setShowAddExp(false); }}>Add Income</Btn>
                 <Btn sm v="outline" onClick={() => { setShowAddExp(v=>!v); setShowAddInc(false); }}>Add Expense</Btn>
                 <Btn sm v="outline" onClick={exportFinanceCsv}>Export</Btn>
