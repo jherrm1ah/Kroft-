@@ -197,6 +197,30 @@ const advanceRepeatDate = (iso, repeat) => {
   return d.toISOString().slice(0, 10);
 };
 const monthLabel = iso => { if (!iso) return ""; const d = new Date(iso + "T00:00:00"); return isNaN(d) ? "" : d.toLocaleDateString("en-US", { month:"long", year:"numeric" }); };
+// Appointment times are free text (the field's own placeholder is "Time e.g. 4:00 PM"), not a
+// structured value, so finding "the next appointment" needs to parse that text into something
+// comparable. Returns null for anything unparseable — blank, or free text that isn't a time —
+// rather than guessing, so callers can decide how to place those relative to timed ones.
+const parseApptTime = str => {
+  if (!str) return null;
+  const m = String(str).trim().match(/^(\d{1,2}):(\d{2})\s*(am|pm)?$/i);
+  if (!m) return null;
+  let h = parseInt(m[1], 10);
+  const min = parseInt(m[2], 10);
+  if (h > 23 || min > 59) return null;
+  const suffix = m[3]?.toLowerCase();
+  if (suffix === "pm" && h < 12) h += 12;
+  if (suffix === "am" && h === 12) h = 0;
+  return h * 60 + min;
+};
+// Sorts appointments chronologically (date, then time-of-day) rather than leaving them in
+// whatever order they were added or merged in from a synced calendar — appts is otherwise only
+// ever appended/filtered/mapped, never sorted, so index 0 is not "the next one." An appointment
+// with no parseable time sorts first within its day (treated as "could be anytime today").
+const sortAppts = list => [...list].sort((a, b) => {
+  if (a.date !== b.date) return (a.date||"") < (b.date||"") ? -1 : 1;
+  return (parseApptTime(a.time) ?? -1) - (parseApptTime(b.time) ?? -1);
+});
 // Lower rank = more urgent = sorts first. The task list used to only ever group by done/not-done —
 // priority was fully editable and stored but never actually affected ordering, so an "Urgent" task
 // added after a "Low" one just sat below it.
@@ -3398,6 +3422,12 @@ function KroftApp({ onFullReset } = {}) {
     appts.forEach(a => { if (a.date) (map[a.date] = map[a.date] || []).push(a); });
     return map;
   }, [appts]);
+  // A one-off (non-repeating) appointment is never removed once its date passes — see the
+  // recurring-only roll-forward effect above — so "the next appointment" has to actually mean
+  // the earliest one today or later, not just index 0 of an array that's otherwise only ever
+  // appended to.
+  const upcomingAppts = useMemo(() => sortAppts(appts.filter(a => a.date >= todayISO())), [appts]);
+  const todaysAppts = useMemo(() => sortAppts(appts.filter(a => a.date === todayISO())), [appts]);
 
   const pw = signupPw;
   const pwChecks = { length:pw.length>=8, upper:/[A-Z]/.test(pw), lower:/[a-z]/.test(pw), number:/[0-9]/.test(pw), special:/[^A-Za-z0-9]/.test(pw) };
@@ -6851,7 +6881,7 @@ ${voiceMode
   return (
     <div key={themeTick} style={{ fontFamily:"'Space Grotesk',sans-serif", background:C.bg, minHeight:"100vh", color:C.text, overflowX:"hidden", maxWidth:"100vw", touchAction:"pan-y" }}>
       <style>{G}</style>
-      {showBriefing && <Briefing user={user} income={totalIncome} expenses={totalExpenses} emails={emails} appts={appts} onClose={() => setShowBriefing(false)} />}
+      {showBriefing && <Briefing user={user} income={totalIncome} expenses={totalExpenses} emails={emails} appts={todaysAppts} onClose={() => setShowBriefing(false)} />}
       {showChatHistory && (() => {
         const q = chatHistorySearch.trim().toLowerCase();
         // Title alone used to miss anything that isn't literally in the auto-generated title —
@@ -7083,10 +7113,10 @@ ${voiceMode
                 Income/Expenses breakdown below stays as the detail view underneath it. */}
             <button onClick={() => setHomeSection("finance")} style={{ width:"100%", display:"flex", alignItems:"center", gap:12, background:C.text, border:"none", borderRadius:999, padding:"10px 14px", cursor:"pointer", marginBottom:16, textAlign:"left", boxSizing:"border-box" }}>
               <div style={{ width:36, height:36, borderRadius:"50%", background:C.card, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
-                <NavIcon id={netProfit>=0?"trendUp":"trendDown"} size={16} color={netProfit>=0?C.positive:C.negative} />
+                <NavIcon id={thisMonthNet.net>=0?"trendUp":"trendDown"} size={16} color={thisMonthNet.net>=0?C.positive:C.negative} />
               </div>
               <div style={{ flex:1, minWidth:0 }}>
-                <div style={{ fontSize:16, fontWeight:700, color:C.card, letterSpacing:-.5, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{fmtCur(netProfit,user.currency)}</div>
+                <div style={{ fontSize:16, fontWeight:700, color:C.card, letterSpacing:-.5, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{fmtCur(thisMonthNet.net,user.currency)}</div>
                 <Mono style={{ color:C.card, opacity:.65 }}>Net profit this month</Mono>
               </div>
               <Mono style={{ color:C.card, opacity:.65, flexShrink:0 }}>›</Mono>
@@ -7195,19 +7225,19 @@ ${voiceMode
               </Card>
               <Card>
                 <Mono style={{ display:"block", color:C.muted, marginBottom:12, letterSpacing:.8 }}>Next appointment</Mono>
-                {appts.length>0 ? (
+                {upcomingAppts.length>0 ? (
                   <>
-                    <div style={{ fontWeight:700, fontSize:14, color:C.white, marginBottom:4 }}>{appts[0].title}</div>
-                    <Mono style={{ display:"block", color:C.soft, marginBottom:2 }}>{appts[0].time} · {fmtDate(appts[0].date)||appts[0].date}</Mono>
-                    <Mono style={{ display:"block", color:C.muted, marginBottom:13 }}>{appts[0].location}</Mono>
+                    <div style={{ fontWeight:700, fontSize:14, color:C.white, marginBottom:4 }}>{upcomingAppts[0].title}</div>
+                    <Mono style={{ display:"block", color:C.soft, marginBottom:2 }}>{upcomingAppts[0].time} · {fmtDate(upcomingAppts[0].date)||upcomingAppts[0].date}</Mono>
+                    <Mono style={{ display:"block", color:C.muted, marginBottom:13 }}>{upcomingAppts[0].location}</Mono>
                     <div style={{ display:"flex", gap:7, flexWrap:"wrap" }}>
-                      <Btn sm onClick={() => remind(appts[0])}>Remind</Btn>
-                      <Btn sm v="outline" onClick={() => setUberDest(appts[0])}>Uber</Btn>
+                      <Btn sm onClick={() => remind(upcomingAppts[0])}>Remind</Btn>
+                      <Btn sm v="outline" onClick={() => setUberDest(upcomingAppts[0])}>Uber</Btn>
                     </div>
                   </>
                 ) : (
                   <div style={{ textAlign:"center", padding:"12px 0" }}>
-                    <Mono style={{ display:"block", color:C.muted, marginBottom:12 }}>No appointments yet.</Mono>
+                    <Mono style={{ display:"block", color:C.muted, marginBottom:12 }}>{appts.length>0 ? "No upcoming appointments." : "No appointments yet."}</Mono>
                     <Btn sm onClick={() => { setTab("workspace"); setWorkspaceSection("calendar"); }}>Add one</Btn>
                   </div>
                 )}
