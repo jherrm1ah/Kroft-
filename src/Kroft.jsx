@@ -1025,7 +1025,16 @@ function SplashScreen({ fading }) {
 // it can't drift on a screen shaped differently than whatever it was checked against.
 function WelcomeScreen({ onGetStarted, onLogIn }) {
   return (
-    <div style={{ position:"fixed", inset:0, zIndex:900, background:SPLASH_GRADIENT, display:"flex", flexDirection:"column", animation:"fadeIn .3s ease" }}>
+    <div style={{ position:"fixed", inset:0, zIndex:900, background:"#f4f2ee", display:"flex", flexDirection:"column", animation:"fadeIn .3s ease" }}>
+      {/* The gradient lives on this header+hero wrapper specifically, not the screen root — a
+          gradient's percentage stops always resolve against its OWN box, so scoping it to just
+          this flex-sized region (rather than the full viewport) guarantees the fade finishes
+          exactly where this region ends, no matter how tall the sheet below ends up being. Sizing
+          it to the root instead meant the fade's own fixed percentages had no idea where the
+          sheet's top edge actually fell, and a mismatch there showed up as a hard color seam right
+          at the sheet's boundary — the same class of bug as the mid-gradient seam already fixed,
+          just triggered by a layout boundary instead of a curve discontinuity. */}
+      <div style={{ flex:1, minHeight:0, display:"flex", flexDirection:"column", background:SPLASH_GRADIENT }}>
       <div style={{ paddingTop:"calc(7% + env(safe-area-inset-top))", flexShrink:0 }}>
         <KroftLockup size={32} fontSize={17} gap={9} letterSpacing={2} />
       </div>
@@ -1060,6 +1069,7 @@ function WelcomeScreen({ onGetStarted, onLogIn }) {
             <path d="M12 2c.6 3.6 2.4 5.4 6 6-3.6.6-5.4 2.4-6 6-.6-3.6-2.4-5.4-6-6 3.6-.6 5.4-2.4 6-6z" fill={SPLASH_ORANGE} />
           </svg>
         </div>
+      </div>
       </div>
       <div style={{ background:"#f4f2ee", borderRadius:"28px 28px 0 0", padding:"30px 26px calc(26px + env(safe-area-inset-bottom))", textAlign:"center", flexShrink:0, animation:"slideUp .4s ease" }}>
         <h1 style={{ fontSize:23, fontWeight:800, color:"#0a0a0a", letterSpacing:-.6, lineHeight:1.3, margin:"0 0 8px", fontFamily:"'Space Grotesk',sans-serif" }}>Your AI Assistant<br/>for Life &amp; Business.</h1>
