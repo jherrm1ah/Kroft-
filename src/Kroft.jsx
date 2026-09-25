@@ -387,6 +387,30 @@ const setPreferredVoiceId = id => { preferredVoiceId = resolveVoiceId(id); };
 let preferredVoiceSpeed = 1.0;
 const setPreferredVoiceSpeed = mul => { preferredVoiceSpeed = typeof mul === "number" && mul > 0 ? mul : 1.0; };
 
+// Wired to KroftApp's toast() once it exists (same reasoning as the voice pref setters above —
+// speak() lives outside React). speechSynthesis.speak() can fail completely silently on real
+// devices with no exception and no error event: Android Chrome's own per-site "Sound" mute
+// (long-press a tab → Site settings → Sound: Block) and a phone with no text-to-speech voice
+// pack installed (Settings → Accessibility → Text-to-speech output) both produce exactly this —
+// speak() runs, nothing throws, nothing plays. Neither condition is visible to JS, so the best
+// speak() can do is notice the utterance never actually started and say so, instead of leaving
+// someone staring at silence with no idea whether the tap even registered.
+let notifyTtsFailure = null;
+const setTtsFailureNotifier = fn => { notifyTtsFailure = fn; };
+
+// Bumped by every function that takes over window.speechSynthesis (speak(), stopSpeaking(),
+// speakSequence(), createSpeechQueue()) so an earlier, still-in-flight call can recognize it's
+// been superseded. Without this, two overlapping calls fight over the single shared
+// speechSynthesis queue: canceling one to start another fires the canceled utterance's onerror,
+// which (before this token existed) unconditionally scheduled that OLD call's next chunk —
+// so tapping a "stop" button mid-read didn't actually stop anything, it just skipped ahead and
+// kept talking after a brief pause, and speak()'s own retry/failure-detection timers could fire
+// for a call that had already been abandoned. Every chained callback below checks this token
+// before touching speechSynthesis again; a mismatch means "a newer caller now owns speech,
+// stand down silently."
+let activeSpeechToken = 0;
+const takeSpeechControl = () => ++activeSpeechToken;
+
 // Assigning an incompatible value to utterance.voice throws synchronously — a real browser
 // behavior (reproduced directly: SpeechSynthesisUtterance.voice's setter validates its argument
 // and rejects one it doesn't recognize as a genuine SpeechSynthesisVoice from this engine).
@@ -438,37 +462,63 @@ function speak(raw, opts = {}) {
   if (!("speechSynthesis" in window)) return;
   const text = speechText(raw);
   if (!text) return;
-  window.speechSynthesis.cancel();
   const chunks = speechChunks(text);
-  // Both the voiceschanged listener and the timeout below can fire — guarding on
-  // speechSynthesis.speaking (as this used to) is racy: a short utterance can finish speaking
-  // before the 250ms timeout even runs, so `speaking` reads false again and the fallback
-  // re-triggers the WHOLE sequence a second time, reading it twice. `started` makes run()
-  // idempotent regardless of which trigger fires first, or in what order.
-  let started = false;
-  const run = () => {
-    if (started) return;
-    started = true;
-    const { profile, voice } = pickVoiceForPersona(opts.voiceId);
-    const { rate, pauseMs } = computeDelivery(profile, opts.context);
-    let i = 0;
-    const next = () => {
-      if (i >= chunks.length) return;
-      const u = new SpeechSynthesisUtterance(chunks[i++]);
-      u.rate = rate; u.pitch = 1.0; applyVoice(u, voice);
-      u.onend = () => setTimeout(next, pauseMs);
-      u.onerror = () => setTimeout(next, pauseMs);
-      window.speechSynthesis.speak(u);
+  // Claims ownership of speech for this call — see takeSpeechControl's own comment. Every
+  // callback below is guarded on `myToken === activeSpeechToken`; once it stops matching (a
+  // newer speak()/stopSpeaking()/speakSequence()/createSpeechQueue() call took over), this call
+  // goes silent instead of continuing to chunk through old text or firing a stale retry/toast.
+  const myToken = takeSpeechControl();
+  const isCurrent = () => myToken === activeSpeechToken;
+  // Set once any utterance in this speak() call actually reports starting — checked below to
+  // tell a genuine silent failure (nothing ever started, on either attempt) apart from a normal
+  // short line that simply finished playing before the check fires.
+  let beganSpeaking = false;
+  let failureReported = false;
+  // Android Chrome's speech engine has a well-known failure mode where the very next speak()
+  // call after the page has sat idle for a while is silently dropped — no error, nothing plays —
+  // but a second cancel()+speak() immediately after almost always un-sticks it. So a stall on the
+  // first attempt gets one automatic retry from a clean slate before this ever bothers the person
+  // with a toast; only a SECOND silent stall is treated as something they actually need to act on.
+  const attempt = (attemptNum) => {
+    if (!isCurrent()) return;
+    window.speechSynthesis.cancel();
+    let started = false;
+    const run = () => {
+      if (started || !isCurrent()) return;
+      started = true;
+      const { profile, voice } = pickVoiceForPersona(opts.voiceId);
+      const { rate, pauseMs } = computeDelivery(profile, opts.context);
+      let i = 0;
+      const next = () => {
+        if (!isCurrent() || i >= chunks.length) return;
+        const isFirst = i === 0;
+        const u = new SpeechSynthesisUtterance(chunks[i++]);
+        u.rate = rate; u.pitch = 1.0; applyVoice(u, voice);
+        u.onstart = () => { beganSpeaking = true; };
+        u.onend = () => setTimeout(next, pauseMs);
+        u.onerror = () => setTimeout(next, pauseMs);
+        window.speechSynthesis.speak(u);
+        // Only the first chunk of each attempt needs watching — if that one plays, the rest are
+        // presumed fine. 1.8s is generous enough that a slow-starting engine isn't flagged as
+        // stalled, but short enough that a real failure surfaces (or retries) quickly.
+        if (isFirst) setTimeout(() => {
+          if (!isCurrent() || beganSpeaking || failureReported || window.speechSynthesis.speaking) return;
+          if (attemptNum === 1) { attempt(2); return; }
+          failureReported = true;
+          notifyTtsFailure?.("Nothing played, even after retrying. Check this site isn't muted (Chrome: ⋮ menu → Site settings → Sound) and that a text-to-speech voice is installed on this device (Settings → Accessibility → Text-to-speech output).");
+        }, 1800);
+      };
+      next();
     };
-    next();
+    if (!window.speechSynthesis.getVoices().length) {
+      // Wait one tick for voices to arrive rather than speaking with none selected.
+      window.speechSynthesis.addEventListener("voiceschanged", run, { once:true });
+      setTimeout(run, 250);
+    } else run();
   };
-  if (!window.speechSynthesis.getVoices().length) {
-    // Wait one tick for voices to arrive rather than speaking with none selected.
-    window.speechSynthesis.addEventListener("voiceschanged", run, { once:true });
-    setTimeout(run, 250);
-  } else run();
+  attempt(1);
 }
-const stopSpeaking = () => { if ("speechSynthesis" in window) window.speechSynthesis.cancel(); };
+const stopSpeaking = () => { if ("speechSynthesis" in window) { takeSpeechControl(); window.speechSynthesis.cancel(); } };
 
 // Speaks a list of lines in order, reporting which line is currently being read. Lets the UI
 // follow the audio instead of guessing with a fixed timer — a timer drifts as soon as one line
@@ -478,6 +528,10 @@ const stopSpeaking = () => { if ("speechSynthesis" in window) window.speechSynth
 // person can't tell if it heard them. This queues each complete sentence the moment it lands, so
 // KROFT starts talking almost immediately and the rest arrives while it's still speaking.
 function createSpeechQueue({ onStart, onDone, context } = {}) {
+  // See takeSpeechControl's own comment — claims speech now so a concurrent plain speak() call
+  // (or another createSpeechQueue/speakSequence) can't fight this one for control of the single
+  // shared speechSynthesis queue.
+  const myToken = takeSpeechControl();
   let spokenUpTo = 0;      // how much of the incoming text has been queued
   let queue = [];
   let speaking = false;
@@ -487,7 +541,7 @@ function createSpeechQueue({ onStart, onDone, context } = {}) {
   let delivery = null;
 
   const drain = () => {
-    if (cancelled || speaking) return;
+    if (cancelled || speaking || myToken !== activeSpeechToken) return;
     if (!queue.length) { if (finished) onDone?.(); return; }
     speaking = true;
     if (!started) { started = true; onStart?.(); }
@@ -527,28 +581,33 @@ function createSpeechQueue({ onStart, onDone, context } = {}) {
 
 function speakSequence(lines, { onLine, onDone, context, voiceId } = {}) {
   if (!("speechSynthesis" in window)) { lines.forEach((_, i) => onLine?.(i)); onDone?.(); return () => {}; }
+  // See takeSpeechControl's own comment — claims speech now so a concurrent plain speak() call
+  // (or another speakSequence/createSpeechQueue) can't fight this one for control of the single
+  // shared speechSynthesis queue.
+  const myToken = takeSpeechControl();
   window.speechSynthesis.cancel();
   let cancelled = false;
+  const isCurrent = () => !cancelled && myToken === activeSpeechToken;
   // See speak()'s comment — guarding solely on speechSynthesis.speaking is racy, since a short
   // first line can finish before the 250ms fallback even runs, making the fallback re-trigger
   // the whole sequence (reading every line again from the start). `started` makes this
   // idempotent regardless of which of the two triggers below fires first.
   let started = false;
   const start = () => {
-    if (started || cancelled) return;
+    if (started || !isCurrent()) return;
     started = true;
     const { profile, voice } = pickVoiceForPersona(voiceId);
     const { rate, pauseMs } = computeDelivery(profile, context);
     let li = 0;
     const speakLine = () => {
-      if (cancelled) return;
+      if (!isCurrent()) return;
       if (li >= lines.length) { onDone?.(); return; }
       const current = li;
       onLine?.(current);
       const chunks = speechChunks(speechText(lines[current]));
       let ci = 0;
       const nextChunk = () => {
-        if (cancelled) return;
+        if (!isCurrent()) return;
         if (ci >= chunks.length) { li++; speakLine(); return; }
         const u = new SpeechSynthesisUtterance(chunks[ci++]);
         u.rate = rate; u.pitch = 1.0; applyVoice(u, voice);
@@ -3330,6 +3389,10 @@ function KroftApp({ onFullReset } = {}) {
     // announcement when the only chance to reverse a deletion disappears.
     setTimeout(() => setToasts(p => p.filter(t => t.id !== id)), onUndo ? UNDO_MS : 4200);
   }, []);
+
+  // Lets speak() (a plain module-level function — see its own comment) surface a toast when an
+  // utterance silently never plays, instead of failing with no visible sign anything went wrong.
+  useEffect(() => { setTtsFailureNotifier(toast); return () => setTtsFailureNotifier(null); }, [toast]);
 
   // A real "moment" — confetti + a distinct, more festive haptic pattern — reserved for genuine
   // milestones (see call sites: all tasks cleared, first-ever finance entry, KROFT Plus
