@@ -9481,7 +9481,9 @@ ${voiceMode
                   </div>
                 ) : aiMessages.map((m,i) => (
                   <div key={m.id || i} style={{ display:"flex", flexDirection:"column", alignItems:m.role==="user"?"flex-end":"flex-start", animation:"fadeUp .3s ease" }}>
-                    <div style={{ background:m.role==="user"?C.white:C.surface, border:`1px solid ${m.role==="user"?C.soft:C.cardB}`, borderRadius:m.role==="user"?"14px 14px 3px 14px":"14px 14px 14px 3px", padding:"10px 14px", maxWidth:"80%" }}>
+                    <div {...(m.role==="user" ? longPress(() => setActionSheet({ title:"Message", actions:[{ label:"Copy", onClick:() => copyMsg(m.content) }] })) : {})}
+                      style={{ background:m.role==="user"?C.white:C.surface, border:`1px solid ${m.role==="user"?C.soft:C.cardB}`, borderRadius:m.role==="user"?"14px 14px 3px 14px":"14px 14px 14px 3px", padding:"10px 14px", maxWidth:"80%",
+                        ...(m.role==="user" ? { cursor:"pointer", WebkitTouchCallout:"none", WebkitUserSelect:"none", userSelect:"none" } : {}) }}>
                       {m.role==="assistant" && <Mono style={{ display:"block", color:C.muted, fontSize:9, letterSpacing:.8, marginBottom:5 }}>KROFT</Mono>}
                       {m.attachments?.length > 0 && (
                         <div style={{ display:"flex", flexWrap:"wrap", gap:6, marginBottom:m.content?8:0 }}>
