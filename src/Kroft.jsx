@@ -3835,14 +3835,27 @@ function KroftApp({ onFullReset } = {}) {
     if (!isSupabaseConfigured) throw new Error("Supabase isn't configured, so there's no account to authenticate this request with.");
     const { data: { session } = {} } = await supabase.auth.getSession();
     if (!session) throw new Error("Not signed in.");
-    return fetch(path, {
-      ...opts,
-      headers: {
-        ...(opts.body ? { "Content-Type": "application/json" } : {}),
-        ...opts.headers,
-        Authorization: `Bearer ${session.access_token}`,
-      },
-    });
+    // Every caller (mail sync, calendar sync, the Google/Microsoft connect and disconnect
+    // buttons) routes through Kroft's own serverless functions, which in turn call out to those
+    // providers' real APIs — a slow provider response with no timeout here left the calling
+    // screen's loading state spinning forever with no error and no way to retry. A timed-out
+    // fetch rejects with the same AbortError shape every one of those callers' existing catch
+    // blocks already handles, so this needs no changes at any call site.
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 15000);
+    try {
+      return await fetch(path, {
+        ...opts,
+        signal: controller.signal,
+        headers: {
+          ...(opts.body ? { "Content-Type": "application/json" } : {}),
+          ...opts.headers,
+          Authorization: `Bearer ${session.access_token}`,
+        },
+      });
+    } finally {
+      clearTimeout(timer);
+    }
   };
 
   // Same idea as authedFetch, but for api/chat.js specifically: that endpoint only requires
