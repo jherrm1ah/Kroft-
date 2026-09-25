@@ -6402,7 +6402,7 @@ ${voiceMode
         <OShell step="login">
           <div style={{ textAlign:"center", marginBottom:28 }}>
             <div style={{ margin:"0 auto 18px", width:64, height:64, borderRadius:18, background:C.white, display:"flex", alignItems:"center", justifyContent:"center", boxShadow:`0 0 0 8px ${C.fillStrong}` }}>
-              <span style={{ fontSize:28, fontWeight:900, color:C.black }}>K</span>
+              <img src="/kroft-robot-badge.png" alt="" style={{ width:"66%", height:"66%", objectFit:"contain" }} />
             </div>
             <h1 style={{ fontSize:30, fontWeight:800, color:C.white, letterSpacing:-1.5, marginBottom:4 }}>Welcome back</h1>
             <Mono style={{ color:C.muted }}>Sign in to KROFT by Virt Technologies</Mono>
@@ -6497,7 +6497,7 @@ ${voiceMode
         <OShell step="reset-password">
           <div style={{ textAlign:"center", marginBottom:28 }}>
             <div style={{ margin:"0 auto 18px", width:64, height:64, borderRadius:18, background:C.white, display:"flex", alignItems:"center", justifyContent:"center", boxShadow:`0 0 0 8px ${C.fillStrong}` }}>
-              <span style={{ fontSize:28, fontWeight:900, color:C.black }}>K</span>
+              <img src="/kroft-robot-badge.png" alt="" style={{ width:"66%", height:"66%", objectFit:"contain" }} />
             </div>
             <h1 style={{ fontSize:30, fontWeight:800, color:C.white, letterSpacing:-1.5, marginBottom:4 }}>Set a new password</h1>
             <Mono style={{ color:C.muted }}>Choose a new password for your account</Mono>
@@ -6525,7 +6525,7 @@ ${voiceMode
         <OShell step="signup" light>
           <div style={{ textAlign:"center", marginBottom:22 }}>
             <div style={{ margin:"0 auto 16px", width:60, height:60, borderRadius:16, background:LIGHT.white, display:"flex", alignItems:"center", justifyContent:"center" }}>
-              <span style={{ fontSize:24, fontWeight:900, color:LIGHT.black }}>K</span>
+              <img src="/kroft-robot-badge.png" alt="" style={{ width:"66%", height:"66%", objectFit:"contain" }} />
             </div>
             <h1 style={{ fontSize:28, fontWeight:800, color:LIGHT.white, letterSpacing:-1, marginBottom:4 }}>Create account</h1>
             <Mono light style={{ color:LIGHT.muted }}>Set up your KROFT profile</Mono>
