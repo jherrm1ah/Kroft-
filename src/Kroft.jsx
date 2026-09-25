@@ -953,23 +953,53 @@ const Tag = ({ children, hi, tone, style }) => {
   );
 };
 
-// Screen 1 of the onboarding reference, used as-is (the exact provided image, just cropped to
-// the phone's screen area) rather than recreated in code — per instruction, no layout/behavior
-// added here yet, just placing the image as this step.
+// Both onboarding images are cropped to the phone's screen content only (status bar/notch and
+// home indicator removed), at a fixed 531:949 pixel ratio. This wrapper reproduces
+// object-fit:contain sizing manually (max-width driven by height*ratio, max-height driven by
+// width/ratio) so the rendered box always has that exact same ratio, at any viewport size — which
+// is what makes the percentage-based button overlays in WelcomeScreen line up with the image
+// pixels underneath them regardless of device screen shape.
+const ONBOARD_RATIO = 531 / 949;
+const OnboardImageFrame = ({ children }) => (
+  <div style={{ position:"fixed", inset:0, background:"#f4f2ee", display:"flex", alignItems:"center", justifyContent:"center" }}>
+    <div style={{ position:"relative", width:"100%", height:"100%", maxWidth:`calc(100vh * ${ONBOARD_RATIO})`, maxHeight:`calc(100vw / ${ONBOARD_RATIO})` }}>
+      {children}
+    </div>
+  </div>
+);
+
+// Screen 1 of the onboarding reference, used as-is (the exact provided image, cropped to just the
+// phone's screen content) rather than recreated in code.
 function SplashScreen({ fading }) {
   return (
-    <div style={{ position:"fixed", inset:0, zIndex:9999, background:"#f4f2ee", opacity:fading?0:1, transition:"opacity .6s ease", pointerEvents:fading?"none":"all" }}>
-      <img src="/onboarding-screen-1.png" alt="" style={{ width:"100%", height:"100%", objectFit:"contain" }} />
+    <div style={{ position:"fixed", inset:0, zIndex:9999, opacity:fading?0:1, transition:"opacity .6s ease", pointerEvents:fading?"none":"all" }}>
+      <OnboardImageFrame>
+        <img src="/onboarding-screen-1.png" alt="" style={{ width:"100%", height:"100%", display:"block" }} />
+      </OnboardImageFrame>
     </div>
   );
 }
 
-// Screen 2 of the onboarding reference, same as above — the exact provided image, cropped to the
-// phone's screen area, placed as-is. Not yet wired to any navigation/behavior.
-function WelcomeScreen() {
+// Screen 2 of the onboarding reference — same exact image, plus two invisible clickable overlays
+// positioned (as percentages of the image's own pixel dimensions) exactly over the "Get Started"
+// and "I already have an account" buttons drawn into the picture, so tapping the picture's own
+// buttons triggers real navigation without redrawing them.
+function WelcomeScreen({ onGetStarted, onLogIn }) {
   return (
-    <div style={{ position:"fixed", inset:0, zIndex:900, background:"#f4f2ee" }}>
-      <img src="/onboarding-screen-2.png" alt="" style={{ width:"100%", height:"100%", objectFit:"contain" }} />
+    <div style={{ position:"fixed", inset:0, zIndex:900 }}>
+      <OnboardImageFrame>
+        <img src="/onboarding-screen-2.png" alt="" style={{ width:"100%", height:"100%", display:"block" }} />
+        <button
+          onClick={onGetStarted}
+          aria-label="Get Started"
+          style={{ position:"absolute", left:"6.8%", top:"81.1%", width:"87.1%", height:"7.1%", background:"transparent", border:"none", padding:0, cursor:"pointer" }}
+        />
+        <button
+          onClick={onLogIn}
+          aria-label="I already have an account"
+          style={{ position:"absolute", left:"6.8%", top:"89.8%", width:"87.1%", height:"7.2%", background:"transparent", border:"none", padding:0, cursor:"pointer" }}
+        />
+      </OnboardImageFrame>
     </div>
   );
 }
@@ -6343,7 +6373,9 @@ ${voiceMode
     <div key={themeTick} style={{ fontFamily:"'Space Grotesk',sans-serif", overflowX:"hidden", maxWidth:"100vw", touchAction:"pan-y" }}>
       <style>{G}</style>
 
-      {step === "welcome" && <WelcomeScreen />}
+      {step === "welcome" && (
+        <WelcomeScreen onGetStarted={() => setStep("signup")} onLogIn={() => setStep("login")} />
+      )}
 
       {step === "login" && (
         <OShell step="login">
