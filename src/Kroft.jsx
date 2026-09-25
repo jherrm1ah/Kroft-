@@ -983,7 +983,7 @@ const SPLASH_FEATURES = [
 // visibly lightens toward the bottom rather than staying one flat tone) — built from KROFT's own
 // palette rather than an unrelated hue; orange stays what it's always been in this app, a small
 // accent, not a field color.
-const SPLASH_GRADIENT = "linear-gradient(180deg, #0a0a0a 0%, #1a1a1a 40%, #f4f2ee 100%)";
+const SPLASH_GRADIENT = "linear-gradient(180deg, #0a0a0a 0%, #1a1a1a 58%, #f4f2ee 88%, #f4f2ee 100%)";
 
 // The small icon+wordmark lockup, used at a couple of sizes (full splash vs. the welcome
 // screen's smaller header) — factored out so both always say "KROFT" the exact same way.
