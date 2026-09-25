@@ -449,51 +449,54 @@ function speak(raw, opts = {}) {
   if (!("speechSynthesis" in window)) return;
   const text = speechText(raw);
   if (!text) return;
-  window.speechSynthesis.cancel();
   const chunks = speechChunks(text);
-  // Both the voiceschanged listener and the timeout below can fire — guarding on
-  // speechSynthesis.speaking (as this used to) is racy: a short utterance can finish speaking
-  // before the 250ms timeout even runs, so `speaking` reads false again and the fallback
-  // re-triggers the WHOLE sequence a second time, reading it twice. `started` makes run()
-  // idempotent regardless of which trigger fires first, or in what order.
-  let started = false;
-  // Set once the first utterance actually reports starting — checked below to tell a genuine
-  // silent failure (nothing ever started) apart from a normal short line that simply finished
-  // playing before the check fires.
+  // Set once any utterance in this speak() call actually reports starting — checked below to
+  // tell a genuine silent failure (nothing ever started, on either attempt) apart from a normal
+  // short line that simply finished playing before the check fires.
   let beganSpeaking = false;
   let failureReported = false;
-  const reportSilentFailure = () => {
-    if (failureReported || beganSpeaking || window.speechSynthesis.speaking) return;
-    failureReported = true;
-    notifyTtsFailure?.("Nothing played. Check this site isn't muted (Chrome: ⋮ menu → Site settings → Sound) and that a text-to-speech voice is installed on this device (Settings → Accessibility → Text-to-speech output).");
-  };
-  const run = () => {
-    if (started) return;
-    started = true;
-    const { profile, voice } = pickVoiceForPersona(opts.voiceId);
-    const { rate, pauseMs } = computeDelivery(profile, opts.context);
-    let i = 0;
-    const next = () => {
-      if (i >= chunks.length) return;
-      const isFirst = i === 0;
-      const u = new SpeechSynthesisUtterance(chunks[i++]);
-      u.rate = rate; u.pitch = 1.0; applyVoice(u, voice);
-      u.onstart = () => { beganSpeaking = true; };
-      u.onend = () => setTimeout(next, pauseMs);
-      u.onerror = () => setTimeout(next, pauseMs);
-      window.speechSynthesis.speak(u);
-      // Only the first chunk needs watching — if that one plays, the rest are presumed fine.
-      // 1.8s is generous enough that a slow-starting engine isn't flagged as broken, but short
-      // enough that "did this actually work" doesn't take forever to surface.
-      if (isFirst) setTimeout(reportSilentFailure, 1800);
+  // Android Chrome's speech engine has a well-known failure mode where the very next speak()
+  // call after the page has sat idle for a while is silently dropped — no error, nothing plays —
+  // but a second cancel()+speak() immediately after almost always un-sticks it. So a stall on the
+  // first attempt gets one automatic retry from a clean slate before this ever bothers the person
+  // with a toast; only a SECOND silent stall is treated as something they actually need to act on.
+  const attempt = (attemptNum) => {
+    window.speechSynthesis.cancel();
+    let started = false;
+    const run = () => {
+      if (started) return;
+      started = true;
+      const { profile, voice } = pickVoiceForPersona(opts.voiceId);
+      const { rate, pauseMs } = computeDelivery(profile, opts.context);
+      let i = 0;
+      const next = () => {
+        if (i >= chunks.length) return;
+        const isFirst = i === 0;
+        const u = new SpeechSynthesisUtterance(chunks[i++]);
+        u.rate = rate; u.pitch = 1.0; applyVoice(u, voice);
+        u.onstart = () => { beganSpeaking = true; };
+        u.onend = () => setTimeout(next, pauseMs);
+        u.onerror = () => setTimeout(next, pauseMs);
+        window.speechSynthesis.speak(u);
+        // Only the first chunk of each attempt needs watching — if that one plays, the rest are
+        // presumed fine. 1.8s is generous enough that a slow-starting engine isn't flagged as
+        // stalled, but short enough that a real failure surfaces (or retries) quickly.
+        if (isFirst) setTimeout(() => {
+          if (beganSpeaking || failureReported || window.speechSynthesis.speaking) return;
+          if (attemptNum === 1) { attempt(2); return; }
+          failureReported = true;
+          notifyTtsFailure?.("Nothing played, even after retrying. Check this site isn't muted (Chrome: ⋮ menu → Site settings → Sound) and that a text-to-speech voice is installed on this device (Settings → Accessibility → Text-to-speech output).");
+        }, 1800);
+      };
+      next();
     };
-    next();
+    if (!window.speechSynthesis.getVoices().length) {
+      // Wait one tick for voices to arrive rather than speaking with none selected.
+      window.speechSynthesis.addEventListener("voiceschanged", run, { once:true });
+      setTimeout(run, 250);
+    } else run();
   };
-  if (!window.speechSynthesis.getVoices().length) {
-    // Wait one tick for voices to arrive rather than speaking with none selected.
-    window.speechSynthesis.addEventListener("voiceschanged", run, { once:true });
-    setTimeout(run, 250);
-  } else run();
+  attempt(1);
 }
 const stopSpeaking = () => { if ("speechSynthesis" in window) window.speechSynthesis.cancel(); };
 
