@@ -6256,7 +6256,17 @@ ${voiceMode
     { key:"transport",  label:"Transport" },
   ];
 
+  // Around-tab auto-resolve (below) and every category tap before userCoords is set
+  // (searchNearby's `if (!userCoords) { requestLocation(); return; }`) can each call this — so
+  // mashing a category button, or Retry, while a fix is already in flight would otherwise fire
+  // several overlapping getCurrentPosition calls, each ending in its own reverseGeocode hitting
+  // Nominatim's strict 1 req/s limit. One in flight is enough; a second is just a duplicate.
+  // Also tracks the last position actually reverse-geocoded, so a fresh GPS fix that's practically
+  // the same spot (a few meters of drift, not a real move) doesn't spend another Nominatim call on
+  // a label that wouldn't change anyway.
+  const lastGeocodedKey = useRef(null);
   const requestLocation = () => {
+    if (locationStatus === "requesting") return;
     if (!navigator.geolocation) { setLocationStatus("error"); setAroundError("Geolocation isn't supported on this device."); return; }
     setLocationStatus("requesting"); setAroundError("");
     navigator.geolocation.getCurrentPosition(
@@ -6264,7 +6274,11 @@ ${voiceMode
         const { latitude, longitude } = pos.coords;
         setUserCoords({ lat:latitude, lng:longitude });
         setLocationStatus("granted");
-        reverseGeocode(latitude, longitude);
+        const posKey = `${latitude.toFixed(3)},${longitude.toFixed(3)}`; // ~111m grid cell
+        if (posKey !== lastGeocodedKey.current) {
+          lastGeocodedKey.current = posKey;
+          reverseGeocode(latitude, longitude);
+        }
       },
       err => {
         setLocationStatus("denied");
