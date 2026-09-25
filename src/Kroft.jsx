@@ -6298,6 +6298,11 @@ ${voiceMode
       try {
         const res = await fetch(`/api/places?mode=category&category=${encodeURIComponent(categoryKey)}&lat=${userCoords.lat}&lon=${userCoords.lng}`);
         const data = await res.json();
+        // A backend failure (Overpass down, bad request) still comes back as valid JSON —
+        // `{error:"..."}`, no `results` field — which `data.results || []` would otherwise
+        // silently treat as a real empty search, misreporting a connection error as "no
+        // restaurants found nearby" instead of telling the user the service itself failed.
+        if (!res.ok || data.error) throw new Error(data.error || "Places service unavailable");
         const results = data.results || [];
         setAroundResults(results);
         if (results.length === 0) setAroundError(`No ${categoryOrQuery.toLowerCase()} found nearby. Try a different category or search.`);
@@ -6334,6 +6339,10 @@ ${voiceMode
       const viewbox = `${userCoords.lng-0.05},${userCoords.lat+0.05},${userCoords.lng+0.05},${userCoords.lat-0.05}`;
       const res = await fetch(`/api/places?mode=search&q=${encodeURIComponent(searchTerm)}&viewbox=${encodeURIComponent(viewbox)}`);
       const data = await res.json();
+      // Same reasoning as the category branch above — a backend failure comes back as
+      // `{error:"..."}`, not an array, so check explicitly instead of relying on the incidental
+      // TypeError .map() would throw on a plain object to fall into the catch below.
+      if (!res.ok || data?.error) throw new Error(data?.error || "Places service unavailable");
       const results = (data||[]).map(p => ({
         id:p.place_id,
         name:p.display_name.split(",")[0],
