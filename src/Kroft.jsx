@@ -976,29 +976,95 @@ const SPLASH_FEATURES = [
   { angle:270, icon:<svg viewBox="0 0 24 24" width={22} height={22}><path d="M6 19v-4.5M12 19V9M18 19V6" stroke="#0a0a0a" strokeWidth={2} strokeLinecap="round" /></svg> }, // analytics
   { angle:330, icon:<svg viewBox="0 0 24 24" width={22} height={22}><path d="M6 4.5h9l3 3V19a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V5.5a1 1 0 0 1 1-1z" stroke="#0a0a0a" strokeWidth={1.6} fill="none" /><path d="M8.5 11h7M8.5 14.3h7M8.5 17.6h4" stroke="#0a0a0a" strokeWidth={1.4} strokeLinecap="round" /></svg> }, // documents
 ];
+// Shared gradient for both the splash and the welcome screen below — the same visual language
+// across both (rather than two unrelated backgrounds) is what makes advancing from one to the
+// other read as a continuation, not a scene change. Fades from near-black down to KROFT's own
+// light-theme background color (matching the reference this was modeled on, whose gradient
+// visibly lightens toward the bottom rather than staying one flat tone) — built from KROFT's own
+// palette rather than an unrelated hue; orange stays what it's always been in this app, a small
+// accent, not a field color.
+const SPLASH_GRADIENT = "linear-gradient(180deg, #0a0a0a 0%, #1a1a1a 40%, #f4f2ee 100%)";
+
+// The small icon+wordmark lockup, used at a couple of sizes (full splash vs. the welcome
+// screen's smaller header) — factored out so both always say "KROFT" the exact same way.
+const KroftLockup = ({ size=40, fontSize=26, gap=12, letterSpacing=4 }) => (
+  <div style={{ display:"flex", alignItems:"center", gap, justifyContent:"center" }}>
+    <div style={{ width:size, height:size, borderRadius:size*0.3, background:"#fff", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+      <span style={{ fontSize:size*0.45, fontWeight:900, color:"#0a0a0a", fontFamily:"'Space Grotesk',sans-serif" }}>K</span>
+    </div>
+    <div style={{ fontSize, fontWeight:800, letterSpacing, color:"#fff", fontFamily:"'Space Grotesk',sans-serif" }}>KROFT</div>
+  </div>
+);
+
+// Splash — a brief, pure branding moment: gradient + lockup, nothing else. What used to live
+// here (the feature orbit, tagline, "Smart. Simple." line) moved to WelcomeScreen below, which is
+// the actual next screen a new visitor sees — splitting "this is KROFT" from "here's what it does
+// and how to start" the same way a real product intro screen does, instead of cramming both into
+// the few hundred milliseconds people spend looking at a loading screen.
 function SplashScreen({ fading }) {
   return (
-    <div style={{ position:"fixed", inset:0, zIndex:9999, background:"#ffffff", overflow:"hidden", opacity:fading?0:1, transition:"opacity .6s ease", pointerEvents:fading?"none":"all" }}>
-      <div style={{ position:"absolute", top:"30%", left:"50%", transform:"translate(-50%,-50%)", width:"min(56vmin,280px)", height:"min(56vmin,280px)", "--r":"min(28vmin,140px)" }}>
-        <div style={{ position:"absolute", inset:0, borderRadius:"50%", border:"1px solid rgba(0,0,0,.06)" }} />
-        {SPLASH_FEATURES.map((f,i) => (
-          <div key={i} style={{
-            position:"absolute", top:"50%", left:"50%", width:56, height:56, marginTop:-28, marginLeft:-28,
-            borderRadius:16, background:"#fff", boxShadow:"0 10px 28px rgba(0,0,0,.08)",
-            display:"flex", alignItems:"center", justifyContent:"center",
-            transform:`rotate(${f.angle}deg) translateY(calc(var(--r) * -1)) rotate(${-f.angle}deg)`,
-            animation:`fadeUp .6s ease ${i*0.08}s both`,
-          }}>
-            {f.icon}
-          </div>
-        ))}
+    <div style={{ position:"fixed", inset:0, zIndex:9999, background:SPLASH_GRADIENT, overflow:"hidden", opacity:fading?0:1, transition:"opacity .6s ease", pointerEvents:fading?"none":"all", display:"flex", alignItems:"center", justifyContent:"center" }}>
+      <div style={{ animation:"fadeUp .5s ease" }}>
+        <KroftLockup />
       </div>
-      <div style={{ position:"absolute", top:"58%", left:"50%", transform:"translate(-50%,-50%)", textAlign:"center", width:"80%" }}>
-        <div style={{ fontSize:44, fontWeight:800, letterSpacing:10, color:"#0a0a0a", fontFamily:"'Space Grotesk',sans-serif" }}>KROFT</div>
-        <div style={{ width:28, height:3, borderRadius:2, background:SPLASH_ORANGE, margin:"14px auto" }} />
-        <div style={{ fontSize:15, color:"#4a4a4a", lineHeight:1.5, fontFamily:"'Space Grotesk',sans-serif" }}>Your AI Assistant<br/>for Life &amp; Business.</div>
+    </div>
+  );
+}
+
+// Welcome — the real first screen a brand-new visitor lands on after the splash: the feature
+// orbit as a hero (reusing the exact same responsive ring as before — see its own comment on why
+// it's built the way it is), a headline, and the two paths forward. Laid out with flexbox instead
+// of percentage positions (unlike the old splash's original mistake) — the header/hero/sheet
+// regions size themselves relative to each other and to real content, not to guessed numbers, so
+// it can't drift on a screen shaped differently than whatever it was checked against.
+function WelcomeScreen({ onGetStarted, onLogIn }) {
+  return (
+    <div style={{ position:"fixed", inset:0, zIndex:900, background:SPLASH_GRADIENT, display:"flex", flexDirection:"column", animation:"fadeIn .3s ease" }}>
+      <div style={{ paddingTop:"calc(7% + env(safe-area-inset-top))", flexShrink:0 }}>
+        <KroftLockup size={32} fontSize={17} gap={9} letterSpacing={2} />
       </div>
-      <div style={{ position:"absolute", bottom:"8%", left:"50%", transform:"translateX(-50%)", fontSize:13, color:"#8a8a8a", fontFamily:"'Space Grotesk',sans-serif", letterSpacing:.3 }}>Smart. Simple. All in one.</div>
+      <div style={{ flex:1, minHeight:0, position:"relative", display:"flex", alignItems:"center", justifyContent:"center" }}>
+        <div style={{ position:"relative", width:"min(50vmin,240px)", height:"min(50vmin,240px)", "--r":"min(25vmin,120px)" }}>
+          <div style={{ position:"absolute", inset:0, borderRadius:"50%", border:"1px solid rgba(255,255,255,.14)" }} />
+          {SPLASH_FEATURES.map((f,i) => (
+            // Positioning (the orbit transform) and the entrance animation (fadeUp, which also
+            // touches `transform`) live on separate elements deliberately — a CSS animation whose
+            // keyframes include `transform` fully owns that property on the element it's applied
+            // to for as long as it's active (and, with fill:both, forever after finishing) rather
+            // than composing with a base value, so putting both on the same div meant every card
+            // snapped to fadeUp's own resting transform (translateY(0), i.e. dead center) the
+            // instant its entrance animation finished — confirmed via getAnimations() showing
+            // playState:"finished" on a card that had visibly collapsed to the ring's middle.
+            <div key={i} style={{
+              position:"absolute", top:"50%", left:"50%", width:52, height:52, marginTop:-26, marginLeft:-26,
+              transform:`rotate(${f.angle}deg) translateY(calc(var(--r) * -1)) rotate(${-f.angle}deg)`,
+            }}>
+              <div style={{
+                width:"100%", height:"100%", borderRadius:15, background:"#fff", boxShadow:"0 10px 24px rgba(0,0,0,.28)",
+                display:"flex", alignItems:"center", justifyContent:"center",
+                animation:`fadeUp .6s ease ${i*0.08}s both`,
+              }}>
+                {f.icon}
+              </div>
+            </div>
+          ))}
+          {/* A single sparkle accent, same spirit as the reference this screen was modeled on —
+              a small deliberate flourish near the hero, not a repeated motif. */}
+          <svg viewBox="0 0 24 24" width={20} height={20} style={{ position:"absolute", top:"-6%", right:"-4%", animation:"fadeUp .6s ease .5s both" }}>
+            <path d="M12 2c.6 3.6 2.4 5.4 6 6-3.6.6-5.4 2.4-6 6-.6-3.6-2.4-5.4-6-6 3.6-.6 5.4-2.4 6-6z" fill={SPLASH_ORANGE} />
+          </svg>
+        </div>
+      </div>
+      <div style={{ background:"#f4f2ee", borderRadius:"28px 28px 0 0", padding:"30px 26px calc(26px + env(safe-area-inset-bottom))", textAlign:"center", flexShrink:0, animation:"slideUp .4s ease" }}>
+        <h1 style={{ fontSize:23, fontWeight:800, color:"#0a0a0a", letterSpacing:-.6, lineHeight:1.3, margin:"0 0 8px", fontFamily:"'Space Grotesk',sans-serif" }}>Your AI Assistant<br/>for Life &amp; Business.</h1>
+        <div style={{ fontSize:13, color:"#8a8a8a", marginBottom:26, fontFamily:"'Space Grotesk',sans-serif" }}>Smart. Simple. All in one.</div>
+        <button onClick={onGetStarted} style={{ width:"100%", background:"#0a0a0a", color:"#fff", border:"none", borderRadius:14, padding:"15px", fontSize:15, fontWeight:700, fontFamily:"'Space Grotesk',sans-serif", cursor:"pointer", marginBottom:10 }}>Get Started</button>
+        <button onClick={onLogIn} style={{ width:"100%", background:"#ece8e0", color:"#0a0a0a", border:"none", borderRadius:14, padding:"15px", fontSize:15, fontWeight:700, fontFamily:"'Space Grotesk',sans-serif", cursor:"pointer", marginBottom:18 }}>I already have an account</button>
+        {/* Plain text, not styled as a link — KROFT doesn't have real Terms of Service or Privacy
+            Policy pages yet, so this states the (true) fact without implying a tappable page that
+            doesn't exist. */}
+        <div style={{ fontSize:11.5, color:"#9a9a9a", lineHeight:1.6, fontFamily:"'Space Grotesk',sans-serif" }}>By continuing you agree to our Terms of Service and Privacy Policy</div>
+      </div>
     </div>
   );
 }
@@ -2471,7 +2537,10 @@ function KroftApp({ onFullReset } = {}) {
   // way any app with real sessions keeps you signed in across a reload. Without Supabase
   // configured (local-only mode), it instead switches to login once a saved local account is
   // found, matching this app's original device-local behavior.
-  const [step, setStep] = useState("signup");
+  // A brand-new visitor sees the Welcome screen first; the hydrate effect below overwrites this
+  // to "login" for a returning device with a saved account, before the splash ever finishes
+  // showing — so a returning user never actually sees Welcome flash past.
+  const [step, setStep] = useState("welcome");
   // True only while "business" or "prefs" is showing because Profile's Edit Details /
   // Preferences opened it on an already-signed-in account — as opposed to the same two screens
   // showing as part of first-time onboarding, reached by signing up. Both cases render the same
@@ -6370,6 +6439,10 @@ ${voiceMode
   if (step !== "dashboard") return (
     <div key={themeTick} style={{ fontFamily:"'Space Grotesk',sans-serif", overflowX:"hidden", maxWidth:"100vw", touchAction:"pan-y" }}>
       <style>{G}</style>
+
+      {step === "welcome" && (
+        <WelcomeScreen onGetStarted={() => setStep("signup")} onLogIn={() => setStep("login")} />
+      )}
 
       {step === "login" && (
         <OShell step="login">
