@@ -6996,6 +6996,41 @@ ${voiceMode
           </div>
         );
       })()}
+      {showBudgetEditor && (
+        <div role="dialog" aria-modal="true" aria-label="Monthly budgets" style={{ position:"fixed", inset:0, zIndex:310, background:C.bg, display:"flex", flexDirection:"column" }}>
+          <div style={{ display:"flex", alignItems:"center", gap:10, padding:"12px 16px", borderBottom:`1px solid ${C.cardB}`, flexShrink:0 }}>
+            <button onClick={() => setShowBudgetEditor(false)} aria-label="Close monthly budgets" style={{ background:"none", border:"none", color:C.white, cursor:"pointer", fontSize:20, padding:"2px 4px", lineHeight:1 }}>←</button>
+            <h2 style={{ fontSize:17, fontWeight:700, color:C.white, letterSpacing:-.5, flex:1 }}>Monthly budgets</h2>
+          </div>
+          <div style={{ flex:1, minHeight:0, overflowY:"auto", padding:16 }}>
+            <div style={{ display:"flex", flexDirection:"column", gap:9 }}>
+              {expenseCats.map(cat => (
+                <div key={cat} style={{ display:"flex", alignItems:"center", gap:10 }}>
+                  <div style={{ flex:1, fontSize:12.5, color:C.text, minWidth:0 }}>{cat}</div>
+                  <Inp type="number" inputMode="decimal" min="0" placeholder="No limit"
+                    value={budgets[cat] ?? ""}
+                    onChange={e => {
+                      const raw = e.target.value;
+                      // Empty clears the budget entirely rather than storing 0, which
+                      // would read as "limit of zero" and flag the category permanently.
+                      setBudgets(p => {
+                        if (raw === "") { const { [cat]:_, ...rest } = p; return rest; }
+                        const n = parseAmount(raw);
+                        return n === null ? p : { ...p, [cat]:n };
+                      });
+                    }}
+                    style={{ width:120, flexShrink:0 }} />
+                </div>
+              ))}
+              {/* Says what an empty field means. A blank limit silently excludes the
+                  category from every warning, which isn't obvious from an empty box. */}
+              <Mono style={{ display:"block", color:C.muted, lineHeight:1.6, marginTop:4 }}>
+                Leave blank for no limit — those categories are tracked under "Not budgeted" but never trigger a warning.
+              </Mono>
+            </div>
+          </div>
+        </div>
+      )}
       {uberDest && <UberModal dest={uberDest} onClose={() => setUberDest(null)} />}
       {composeDraft && <ComposeModal draft={composeDraft} onChange={setComposeDraft} onSend={async d => {
         // Real send when a real email account is connected — otherwise fall back to the
@@ -7403,16 +7438,16 @@ ${voiceMode
                 <Card level="raised" style={{ marginBottom:14 }}>
                   <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:status.length?12:8 }}>
                     <div style={{ fontSize:14, fontWeight:700, color:C.text }}>Monthly budgets</div>
-                    <Btn sm v="outline" onClick={() => setShowBudgetEditor(v => !v)}>{showBudgetEditor ? "Done" : status.length ? "Edit" : "Set budgets"}</Btn>
+                    <Btn sm v="outline" onClick={() => setShowBudgetEditor(true)}>{status.length ? "Edit" : "Set budgets"}</Btn>
                   </div>
 
-                  {!showBudgetEditor && status.length === 0 && (
+                  {status.length === 0 && (
                     <Mono style={{ display:"block", color:C.muted, lineHeight:1.6 }}>
                       No budgets set. Add one and KROFT will warn you before a category runs over, not after.
                     </Mono>
                   )}
 
-                  {!showBudgetEditor && status.map(b => {
+                  {status.map(b => {
                     const over = b.pct >= 1, near = b.pct >= 0.8;
                     const barColor = over ? C.negative : near ? C.warning : C.positive;
                     return (
@@ -7468,7 +7503,7 @@ ${voiceMode
                   {/* Spending in categories with no limit set. Without this the card can read
                       "within budget" while most of the month's money went somewhere untracked —
                       a false all-clear, which is worse than showing nothing at all. */}
-                  {!showBudgetEditor && (() => {
+                  {(() => {
                     const month = todayISO().slice(0, 7);
                     const budgeted = new Set(Object.keys(budgets).filter(c => budgets[c] > 0));
                     const untracked = {};
@@ -7494,7 +7529,7 @@ ${voiceMode
                     );
                   })()}
 
-                  {!showBudgetEditor && status.length > 0 && (() => {
+                  {status.length > 0 && (() => {
                     // A per-category view hides the obvious question: across everything with a
                     // limit, am I within it?
                     const totalLimit = status.reduce((s,b) => s + b.limit, 0);
@@ -7510,33 +7545,6 @@ ${voiceMode
                     );
                   })()}
 
-                  {showBudgetEditor && (
-                    <div style={{ display:"flex", flexDirection:"column", gap:9 }}>
-                      {expenseCats.map(cat => (
-                        <div key={cat} style={{ display:"flex", alignItems:"center", gap:10 }}>
-                          <div style={{ flex:1, fontSize:12.5, color:C.text, minWidth:0 }}>{cat}</div>
-                          <Inp type="number" inputMode="decimal" min="0" placeholder="No limit"
-                            value={budgets[cat] ?? ""}
-                            onChange={e => {
-                              const raw = e.target.value;
-                              // Empty clears the budget entirely rather than storing 0, which
-                              // would read as "limit of zero" and flag the category permanently.
-                              setBudgets(p => {
-                                if (raw === "") { const { [cat]:_, ...rest } = p; return rest; }
-                                const n = parseAmount(raw);
-                                return n === null ? p : { ...p, [cat]:n };
-                              });
-                            }}
-                            style={{ width:120, flexShrink:0 }} />
-                        </div>
-                      ))}
-                      {/* Says what an empty field means. A blank limit silently excludes the
-                          category from every warning, which isn't obvious from an empty box. */}
-                      <Mono style={{ display:"block", color:C.muted, lineHeight:1.6, marginTop:4 }}>
-                        Leave blank for no limit — those categories are tracked under "Not budgeted" but never trigger a warning.
-                      </Mono>
-                    </div>
-                  )}
                 </Card>
               );
             })()}
