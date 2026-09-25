@@ -1218,13 +1218,17 @@ function OShell({ step, children, hideProgress, light }) {
 // since only one press can be in flight at a time, the press state lives here at module level.
 const LP = { timer:null, x:0, y:0, fired:false };
 const lpClear = () => { if (LP.timer) { clearTimeout(LP.timer); LP.timer = null; } };
+// onLongPress also receives the press coordinates (clientX, clientY) — unused by every
+// bottom-sheet call site (extra args to a zero-param arrow function are just ignored), but lets
+// a caller anchor a small floating menu at the actual touch/click point instead, the way the
+// chat message copy popup below does.
 const longPress = (onLongPress, delay = 500) => ({
   onTouchStart: e => {
     LP.fired = false;
     const t = e.touches?.[0];
     if (t) { LP.x = t.clientX; LP.y = t.clientY; }
     lpClear();
-    LP.timer = setTimeout(() => { LP.fired = true; LP.timer = null; onLongPress(); }, delay);
+    LP.timer = setTimeout(() => { LP.fired = true; LP.timer = null; onLongPress(LP.x, LP.y); }, delay);
   },
   onTouchMove: e => {
     const t = e.touches?.[0];
@@ -1233,10 +1237,10 @@ const longPress = (onLongPress, delay = 500) => ({
   },
   onTouchEnd: lpClear,
   onTouchCancel: lpClear,
-  onMouseDown: () => { LP.fired = false; lpClear(); LP.timer = setTimeout(() => { LP.fired = true; LP.timer = null; onLongPress(); }, delay); },
+  onMouseDown: e => { LP.fired = false; lpClear(); LP.x = e.clientX; LP.y = e.clientY; LP.timer = setTimeout(() => { LP.fired = true; LP.timer = null; onLongPress(LP.x, LP.y); }, delay); },
   onMouseUp: lpClear,
   onMouseLeave: lpClear,
-  onContextMenu: e => { e.preventDefault(); if (!LP.fired) onLongPress(); },
+  onContextMenu: e => { e.preventDefault(); if (!LP.fired) onLongPress(e.clientX, e.clientY); },
   // Suppresses the tap that follows a completed hold, so opening the sheet doesn't also
   // trigger the row's own click (which would open the edit form behind it).
   onClickCapture: e => { if (LP.fired) { e.stopPropagation(); e.preventDefault(); LP.fired = false; } },
@@ -2763,6 +2767,11 @@ function KroftApp({ onFullReset } = {}) {
   const [contactActivity, setContactActivity] = useState(null); // holds a contact object when the "View Activity" drill-down is open
   // Holds the config for the press-and-hold action sheet: { title, subtitle, actions }.
   const [actionSheet, setActionSheet] = useState(null);
+  // A small floating "Copy" menu anchored at the press point, for your own chat messages
+  // specifically — everywhere else long-press opens the shared bottom ActionSheet, but a chat
+  // bubble's only long-press action is Copy, so a compact popup right where you pressed (like
+  // ChatGPT's own message menu) reads better than a full-width sheet for a single option.
+  const [copyPopup, setCopyPopup] = useState(null);
 
   const [mood, setMood] = useState("calm");
   const [moodLog, setMoodLog] = useState([]);
@@ -6900,6 +6909,26 @@ ${voiceMode
         />
       )}
       {actionSheet && <ActionSheet {...actionSheet} onClose={() => setActionSheet(null)} />}
+      {copyPopup && (
+        <>
+          <div onClick={() => setCopyPopup(null)} style={{ position:"fixed", inset:0, zIndex:960 }} />
+          <button
+            onClick={() => { copyMsg(copyPopup.content); setCopyPopup(null); }}
+            style={{
+              position:"fixed", zIndex:961,
+              left: Math.min(Math.max(copyPopup.x - 55, 12), window.innerWidth - 122),
+              top: Math.max(copyPopup.y - 56, 12),
+              display:"flex", alignItems:"center", gap:8, background:C.card, border:`1px solid ${C.cardB}`,
+              borderRadius:12, padding:"10px 16px", cursor:"pointer", boxShadow:C.shadowRaised,
+              color:C.text, fontSize:13, fontWeight:600, fontFamily:"'Space Grotesk',sans-serif",
+              animation:"pop .15s ease",
+            }}
+          >
+            <NavIcon id="copy" size={14} color={C.text} />
+            Copy
+          </button>
+        </>
+      )}
       {activeReset && <QuickResetModal session={activeReset} onCancel={cancelQuickReset} />}
       {patternDetail && <PatternDetailModal pattern={patternDetail} onClose={() => setPatternDetail(null)} />}
       {contactActivity && (
@@ -9481,7 +9510,7 @@ ${voiceMode
                   </div>
                 ) : aiMessages.map((m,i) => (
                   <div key={m.id || i} style={{ display:"flex", flexDirection:"column", alignItems:m.role==="user"?"flex-end":"flex-start", animation:"fadeUp .3s ease" }}>
-                    <div {...(m.role==="user" ? longPress(() => setActionSheet({ title:"Message", actions:[{ label:"Copy", onClick:() => copyMsg(m.content) }] })) : {})}
+                    <div {...(m.role==="user" ? longPress((x,y) => setCopyPopup({ x, y, content:m.content })) : {})}
                       style={{ background:m.role==="user"?C.white:C.surface, border:`1px solid ${m.role==="user"?C.soft:C.cardB}`, borderRadius:m.role==="user"?"14px 14px 3px 14px":"14px 14px 14px 3px", padding:"10px 14px", maxWidth:"80%",
                         ...(m.role==="user" ? { cursor:"pointer", WebkitTouchCallout:"none", WebkitUserSelect:"none", userSelect:"none" } : {}) }}>
                       {m.role==="assistant" && <Mono style={{ display:"block", color:C.muted, fontSize:9, letterSpacing:.8, marginBottom:5 }}>KROFT</Mono>}
