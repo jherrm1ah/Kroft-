@@ -9192,54 +9192,59 @@ ${voiceMode
                   )}
                 </div>
               </ProfileRow>
-            </Card>
-            <Card style={{ marginBottom:14, borderRadius:22 }}>
-              <Mono style={{ display:"block", color:C.muted, letterSpacing:.8, marginBottom:13 }}>Mood log</Mono>
-              {moodLog.length===0 ? <Mono style={{ color:C.soft, display:"block", padding:"8px 0" }}>No mood entries yet. Set your mood from the Overview tab.</Mono> : (() => {
-                // Grouped by day, newest first. A flat list of times alone was ambiguous once
-                // the log started persisting across days.
-                const byDay = {};
-                moodLog.forEach(m => { const d = m.date || "undated"; (byDay[d] = byDay[d] || []).push(m); });
-                const allDays = Object.keys(byDay).sort().reverse();
-                const days = allDays.slice(0, 7);
-                const today = todayISO();
-                return [
-                  ...days.map(d => (
-                  <div key={d} style={{ marginBottom:10 }}>
-                    <Mono style={{ display:"block", color:C.muted, marginBottom:5 }}>{d === today ? "Today" : d === "undated" ? "Earlier" : fmtDate(d)}</Mono>
-                    {byDay[d].slice().reverse().map(m => {
-                      const mTone = {calm:"positive",happy:"accent",stressed:"warning",angry:"negative"}[m.mood];
-                      const mColor = {positive:C.positive,accent:C.accent,warning:C.warning,negative:C.negative}[mTone]||C.border;
-                      return (
-                        // Press-and-hold to remove, matching every other list in the app. Mood
-                        // entries were the one thing with no way to correct a mistaken tap.
-                        <div key={m.id} {...longPress(() => setActionSheet({
-                            title:`${m.mood} at ${m.time}`,
-                            subtitle: d === today ? "Logged today" : fmtDate(d),
-                            actions:[{ label:"Delete entry", destructive:true, confirmText:"This removes the entry from your mood history. Your wellness score isn't affected.", onClick:() => {
-                              const prev = moodLog;
-                              setMoodLog(prev.filter(x => x.id !== m.id));
-                              toast("Mood entry deleted.", () => setMoodLog(prev));
-                            }}],
-                          }))}
-                          style={{ display:"flex", alignItems:"center", gap:12, padding:"8px 10px", marginBottom:6, borderRadius:12, background:mColor+"12", WebkitTouchCallout:"none", WebkitUserSelect:"none", userSelect:"none" }}>
-                          <Dot color={mColor} />
-                          <Mono style={{ color:C.muted, minWidth:60 }}>{m.time}</Mono>
-                          <Tag tone={mTone}>{m.mood}</Tag>
-                        </div>
-                      );
-                    })}
-                  </div>
-                  )),
-                  // The list is capped at a week so it stays scannable; say so rather than
-                  // letting older entries appear to have vanished.
-                  allDays.length > 7 && (
-                    <Mono key="more" style={{ display:"block", color:C.muted, padding:"6px 0 2px" }}>
-                      Showing the last 7 days. {allDays.length - 7} earlier {allDays.length - 7 === 1 ? "day is" : "days are"} still saved.
-                    </Mono>
-                  ),
-                ];
-              })()}
+              <ProfileRow
+                label="Mood log"
+                sub={moodLog.length===0 ? "No mood entries yet" : wellnessStreak > 0 ? `${wellnessStreak} day streak` : `${moodLog.length} entr${moodLog.length!==1?"ies":"y"}`}
+                expanded={openWellnessRow==="mood"}
+                onToggle={() => setOpenWellnessRow(v => v==="mood" ? null : "mood")}>
+                <div style={{ paddingBottom:4 }}>
+                  {moodLog.length===0 ? <Mono style={{ color:C.soft, display:"block", padding:"0 0 6px" }}>No mood entries yet. Set your mood from the Overview tab.</Mono> : (() => {
+                    // Grouped by day, newest first. A flat list of times alone was ambiguous once
+                    // the log started persisting across days.
+                    const byDay = {};
+                    moodLog.forEach(m => { const d = m.date || "undated"; (byDay[d] = byDay[d] || []).push(m); });
+                    const allDays = Object.keys(byDay).sort().reverse();
+                    const days = allDays.slice(0, 7);
+                    const today = todayISO();
+                    return [
+                      ...days.map(d => (
+                      <div key={d} style={{ marginBottom:10 }}>
+                        <Mono style={{ display:"block", color:C.muted, marginBottom:5 }}>{d === today ? "Today" : d === "undated" ? "Earlier" : fmtDate(d)}</Mono>
+                        {byDay[d].slice().reverse().map(m => {
+                          const mTone = {calm:"positive",happy:"accent",stressed:"warning",angry:"negative"}[m.mood];
+                          const mColor = {positive:C.positive,accent:C.accent,warning:C.warning,negative:C.negative}[mTone]||C.border;
+                          return (
+                            // Press-and-hold to remove, matching every other list in the app. Mood
+                            // entries were the one thing with no way to correct a mistaken tap.
+                            <div key={m.id} {...longPress(() => setActionSheet({
+                                title:`${m.mood} at ${m.time}`,
+                                subtitle: d === today ? "Logged today" : fmtDate(d),
+                                actions:[{ label:"Delete entry", destructive:true, confirmText:"This removes the entry from your mood history. Your wellness score isn't affected.", onClick:() => {
+                                  const prev = moodLog;
+                                  setMoodLog(prev.filter(x => x.id !== m.id));
+                                  toast("Mood entry deleted.", () => setMoodLog(prev));
+                                }}],
+                              }))}
+                              style={{ display:"flex", alignItems:"center", gap:12, padding:"8px 10px", marginBottom:6, borderRadius:12, background:mColor+"12", WebkitTouchCallout:"none", WebkitUserSelect:"none", userSelect:"none" }}>
+                              <Dot color={mColor} />
+                              <Mono style={{ color:C.muted, minWidth:60 }}>{m.time}</Mono>
+                              <Tag tone={mTone}>{m.mood}</Tag>
+                            </div>
+                          );
+                        })}
+                      </div>
+                      )),
+                      // The list is capped at a week so it stays scannable; say so rather than
+                      // letting older entries appear to have vanished.
+                      allDays.length > 7 && (
+                        <Mono key="more" style={{ display:"block", color:C.muted, padding:"6px 0 2px" }}>
+                          Showing the last 7 days. {allDays.length - 7} earlier {allDays.length - 7 === 1 ? "day is" : "days are"} still saved.
+                        </Mono>
+                      ),
+                    ];
+                  })()}
+                </div>
+              </ProfileRow>
             </Card>
             <Card style={{ borderRadius:22 }}>
               <Mono style={{ display:"block", color:C.muted, letterSpacing:.8, marginBottom:13 }}>Daily recommendations</Mono>
