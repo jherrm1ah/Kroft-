@@ -664,11 +664,12 @@ const Card = ({ children, style, onClick, hi, level="base", ...rest }) => {
 };
 
 // Solid white = primary action. Outline = secondary. Ghost = minor/destructive.
-const Btn = ({ children, onClick, v="solid", sm, disabled, full, style, "aria-label":ariaLabel }) => {
+const Btn = ({ children, onClick, v="solid", sm, disabled, full, style, light, "aria-label":ariaLabel }) => {
+  const oc = light ? LIGHT : C;
   const m = {
-    solid: { bg:C.white, bc:C.white, col:C.black },
-    outline: { bg:"transparent", bc:C.muted, col:C.soft },
-    ghost: { bg:"transparent", bc:"transparent", col:C.border },
+    solid: { bg:oc.white, bc:oc.white, col:oc.black },
+    outline: { bg:"transparent", bc:oc.muted, col:oc.soft },
+    ghost: { bg:"transparent", bc:"transparent", col:oc.border },
   };
   const s = m[v] || m.solid;
   // Icon-only buttons (e.g. a lone "✕" or "✓") get a minimum square footprint so a
@@ -904,18 +905,21 @@ const parseAmount = raw => {
   return Math.round(n * 100) / 100;          // money is 2dp — avoids 0.1+0.2 style drift in totals
 };
 
-const Inp = ({ id, placeholder, value, onChange, type="text", inputMode, style, onKeyDown, ...rest }) => (
-  <input id={id} type={type} inputMode={inputMode} placeholder={placeholder} value={value} onChange={onChange} onKeyDown={onKeyDown} {...rest}
-    style={{ width:"100%", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 14px", color:C.text, fontSize:13, fontFamily:"'Space Grotesk',sans-serif", outline:"none", transition:"border-color .18s", boxSizing:"border-box", ...style }}
-    onFocus={e => { e.target.style.borderColor=C.accent; e.target.style.boxShadow=`0 0 0 3px ${C.accentBg}`; }} onBlur={e => { e.target.style.borderColor=C.cardB; e.target.style.boxShadow="none"; }} />
-);
+const Inp = ({ id, placeholder, value, onChange, type="text", inputMode, style, onKeyDown, light, ...rest }) => {
+  const oc = light ? LIGHT : C;
+  return (
+    <input id={id} type={type} inputMode={inputMode} placeholder={placeholder} value={value} onChange={onChange} onKeyDown={onKeyDown} {...rest}
+      style={{ width:"100%", background:oc.surface, border:`1px solid ${oc.cardB}`, borderRadius:12, padding:"11px 14px", color:oc.text, fontSize:13, fontFamily:"'Space Grotesk',sans-serif", outline:"none", transition:"border-color .18s", boxSizing:"border-box", ...style }}
+      onFocus={e => { e.target.style.borderColor=oc.accent; e.target.style.boxShadow=`0 0 0 3px ${oc.accentBg}`; }} onBlur={e => { e.target.style.borderColor=oc.cardB; e.target.style.boxShadow="none"; }} />
+  );
+};
 
 // Used everywhere for small/secondary text (labels, subtitles, hints) — kept the name Mono from
 // when it used an actual monospace font, but that made easily-confused characters (1/l/I, 0/O)
 // harder to tell apart at 11px, exactly where the extra clarity matters most. Same sans-serif as
 // the rest of the app now, just smaller and softer-colored.
-const Mono = ({ children, style }) => (
-  <span style={{ fontFamily:"'Space Grotesk',sans-serif", fontSize:11, color:C.soft, ...style }}>{children}</span>
+const Mono = ({ children, style, light }) => (
+  <span style={{ fontFamily:"'Space Grotesk',sans-serif", fontSize:11, color:(light?LIGHT:C).soft, ...style }}>{children}</span>
 );
 
 const CategorySelect = ({ value, onChange, cats, onAddCategory, style }) => {
@@ -937,14 +941,15 @@ const CategorySelect = ({ value, onChange, cats, onAddCategory, style }) => {
   );
 };
 
-const Tag = ({ children, hi, tone, style }) => {
-  const toneColor = tone && { positive:C.positive, negative:C.negative, warning:C.warning, accent:C.accent }[tone];
-  const toneBg = tone && { positive:C.positiveBg, negative:C.negativeBg, warning:C.warningBg, accent:C.accentBg }[tone];
+const Tag = ({ children, hi, tone, style, light }) => {
+  const oc = light ? LIGHT : C;
+  const toneColor = tone && { positive:oc.positive, negative:oc.negative, warning:oc.warning, accent:oc.accent }[tone];
+  const toneBg = tone && { positive:oc.positiveBg, negative:oc.negativeBg, warning:oc.warningBg, accent:oc.accentBg }[tone];
   return (
     <span style={{
-      background: toneColor ? toneBg : (hi?C.text:C.surface),
-      color: toneColor || (hi?C.invText:C.soft),
-      border: toneColor ? `1px solid ${toneColor}55` : (hi?"none":`1px solid ${C.border}`),
+      background: toneColor ? toneBg : (hi?oc.text:oc.surface),
+      color: toneColor || (hi?oc.invText:oc.soft),
+      border: toneColor ? `1px solid ${toneColor}55` : (hi?"none":`1px solid ${oc.border}`),
       borderRadius:7, padding:"2px 8px", fontSize:10, fontWeight:600, letterSpacing:.4, whiteSpace:"nowrap", fontFamily:"'Space Grotesk',sans-serif",
       ...style
     }}>
@@ -1143,15 +1148,24 @@ const NavIcon = ({ id, size=20, color="currentColor" }) => {
 const OSTEPS = ["login","signup","photo","business","prefs","done"];
 const OSTEP_LABELS = ["Photo","Business","Prefs","Ready"];
 
-function OShell({ step, children, hideProgress }) {
+// `light`, accepted here and by Btn/Inp/Mono/Tag below, forces the LIGHT palette regardless of
+// the app's current theme — used only by the account-creation chain (signup/photo/business/
+// prefs/done), which happens before anyone has an opinion on app theme and should always match
+// the cream Welcome screen that leads into it, never whatever theme a *different*, already-
+// signed-in device happened to leave selected. Editing Business/Preferences later from Profile
+// passes light=false (the default) so it keeps respecting the user's actual chosen theme, since
+// that happens once they're already using the themed app. Defaulting to false everywhere else
+// means every other call site in the app (hundreds of them) is completely unaffected.
+function OShell({ step, children, hideProgress, light }) {
+  const oc = light ? LIGHT : C;
   const idx = OSTEPS.indexOf(step);
   const showBar = !hideProgress && !["login","signup","reset-password"].includes(step);
   const barIdx = Math.max(0, idx - 2);
   const pct = showBar ? Math.round((barIdx / (OSTEP_LABELS.length - 1)) * 100) : 0;
   return (
-    <div style={{ minHeight:"100vh", background:C.bg, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:"24px 20px", position:"relative", overflow:"hidden" }}>
-      <div style={{ position:"absolute", inset:0, backgroundImage:`radial-gradient(circle,${C.border} 1px,transparent 1px)`, backgroundSize:"32px 32px", opacity:.15, pointerEvents:"none" }} />
-      <div style={{ position:"absolute", top:0, left:"50%", transform:"translateX(-50%)", width:500, height:180, background:`radial-gradient(ellipse at 50% 0%,rgba(255,255,255,.05) 0%,transparent 70%)`, pointerEvents:"none" }} />
+    <div style={{ minHeight:"100vh", background:oc.bg, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:"24px 20px", position:"relative", overflow:"hidden" }}>
+      <div style={{ position:"absolute", inset:0, backgroundImage:`radial-gradient(circle,${oc.border} 1px,transparent 1px)`, backgroundSize:"32px 32px", opacity:.15, pointerEvents:"none" }} />
+      <div style={{ position:"absolute", top:0, left:"50%", transform:"translateX(-50%)", width:500, height:180, background:`radial-gradient(ellipse at 50% 0%,rgba(${light?"10,10,10":"255,255,255"},.05) 0%,transparent 70%)`, pointerEvents:"none" }} />
       {showBar && (
         <div style={{ width:"100%", maxWidth:460, marginBottom:26, zIndex:1, position:"relative" }}>
           <div style={{ display:"flex", justifyContent:"space-between", marginBottom:10 }}>
@@ -1159,16 +1173,16 @@ function OShell({ step, children, hideProgress }) {
               const si = i + 2; const active = idx === si; const done = idx > si;
               return (
                 <div key={l} style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:3, opacity:idx>=si?1:.2 }}>
-                  <div style={{ width:26, height:26, borderRadius:"50%", background:done?C.white:active?C.white:C.border, border:`1px solid ${done||active?C.white:C.muted}`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:10, fontWeight:800, color:C.black, boxShadow:active?"0 0 0 4px rgba(255,255,255,.12)":"none" }}>
+                  <div style={{ width:26, height:26, borderRadius:"50%", background:done?oc.white:active?oc.white:oc.border, border:`1px solid ${done||active?oc.white:oc.muted}`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:10, fontWeight:800, color:oc.black, boxShadow:active?`0 0 0 4px rgba(${light?"10,10,10":"255,255,255"},.12)`:"none" }}>
                     {done ? "✓" : i + 1}
                   </div>
-                  <Mono style={{ fontSize:8, color:active?C.white:C.muted, fontWeight:700, letterSpacing:.8 }}>{l.toUpperCase()}</Mono>
+                  <Mono light={light} style={{ fontSize:8, color:active?oc.white:oc.muted, fontWeight:700, letterSpacing:.8 }}>{l.toUpperCase()}</Mono>
                 </div>
               );
             })}
           </div>
-          <div style={{ height:2, background:C.border, borderRadius:99, overflow:"hidden" }}>
-            <div style={{ height:"100%", width:`${pct}%`, background:C.white, borderRadius:99, transition:"width .5s ease" }} />
+          <div style={{ height:2, background:oc.border, borderRadius:99, overflow:"hidden" }}>
+            <div style={{ height:"100%", width:`${pct}%`, background:oc.white, borderRadius:99, transition:"width .5s ease" }} />
           </div>
         </div>
       )}
@@ -2483,6 +2497,13 @@ function KroftApp({ onFullReset } = {}) {
   // "photo" into "signup" — landing back on the signup screen while editing your own account
   // details was exactly the bug this flag exists to prevent.
   const [editingFromProfile, setEditingFromProfile] = useState(false);
+  // Business/Preferences are the two onboarding steps also reused for editing from Profile (see
+  // the comment above). Fresh account creation always uses the LIGHT palette regardless of the
+  // app's current theme (see the `light` prop on OShell/Btn/Inp/Mono/Tag); editing from Profile
+  // keeps respecting whatever theme the user has actually chosen, since that happens once they're
+  // already using the themed app.
+  const obLight = !editingFromProfile;
+  const obc = obLight ? LIGHT : C;
   // True while a signup/login request to Supabase Auth is in flight, so the button can show a
   // spinner and can't be double-submitted by an impatient extra click.
   const [authLoading, setAuthLoading] = useState(false);
@@ -6381,7 +6402,7 @@ ${voiceMode
         <OShell step="login">
           <div style={{ textAlign:"center", marginBottom:28 }}>
             <div style={{ margin:"0 auto 18px", width:64, height:64, borderRadius:18, background:C.white, display:"flex", alignItems:"center", justifyContent:"center", boxShadow:`0 0 0 8px ${C.fillStrong}` }}>
-              <span style={{ fontSize:28, fontWeight:900, color:C.black }}>K</span>
+              <img src="/kroft-robot-badge.png" alt="" style={{ width:"66%", height:"66%", objectFit:"contain" }} />
             </div>
             <h1 style={{ fontSize:30, fontWeight:800, color:C.white, letterSpacing:-1.5, marginBottom:4 }}>Welcome back</h1>
             <Mono style={{ color:C.muted }}>Sign in to KROFT by Virt Technologies</Mono>
@@ -6476,7 +6497,7 @@ ${voiceMode
         <OShell step="reset-password">
           <div style={{ textAlign:"center", marginBottom:28 }}>
             <div style={{ margin:"0 auto 18px", width:64, height:64, borderRadius:18, background:C.white, display:"flex", alignItems:"center", justifyContent:"center", boxShadow:`0 0 0 8px ${C.fillStrong}` }}>
-              <span style={{ fontSize:28, fontWeight:900, color:C.black }}>K</span>
+              <img src="/kroft-robot-badge.png" alt="" style={{ width:"66%", height:"66%", objectFit:"contain" }} />
             </div>
             <h1 style={{ fontSize:30, fontWeight:800, color:C.white, letterSpacing:-1.5, marginBottom:4 }}>Set a new password</h1>
             <Mono style={{ color:C.muted }}>Choose a new password for your account</Mono>
@@ -6501,120 +6522,122 @@ ${voiceMode
       )}
 
       {step === "signup" && (
-        <OShell step="signup">
+        <OShell step="signup" light>
           <div style={{ textAlign:"center", marginBottom:22 }}>
-            <div style={{ margin:"0 auto 16px", width:60, height:60, borderRadius:16, background:C.white, display:"flex", alignItems:"center", justifyContent:"center" }}>
-              <span style={{ fontSize:24, fontWeight:900, color:C.black }}>K</span>
+            <div style={{ margin:"0 auto 16px", width:60, height:60, borderRadius:16, background:LIGHT.white, display:"flex", alignItems:"center", justifyContent:"center" }}>
+              <img src="/kroft-robot-badge.png" alt="" style={{ width:"66%", height:"66%", objectFit:"contain" }} />
             </div>
-            <h1 style={{ fontSize:28, fontWeight:800, color:C.white, letterSpacing:-1, marginBottom:4 }}>Create account</h1>
-            <Mono style={{ color:C.muted }}>Set up your KROFT profile</Mono>
+            <h1 style={{ fontSize:28, fontWeight:800, color:LIGHT.white, letterSpacing:-1, marginBottom:4 }}>Create account</h1>
+            <Mono light style={{ color:LIGHT.muted }}>Set up your KROFT profile</Mono>
           </div>
           <div style={{ display:"flex", flexDirection:"column", gap:12, marginBottom:6 }}>
-            <div><Mono style={{ display:"block", color:C.soft, marginBottom:5 }}>Full name *</Mono><Inp placeholder="John Carter" value={user.name||""} onChange={e => { setUser(u => ({...u,name:e.target.value})); setSignupError(""); }} /></div>
-            <div><Mono style={{ display:"block", color:C.soft, marginBottom:5 }}>Email address *</Mono><Inp placeholder="john@example.com" value={user.email||""} type="email" onChange={e => { setUser(u => ({...u,email:e.target.value})); setSignupError(""); }} /></div>
+            <div><Mono light style={{ display:"block", color:LIGHT.soft, marginBottom:5 }}>Full name *</Mono><Inp light placeholder="John Carter" value={user.name||""} onChange={e => { setUser(u => ({...u,name:e.target.value})); setSignupError(""); }} /></div>
+            <div><Mono light style={{ display:"block", color:LIGHT.soft, marginBottom:5 }}>Email address *</Mono><Inp light placeholder="john@example.com" value={user.email||""} type="email" onChange={e => { setUser(u => ({...u,email:e.target.value})); setSignupError(""); }} /></div>
             <div>
               <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:5 }}>
-                <Mono style={{ color:C.soft }}>Password *</Mono>
-                <button onClick={() => { const p = generatePassword(); setSignupPw(p); setConfirmPw(p); setShowSignupPw(true); setSignupError(""); toast("Strong password generated."); }} style={{ background:"none", border:"none", cursor:"pointer", fontFamily:"'Space Grotesk',sans-serif", fontSize:10, color:C.white, textDecoration:"underline", padding:0 }}>Suggest password</button>
+                <Mono light style={{ color:LIGHT.soft }}>Password *</Mono>
+                <button onClick={() => { const p = generatePassword(); setSignupPw(p); setConfirmPw(p); setShowSignupPw(true); setSignupError(""); toast("Strong password generated."); }} style={{ background:"none", border:"none", cursor:"pointer", fontFamily:"'Space Grotesk',sans-serif", fontSize:10, color:LIGHT.white, textDecoration:"underline", padding:0 }}>Suggest password</button>
               </div>
               <div style={{ position:"relative" }}>
-                <input type={showSignupPw?"text":"password"} placeholder="Create a strong password" value={signupPw} onChange={e => { setSignupPw(e.target.value); setSignupError(""); }} style={{ width:"100%", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 54px 11px 14px", color:C.text, fontSize:13, fontFamily:"'Space Grotesk',sans-serif", outline:"none", boxSizing:"border-box" }} onFocus={e => { e.target.style.borderColor=C.accent; e.target.style.boxShadow=`0 0 0 3px ${C.accentBg}`; }} onBlur={e => { e.target.style.borderColor=C.cardB; e.target.style.boxShadow="none"; }} />
-                <button onClick={() => setShowSignupPw(v => !v)} style={{ position:"absolute", right:12, top:"50%", transform:"translateY(-50%)", background:"none", border:"none", cursor:"pointer", color:C.soft, fontSize:10, fontFamily:"'Space Grotesk',sans-serif", letterSpacing:.5 }}>{showSignupPw?"HIDE":"SHOW"}</button>
+                <input type={showSignupPw?"text":"password"} placeholder="Create a strong password" value={signupPw} onChange={e => { setSignupPw(e.target.value); setSignupError(""); }} style={{ width:"100%", background:LIGHT.surface, border:`1px solid ${LIGHT.cardB}`, borderRadius:12, padding:"11px 54px 11px 14px", color:LIGHT.text, fontSize:13, fontFamily:"'Space Grotesk',sans-serif", outline:"none", boxSizing:"border-box" }} onFocus={e => { e.target.style.borderColor=LIGHT.accent; e.target.style.boxShadow=`0 0 0 3px ${LIGHT.accentBg}`; }} onBlur={e => { e.target.style.borderColor=LIGHT.cardB; e.target.style.boxShadow="none"; }} />
+                <button onClick={() => setShowSignupPw(v => !v)} style={{ position:"absolute", right:12, top:"50%", transform:"translateY(-50%)", background:"none", border:"none", cursor:"pointer", color:LIGHT.soft, fontSize:10, fontFamily:"'Space Grotesk',sans-serif", letterSpacing:.5 }}>{showSignupPw?"HIDE":"SHOW"}</button>
               </div>
               {pw.length>0 && (
                 <div style={{ marginTop:7 }}>
-                  <div style={{ display:"flex", gap:3, marginBottom:4 }}>{[1,2,3,4,5].map(i => <div key={i} style={{ flex:1, height:3, borderRadius:99, background:i<=pwScore?pwColor:C.border, transition:"background .25s" }} />)}</div>
+                  <div style={{ display:"flex", gap:3, marginBottom:4 }}>{[1,2,3,4,5].map(i => <div key={i} style={{ flex:1, height:3, borderRadius:99, background:i<=pwScore?pwColor:LIGHT.border, transition:"background .25s" }} />)}</div>
                   <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-                    <Mono style={{ fontSize:10, color:pwColor, fontWeight:700 }}>{pwStrength}</Mono>
-                    <div style={{ display:"flex", gap:7 }}>{Object.entries({"8+":pwChecks.length,"A-Z":pwChecks.upper,"a-z":pwChecks.lower,"0-9":pwChecks.number,"!@#":pwChecks.special}).map(([k,v]) => <Mono key={k} style={{ fontSize:9, color:v?C.white:C.border, textDecoration:v?"none":"line-through" }}>{k}</Mono>)}</div>
+                    <Mono light style={{ fontSize:10, color:pwColor, fontWeight:700 }}>{pwStrength}</Mono>
+                    <div style={{ display:"flex", gap:7 }}>{Object.entries({"8+":pwChecks.length,"A-Z":pwChecks.upper,"a-z":pwChecks.lower,"0-9":pwChecks.number,"!@#":pwChecks.special}).map(([k,v]) => <Mono key={k} light style={{ fontSize:9, color:v?LIGHT.white:LIGHT.border, textDecoration:v?"none":"line-through" }}>{k}</Mono>)}</div>
                   </div>
                 </div>
               )}
             </div>
             <div>
-              <Mono style={{ display:"block", color:C.soft, marginBottom:5 }}>Confirm password *</Mono>
+              <Mono light style={{ display:"block", color:LIGHT.soft, marginBottom:5 }}>Confirm password *</Mono>
               <div style={{ position:"relative" }}>
-                <input type={showConfirmPw?"text":"password"} placeholder="Repeat your password" value={confirmPw} onChange={e => { setConfirmPw(e.target.value); setSignupError(""); }} style={{ width:"100%", background:C.surface, border:`1px solid ${confirmPw.length>0?(confirmPw===signupPw?C.white:C.border):C.cardB}`, borderRadius:12, padding:"11px 54px 11px 14px", color:C.text, fontSize:13, fontFamily:"'Space Grotesk',sans-serif", outline:"none", boxSizing:"border-box" }} onFocus={e => { e.target.style.borderColor=C.accent; e.target.style.boxShadow=`0 0 0 3px ${C.accentBg}`; }} onBlur={e => { e.target.style.borderColor = confirmPw.length>0 ? (confirmPw===signupPw?C.white:C.border) : C.cardB; e.target.style.boxShadow="none"; }} />
-                <button onClick={() => setShowConfirmPw(v => !v)} style={{ position:"absolute", right:12, top:"50%", transform:"translateY(-50%)", background:"none", border:"none", cursor:"pointer", color:C.soft, fontSize:10, fontFamily:"'Space Grotesk',sans-serif", letterSpacing:.5 }}>{showConfirmPw?"HIDE":"SHOW"}</button>
+                <input type={showConfirmPw?"text":"password"} placeholder="Repeat your password" value={confirmPw} onChange={e => { setConfirmPw(e.target.value); setSignupError(""); }} style={{ width:"100%", background:LIGHT.surface, border:`1px solid ${confirmPw.length>0?(confirmPw===signupPw?LIGHT.white:LIGHT.border):LIGHT.cardB}`, borderRadius:12, padding:"11px 54px 11px 14px", color:LIGHT.text, fontSize:13, fontFamily:"'Space Grotesk',sans-serif", outline:"none", boxSizing:"border-box" }} onFocus={e => { e.target.style.borderColor=LIGHT.accent; e.target.style.boxShadow=`0 0 0 3px ${LIGHT.accentBg}`; }} onBlur={e => { e.target.style.borderColor = confirmPw.length>0 ? (confirmPw===signupPw?LIGHT.white:LIGHT.border) : LIGHT.cardB; e.target.style.boxShadow="none"; }} />
+                <button onClick={() => setShowConfirmPw(v => !v)} style={{ position:"absolute", right:12, top:"50%", transform:"translateY(-50%)", background:"none", border:"none", cursor:"pointer", color:LIGHT.soft, fontSize:10, fontFamily:"'Space Grotesk',sans-serif", letterSpacing:.5 }}>{showConfirmPw?"HIDE":"SHOW"}</button>
               </div>
-              {confirmPw.length>0&&confirmPw!==signupPw && <Mono style={{ color:C.soft, display:"block", marginTop:4, fontSize:10 }}>Passwords do not match</Mono>}
-              {confirmPw.length>0&&confirmPw===signupPw && <Mono style={{ color:C.white, display:"block", marginTop:4, fontSize:10 }}>Passwords match</Mono>}
+              {confirmPw.length>0&&confirmPw!==signupPw && <Mono light style={{ color:LIGHT.soft, display:"block", marginTop:4, fontSize:10 }}>Passwords do not match</Mono>}
+              {confirmPw.length>0&&confirmPw===signupPw && <Mono light style={{ color:LIGHT.white, display:"block", marginTop:4, fontSize:10 }}>Passwords match</Mono>}
             </div>
-            <div><Mono style={{ display:"block", color:C.soft, marginBottom:5 }}>Phone number</Mono><Inp placeholder="+1 (555) 000-0000" value={user.phone||""} type="tel" onChange={e => setUser(u => ({...u,phone:e.target.value}))} /></div>
+            <div><Mono light style={{ display:"block", color:LIGHT.soft, marginBottom:5 }}>Phone number</Mono><Inp light placeholder="+1 (555) 000-0000" value={user.phone||""} type="tel" onChange={e => setUser(u => ({...u,phone:e.target.value}))} /></div>
           </div>
-          {signupError && <div style={{ background:C.fill, border:`1px solid ${C.border}`, borderRadius:8, padding:"9px 13px", marginBottom:10, marginTop:8 }}><Mono style={{ color:C.soft, lineHeight:1.5 }}>{signupError}</Mono></div>}
+          {signupError && <div style={{ background:LIGHT.fill, border:`1px solid ${LIGHT.border}`, borderRadius:8, padding:"9px 13px", marginBottom:10, marginTop:8 }}><Mono light style={{ color:LIGHT.soft, lineHeight:1.5 }}>{signupError}</Mono></div>}
           <div style={{ display:"flex", gap:10, marginTop:12 }}>
-            <Btn v="outline" onClick={() => setStep("login")} style={{ flex:1 }}>Back</Btn>
-            <Btn onClick={doSignup} disabled={authLoading||!user.name||!user.email||!signupPw||pwScore<3||!confirmPw||confirmPw!==signupPw} style={{ flex:2 }}>{authLoading?(<><Spinner size={16} color={C.black} thickness={2} />Creating account…</>):"Sign Up"}</Btn>
+            <Btn light v="outline" onClick={() => setStep("login")} style={{ flex:1 }}>Back</Btn>
+            <Btn light onClick={doSignup} disabled={authLoading||!user.name||!user.email||!signupPw||pwScore<3||!confirmPw||confirmPw!==signupPw} style={{ flex:2 }}>{authLoading?(<><Spinner size={16} color={LIGHT.black} thickness={2} />Creating account…</>):"Sign Up"}</Btn>
           </div>
         </OShell>
       )}
 
       {step === "photo" && (
-        <OShell step="photo">
+        <OShell step="photo" light>
           <canvas ref={canvasRef} style={{ display:"none" }} />
           <input ref={galleryRef} type="file" accept="image/*" onChange={handleGalleryPick} style={{ display:"none" }} />
-          <h2 style={{ fontSize:26, fontWeight:800, color:C.white, letterSpacing:-1, marginBottom:4 }}>Profile photo</h2>
-          <Mono style={{ display:"block", color:C.muted, marginBottom:22 }}>Choose from gallery or use your camera.</Mono>
+          <h2 style={{ fontSize:26, fontWeight:800, color:LIGHT.white, letterSpacing:-1, marginBottom:4 }}>Profile photo</h2>
+          <Mono light style={{ display:"block", color:LIGHT.muted, marginBottom:22 }}>Choose from gallery or use your camera.</Mono>
           {cameraMode && (
             <div style={{ marginBottom:18 }}>
-              <div style={{ position:"relative", borderRadius:14, overflow:"hidden", border:`1px solid ${C.border}`, background:C.black, aspectRatio:"4/3", minHeight:200 }}>
+              {/* The viewfinder itself stays a fixed dark backdrop regardless of theme — that's
+                  how a camera preview reads correctly, not a themed surface. */}
+              <div style={{ position:"relative", borderRadius:14, overflow:"hidden", border:`1px solid ${LIGHT.border}`, background:"#000", aspectRatio:"4/3", minHeight:200 }}>
                 <video ref={videoRef} autoPlay playsInline muted style={{ width:"100%", height:"100%", objectFit:"cover", display:"block", transform:"scaleX(-1)" }} />
                 <div style={{ position:"absolute", inset:0, pointerEvents:"none" }}>
-                  {[{top:10,left:10,borderTop:`2px solid ${C.white}`,borderLeft:`2px solid ${C.white}`,borderRadius:"4px 0 0 0"},{top:10,right:10,borderTop:`2px solid ${C.white}`,borderRight:`2px solid ${C.white}`,borderRadius:"0 4px 0 0"},{bottom:10,left:10,borderBottom:`2px solid ${C.white}`,borderLeft:`2px solid ${C.white}`,borderRadius:"0 0 0 4px"},{bottom:10,right:10,borderBottom:`2px solid ${C.white}`,borderRight:`2px solid ${C.white}`,borderRadius:"0 0 4px 0"}].map((pos,i) => <div key={i} style={{ position:"absolute", width:22, height:22, ...pos }} />)}
+                  {[{top:10,left:10,borderTop:"2px solid #fff",borderLeft:"2px solid #fff",borderRadius:"4px 0 0 0"},{top:10,right:10,borderTop:"2px solid #fff",borderRight:"2px solid #fff",borderRadius:"0 4px 0 0"},{bottom:10,left:10,borderBottom:"2px solid #fff",borderLeft:"2px solid #fff",borderRadius:"0 0 0 4px"},{bottom:10,right:10,borderBottom:"2px solid #fff",borderRight:"2px solid #fff",borderRadius:"0 0 4px 0"}].map((pos,i) => <div key={i} style={{ position:"absolute", width:22, height:22, ...pos }} />)}
                 </div>
                 {!cameraReady && <div style={{ position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center", background:"rgba(0,0,0,.75)" }}><div style={{ textAlign:"center" }}><div style={{ margin:"0 auto 10px", display:"flex", justifyContent:"center" }}><Spinner size={28} color="#ffffff" thickness={2} /></div><Mono style={{ color:"#dcd8d0" }}>Starting camera…</Mono></div></div>}
               </div>
               <div style={{ display:"flex", gap:10, marginTop:12, alignItems:"center", justifyContent:"center" }}>
-                <Btn v="outline" sm onClick={closeCamera}>Cancel</Btn>
-                <button onClick={snapPhoto} disabled={!cameraReady} style={{ width:62, height:62, borderRadius:"50%", background:cameraReady?C.white:C.border, border:"3px solid rgba(255,255,255,.15)", cursor:cameraReady?"pointer":"not-allowed", boxShadow:cameraReady?"0 0 0 6px rgba(255,255,255,.1)":"none" }} />
-                <Btn v="outline" sm onClick={() => { closeCamera(); galleryRef.current?.click(); }}>Gallery</Btn>
+                <Btn light v="outline" sm onClick={closeCamera}>Cancel</Btn>
+                <button onClick={snapPhoto} disabled={!cameraReady} style={{ width:62, height:62, borderRadius:"50%", background:cameraReady?LIGHT.white:LIGHT.border, border:"3px solid rgba(10,10,10,.15)", cursor:cameraReady?"pointer":"not-allowed", boxShadow:cameraReady?"0 0 0 6px rgba(10,10,10,.1)":"none" }} />
+                <Btn light v="outline" sm onClick={() => { closeCamera(); galleryRef.current?.click(); }}>Gallery</Btn>
               </div>
-              <Mono style={{ display:"block", textAlign:"center", color:C.muted, marginTop:10 }}>Tap the circle to capture</Mono>
+              <Mono light style={{ display:"block", textAlign:"center", color:LIGHT.muted, marginTop:10 }}>Tap the circle to capture</Mono>
             </div>
           )}
           {!cameraMode && (
             <>
               <div style={{ display:"flex", justifyContent:"center", marginBottom:18 }}>
-                <div style={{ width:110, height:110, borderRadius:"50%", overflow:"hidden", background:user.photo?`url(${user.photo}) center/cover no-repeat`:C.surface, border:`2px solid ${user.photo?C.white:C.muted}`, display:"flex", alignItems:"center", justifyContent:"center", boxShadow:user.photo?`0 0 0 5px ${C.fillStrong}`:"none" }}>
-                  {!user.photo && <Mono style={{ fontSize:9, color:C.muted }}>No photo</Mono>}
+                <div style={{ width:110, height:110, borderRadius:"50%", overflow:"hidden", background:user.photo?`url(${user.photo}) center/cover no-repeat`:LIGHT.surface, border:`2px solid ${user.photo?LIGHT.white:LIGHT.muted}`, display:"flex", alignItems:"center", justifyContent:"center", boxShadow:user.photo?`0 0 0 5px ${LIGHT.fillStrong}`:"none" }}>
+                  {!user.photo && <Mono light style={{ fontSize:9, color:LIGHT.muted }}>No photo</Mono>}
                 </div>
               </div>
-              {user.photo && <div style={{ textAlign:"center", marginBottom:14 }}><Tag hi>{photoSource==="camera"?"From camera":"From gallery"}</Tag></div>}
+              {user.photo && <div style={{ textAlign:"center", marginBottom:14 }}><Tag light hi>{photoSource==="camera"?"From camera":"From gallery"}</Tag></div>}
               <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:11, marginBottom:12 }}>
                 {[{label:"Gallery",sub:"Pick from your photos",fn:()=>galleryRef.current?.click()},{label:"Camera",sub:"Take a photo now",fn:openCamera}].map(b => (
-                  <button key={b.label} onClick={b.fn} style={{ background:C.card, border:`1px solid ${C.cardB}`, borderRadius:14, padding:"22px 12px", cursor:"pointer", textAlign:"center", fontFamily:"'Space Grotesk',sans-serif" }} onMouseEnter={e => { e.currentTarget.style.borderColor=C.soft; e.currentTarget.style.background=C.hover; }} onMouseLeave={e => { e.currentTarget.style.borderColor=C.cardB; e.currentTarget.style.background=C.card; }}>
-                    <div style={{ fontSize:13, fontWeight:700, color:C.white, marginBottom:3 }}>{b.label}</div>
-                    <Mono style={{ color:C.muted, fontSize:10 }}>{b.sub}</Mono>
+                  <button key={b.label} onClick={b.fn} style={{ background:LIGHT.card, border:`1px solid ${LIGHT.cardB}`, borderRadius:14, padding:"22px 12px", cursor:"pointer", textAlign:"center", fontFamily:"'Space Grotesk',sans-serif" }} onMouseEnter={e => { e.currentTarget.style.borderColor=LIGHT.soft; e.currentTarget.style.background=LIGHT.hover; }} onMouseLeave={e => { e.currentTarget.style.borderColor=LIGHT.cardB; e.currentTarget.style.background=LIGHT.card; }}>
+                    <div style={{ fontSize:13, fontWeight:700, color:LIGHT.white, marginBottom:3 }}>{b.label}</div>
+                    <Mono light style={{ color:LIGHT.muted, fontSize:10 }}>{b.sub}</Mono>
                   </button>
                 ))}
               </div>
-              {cameraError && <div style={{ background:C.fill, border:`1px solid ${C.muted}`, borderRadius:12, padding:"10px 13px", marginBottom:11 }}><Mono style={{ color:C.soft, lineHeight:1.6 }}>{cameraError}</Mono></div>}
-              {user.photo && <button onClick={() => { setUser(u => ({...u,photo:null})); setPhotoSource(""); }} style={{ width:"100%", background:"none", border:`1px dashed ${C.border}`, borderRadius:12, padding:"9px", cursor:"pointer", color:C.muted, fontSize:11, fontFamily:"'Space Grotesk',sans-serif", marginBottom:11 }}>Remove photo</button>}
-              {!user.photo && <div style={{ background:C.surface, borderRadius:12, padding:"10px 14px", marginBottom:11, textAlign:"center" }}><Mono style={{ color:C.soft, lineHeight:1.6 }}>No photo? KROFT will show your initials{user.name?" — "+user.name.split(" ").map(n=>n[0]).join("").toUpperCase():""} as your avatar.</Mono></div>}
+              {cameraError && <div style={{ background:LIGHT.fill, border:`1px solid ${LIGHT.muted}`, borderRadius:12, padding:"10px 13px", marginBottom:11 }}><Mono light style={{ color:LIGHT.soft, lineHeight:1.6 }}>{cameraError}</Mono></div>}
+              {user.photo && <button onClick={() => { setUser(u => ({...u,photo:null})); setPhotoSource(""); }} style={{ width:"100%", background:"none", border:`1px dashed ${LIGHT.border}`, borderRadius:12, padding:"9px", cursor:"pointer", color:LIGHT.muted, fontSize:11, fontFamily:"'Space Grotesk',sans-serif", marginBottom:11 }}>Remove photo</button>}
+              {!user.photo && <div style={{ background:LIGHT.surface, borderRadius:12, padding:"10px 14px", marginBottom:11, textAlign:"center" }}><Mono light style={{ color:LIGHT.soft, lineHeight:1.6 }}>No photo? KROFT will show your initials{user.name?" — "+user.name.split(" ").map(n=>n[0]).join("").toUpperCase():""} as your avatar.</Mono></div>}
             </>
           )}
-          {!cameraMode && <div style={{ display:"flex", gap:10 }}><Btn v="outline" onClick={() => setStep("signup")} style={{ flex:1 }}>Back</Btn><Btn onClick={() => setStep("business")} style={{ flex:2 }}>{user.photo?"Continue":"Skip for now"}</Btn></div>}
+          {!cameraMode && <div style={{ display:"flex", gap:10 }}><Btn light v="outline" onClick={() => setStep("signup")} style={{ flex:1 }}>Back</Btn><Btn light onClick={() => setStep("business")} style={{ flex:2 }}>{user.photo?"Continue":"Skip for now"}</Btn></div>}
         </OShell>
       )}
 
       {step === "business" && (
-        <OShell step="business" hideProgress={editingFromProfile}>
-          <h2 style={{ fontSize:26, fontWeight:800, color:C.white, letterSpacing:-1, marginBottom:4 }}>Your Business</h2>
-          <Mono style={{ display:"block", color:C.muted, marginBottom:22 }}>So KROFT can tailor your finance dashboard.</Mono>
+        <OShell step="business" hideProgress={editingFromProfile} light={obLight}>
+          <h2 style={{ fontSize:26, fontWeight:800, color:obc.white, letterSpacing:-1, marginBottom:4 }}>Your Business</h2>
+          <Mono light={obLight} style={{ display:"block", color:obc.muted, marginBottom:22 }}>So KROFT can tailor your finance dashboard.</Mono>
           <div style={{ display:"flex", flexDirection:"column", gap:13, marginBottom:22 }}>
-            <div><Mono style={{ display:"block", color:C.soft, marginBottom:6, letterSpacing:1 }}>Business name</Mono><Inp placeholder="e.g. Carter Consulting LLC" value={user.businessName} onChange={e => setUser(u => ({...u,businessName:e.target.value}))} /></div>
+            <div><Mono light={obLight} style={{ display:"block", color:obc.soft, marginBottom:6, letterSpacing:1 }}>Business name</Mono><Inp light={obLight} placeholder="e.g. Carter Consulting LLC" value={user.businessName} onChange={e => setUser(u => ({...u,businessName:e.target.value}))} /></div>
             <div>
-              <Mono style={{ display:"block", color:C.soft, marginBottom:6, letterSpacing:1 }}>Business type</Mono>
-              <select value={user.businessType} onChange={e => setUser(u => ({...u,businessType:e.target.value}))} style={{ width:"100%", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 14px", color:user.businessType?C.text:C.muted, fontSize:13, fontFamily:"'Space Grotesk',sans-serif", outline:"none", cursor:"pointer" }} onFocus={e => { e.target.style.borderColor=C.accent; e.target.style.boxShadow=`0 0 0 3px ${C.accentBg}`; }} onBlur={e => { e.target.style.borderColor=C.cardB; e.target.style.boxShadow="none"; }}>
+              <Mono light={obLight} style={{ display:"block", color:obc.soft, marginBottom:6, letterSpacing:1 }}>Business type</Mono>
+              <select value={user.businessType} onChange={e => setUser(u => ({...u,businessType:e.target.value}))} style={{ width:"100%", background:obc.surface, border:`1px solid ${obc.cardB}`, borderRadius:12, padding:"11px 14px", color:user.businessType?obc.text:obc.muted, fontSize:13, fontFamily:"'Space Grotesk',sans-serif", outline:"none", cursor:"pointer" }} onFocus={e => { e.target.style.borderColor=obc.accent; e.target.style.boxShadow=`0 0 0 3px ${obc.accentBg}`; }} onBlur={e => { e.target.style.borderColor=obc.cardB; e.target.style.boxShadow="none"; }}>
                 <option value="">Select type…</option>
                 {["Freelancer","Consultant","Agency","Retail","Restaurant","Tech Startup","Healthcare","Real Estate","E-commerce","Other"].map(t => <option key={t}>{t}</option>)}
               </select>
             </div>
             <div>
-              <Mono style={{ display:"block", color:C.soft, marginBottom:8, letterSpacing:1 }}>Currency</Mono>
+              <Mono light={obLight} style={{ display:"block", color:obc.soft, marginBottom:8, letterSpacing:1 }}>Currency</Mono>
               <select value={Object.values(CURRENCY_GROUPS).some(g=>g.includes(user.currency)) ? user.currency : ""} onChange={e => { if (e.target.value) { setUser(u => ({...u,currency:e.target.value})); setCustomCurrency(""); setCustomCurrencyError(""); } }}
-                style={{ width:"100%", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 14px", color:C.text, fontSize:13, fontFamily:"'Space Grotesk',sans-serif", outline:"none", cursor:"pointer", marginBottom:8 }}>
+                style={{ width:"100%", background:obc.surface, border:`1px solid ${obc.cardB}`, borderRadius:12, padding:"11px 14px", color:obc.text, fontSize:13, fontFamily:"'Space Grotesk',sans-serif", outline:"none", cursor:"pointer", marginBottom:8 }}>
                 <option value="" disabled>{Object.values(CURRENCY_GROUPS).some(g=>g.includes(user.currency)) ? "Select…" : `Custom: ${user.currency}`}</option>
                 {Object.entries(CURRENCY_GROUPS).map(([region, codes]) => (
                   <optgroup key={region} label={region}>
@@ -6623,40 +6646,40 @@ ${voiceMode
                 ))}
               </select>
               <div style={{ display:"flex", gap:7 }}>
-                <Inp placeholder="Don't see yours? Type a code, e.g. ISK" value={customCurrency} onChange={e => { setCustomCurrency(e.target.value.toUpperCase()); setCustomCurrencyError(""); }} style={{ flex:1 }} />
-                <Btn sm v="outline" onClick={() => {
+                <Inp light={obLight} placeholder="Don't see yours? Type a code, e.g. ISK" value={customCurrency} onChange={e => { setCustomCurrency(e.target.value.toUpperCase()); setCustomCurrencyError(""); }} style={{ flex:1 }} />
+                <Btn light={obLight} sm v="outline" onClick={() => {
                   if (!isValidCurrencyCode(customCurrency)) { setCustomCurrencyError("Not a recognized currency code."); return; }
                   setUser(u => ({...u, currency: customCurrency.toUpperCase()})); setCustomCurrencyError("");
                 }}>Use</Btn>
               </div>
-              {customCurrencyError && <Mono style={{ display:"block", color:C.negative, marginTop:6 }}>{customCurrencyError}</Mono>}
-              <Mono style={{ display:"block", color:C.soft, marginTop:8 }}>Currently: {user.currency} · {fmtCur(1000, user.currency)}</Mono>
+              {customCurrencyError && <Mono light={obLight} style={{ display:"block", color:obc.negative, marginTop:6 }}>{customCurrencyError}</Mono>}
+              <Mono light={obLight} style={{ display:"block", color:obc.soft, marginTop:8 }}>Currently: {user.currency} · {fmtCur(1000, user.currency)}</Mono>
               {/* Changing currency doesn't convert anything — there are no exchange rates here.
                   Entries keep the currency they were recorded in, so old figures stay truthful;
                   this says so rather than letting totals quietly become nonsense. */}
               {(income.length > 0 || expenses.length > 0) && (
-                <Mono style={{ display:"block", color:C.warning, marginTop:6, lineHeight:1.6 }}>
+                <Mono light={obLight} style={{ display:"block", color:obc.warning, marginTop:6, lineHeight:1.6 }}>
                   Changing this affects new entries only. Existing amounts keep the currency they were entered in — nothing is converted.
                 </Mono>
               )}
             </div>
           </div>
           {editingFromProfile ? (
-            <div style={{ display:"flex", gap:10 }}><Btn v="outline" onClick={() => setStep("dashboard")} style={{ flex:1 }}>Cancel</Btn><Btn onClick={() => { saveProfileNow().catch(()=>{}); setStep("dashboard"); toast("Business details saved."); }} style={{ flex:2 }}>Save</Btn></div>
+            <div style={{ display:"flex", gap:10 }}><Btn light={obLight} v="outline" onClick={() => setStep("dashboard")} style={{ flex:1 }}>Cancel</Btn><Btn light={obLight} onClick={() => { saveProfileNow().catch(()=>{}); setStep("dashboard"); toast("Business details saved."); }} style={{ flex:2 }}>Save</Btn></div>
           ) : (
-            <div style={{ display:"flex", gap:10 }}><Btn v="outline" onClick={() => setStep("photo")} style={{ flex:1 }}>Back</Btn><Btn onClick={() => setStep("prefs")} style={{ flex:2 }}>Next</Btn></div>
+            <div style={{ display:"flex", gap:10 }}><Btn light={obLight} v="outline" onClick={() => setStep("photo")} style={{ flex:1 }}>Back</Btn><Btn light={obLight} onClick={() => setStep("prefs")} style={{ flex:2 }}>Next</Btn></div>
           )}
         </OShell>
       )}
 
       {step === "prefs" && (
-        <OShell step="prefs" hideProgress={editingFromProfile}>
-          <h2 style={{ fontSize:26, fontWeight:800, color:C.white, letterSpacing:-1, marginBottom:4 }}>Preferences</h2>
-          <Mono style={{ display:"block", color:C.muted, marginBottom:22 }}>Connect the accounts KROFT should work with.</Mono>
+        <OShell step="prefs" hideProgress={editingFromProfile} light={obLight}>
+          <h2 style={{ fontSize:26, fontWeight:800, color:obc.white, letterSpacing:-1, marginBottom:4 }}>Preferences</h2>
+          <Mono light={obLight} style={{ display:"block", color:obc.muted, marginBottom:22 }}>Connect the accounts KROFT should work with.</Mono>
           <div style={{ marginBottom:22 }}>
-            <Mono style={{ display:"block", color:C.soft, marginBottom:11 }}>Connect accounts</Mono>
+            <Mono light={obLight} style={{ display:"block", color:obc.soft, marginBottom:11 }}>Connect accounts</Mono>
             {!isSupabaseConfigured && (
-              <Mono style={{ display:"block", color:C.muted, fontSize:10, marginBottom:9 }}>Sign in with a real account (Supabase isn't configured) to connect an email or calendar provider.</Mono>
+              <Mono light={obLight} style={{ display:"block", color:obc.muted, fontSize:10, marginBottom:9 }}>Sign in with a real account (Supabase isn't configured) to connect an email or calendar provider.</Mono>
             )}
             <div style={{ display:"flex", flexDirection:"column" }}>
               {/* Gmail+Calendar share one Google OAuth grant, and Outlook Mail+Calendar share
@@ -6678,50 +6701,50 @@ ${voiceMode
                 { k:"outlookMail", n:"Outlook Mail", d:"Read & send real emails", linked:microsoftStatus.mail, linking:microsoftLinking, connect:connectMicrosoft, disconnect:disconnectMicrosoft },
                 { k:"outlookCalendar", n:"Outlook Calendar", d:"Sync appointments", linked:microsoftStatus.calendar, linking:microsoftLinking, connect:connectMicrosoft, disconnect:disconnectMicrosoft },
               ].map((a, i, arr) => (
-                <div key={a.k} style={{ display:"flex", alignItems:"center", gap:12, padding:"12px 2px", borderBottom:i<arr.length-1?`1px solid ${C.cardB}`:"none" }}>
+                <div key={a.k} style={{ display:"flex", alignItems:"center", gap:12, padding:"12px 2px", borderBottom:i<arr.length-1?`1px solid ${obc.cardB}`:"none" }}>
                   <div style={{ flex:1 }}>
                     <div style={{ display:"flex", alignItems:"center", gap:7 }}>
-                      <div style={{ fontWeight:700, fontSize:13, color:C.white }}>{a.n}</div>
-                      {a.linked && <Mono style={{ color:C.positive, fontSize:9, fontWeight:700, letterSpacing:.5 }}>LINKED</Mono>}
+                      <div style={{ fontWeight:700, fontSize:13, color:obc.white }}>{a.n}</div>
+                      {a.linked && <Mono light={obLight} style={{ color:obc.positive, fontSize:9, fontWeight:700, letterSpacing:.5 }}>LINKED</Mono>}
                     </div>
-                    <Mono style={{ color:C.muted, fontSize:10 }}>{a.d}</Mono>
+                    <Mono light={obLight} style={{ color:obc.muted, fontSize:10 }}>{a.d}</Mono>
                   </div>
-                  <Btn sm v={a.linked?"outline":"solid"} disabled={!isSupabaseConfigured||a.linking}
+                  <Btn light={obLight} sm v={a.linked?"outline":"solid"} disabled={!isSupabaseConfigured||a.linking}
                     onClick={() => a.linked ? a.disconnect() : a.connect()}>
-                    {a.linking ? <Spinner size={14} color={a.linked?C.soft:C.black} thickness={2} /> : a.linked ? "Unlink" : "Link"}
+                    {a.linking ? <Spinner size={14} color={a.linked?obc.soft:obc.black} thickness={2} /> : a.linked ? "Unlink" : "Link"}
                   </Btn>
                 </div>
               ))}
             </div>
           </div>
           {editingFromProfile ? (
-            <div style={{ display:"flex", gap:10 }}><Btn v="outline" onClick={() => setStep("dashboard")} style={{ flex:1 }}>Cancel</Btn><Btn onClick={() => { saveProfileNow().catch(()=>{}); setStep("dashboard"); toast("Preferences saved."); }} style={{ flex:2 }}>Save</Btn></div>
+            <div style={{ display:"flex", gap:10 }}><Btn light={obLight} v="outline" onClick={() => setStep("dashboard")} style={{ flex:1 }}>Cancel</Btn><Btn light={obLight} onClick={() => { saveProfileNow().catch(()=>{}); setStep("dashboard"); toast("Preferences saved."); }} style={{ flex:2 }}>Save</Btn></div>
           ) : (
-            <div style={{ display:"flex", gap:10 }}><Btn v="outline" onClick={() => setStep("business")} style={{ flex:1 }}>Back</Btn><Btn onClick={() => setStep("done")} style={{ flex:2 }}>Almost done</Btn></div>
+            <div style={{ display:"flex", gap:10 }}><Btn light={obLight} v="outline" onClick={() => setStep("business")} style={{ flex:1 }}>Back</Btn><Btn light={obLight} onClick={() => setStep("done")} style={{ flex:2 }}>Almost done</Btn></div>
           )}
         </OShell>
       )}
 
       {step === "done" && (
-        <OShell step="done">
+        <OShell step="done" light>
           <div style={{ textAlign:"center" }}>
-            <div style={{ width:80, height:80, borderRadius:"50%", overflow:"hidden", background:user.photo?`url(${user.photo}) center/cover no-repeat`:C.surface, border:`3px solid ${C.white}`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:26, fontWeight:800, color:C.white, margin:"0 auto 20px", animation:"pop .5s ease" }}>
+            <div style={{ width:80, height:80, borderRadius:"50%", overflow:"hidden", background:user.photo?`url(${user.photo}) center/cover no-repeat`:LIGHT.surface, border:`3px solid ${LIGHT.white}`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:26, fontWeight:800, color:LIGHT.white, margin:"0 auto 20px", animation:"pop .5s ease" }}>
               {!user.photo && initials}
             </div>
-            <div style={{ marginBottom:10 }}><Tag hi>Account Ready</Tag></div>
-            <h2 style={{ fontSize:28, fontWeight:800, color:C.white, letterSpacing:-1, marginBottom:7, marginTop:12 }}>Ready, {user.name}.</h2>
-            <Mono style={{ display:"block", color:C.muted, marginBottom:26, lineHeight:1.8 }}>Your KROFT account is set up.<br />Your personal AI assistant is ready.</Mono>
+            <div style={{ marginBottom:10 }}><Tag light hi>Account Ready</Tag></div>
+            <h2 style={{ fontSize:28, fontWeight:800, color:LIGHT.white, letterSpacing:-1, marginBottom:7, marginTop:12 }}>Ready, {user.name}.</h2>
+            <Mono light style={{ display:"block", color:LIGHT.muted, marginBottom:26, lineHeight:1.8 }}>Your KROFT account is set up.<br />Your personal AI assistant is ready.</Mono>
             {/* A plain divided list, not five boxes — the account summary is read once and never
                 touched again, so it doesn't need the visual weight of its own card per field. */}
             <div style={{ marginBottom:26, textAlign:"left" }}>
               {[{k:"Name",v:user.name},{k:"Email",v:user.email||"—"},{k:"Business",v:user.businessName||"Not set"},{k:"Currency",v:user.currency},{k:"Apps",v:Object.values(user.connected).filter(Boolean).length+" linked"}].map((r, i, arr) => (
-                <div key={r.k} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:10, padding:"9px 2px", borderBottom:i<arr.length-1?`1px solid ${C.cardB}`:"none" }}>
-                  <Mono style={{ color:C.muted, letterSpacing:.8 }}>{r.k.toUpperCase()}</Mono>
-                  <div style={{ fontSize:12, fontWeight:700, color:C.white, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{r.v}</div>
+                <div key={r.k} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:10, padding:"9px 2px", borderBottom:i<arr.length-1?`1px solid ${LIGHT.cardB}`:"none" }}>
+                  <Mono light style={{ color:LIGHT.muted, letterSpacing:.8 }}>{r.k.toUpperCase()}</Mono>
+                  <div style={{ fontSize:12, fontWeight:700, color:LIGHT.white, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{r.v}</div>
                 </div>
               ))}
             </div>
-            <Btn full onClick={() => setStep("dashboard")} style={{ padding:"14px", fontSize:15 }}>Enter KROFT</Btn>
+            <Btn light full onClick={() => setStep("dashboard")} style={{ padding:"14px", fontSize:15 }}>Enter KROFT</Btn>
           </div>
         </OShell>
       )}
