@@ -9451,7 +9451,17 @@ ${voiceMode
                 // over), but centered while it's just the one welcome message — top-aligning that
                 // alone left a large dead gap below it before the suggestion chips underneath.
                 justifyContent: aiMessages.length <= 1 ? "center" : "flex-start" }}>
-                {aiMessages.map((m,i) => (
+                {/* Before a real conversation exists, this reads as a clean branded moment (mark
+                    + one line) rather than a chat bubble talking to no one — the seed assistant
+                    message still exists in aiMessages/history exactly as before (so "New chat"
+                    and the message-count checks elsewhere are untouched), it's just not rendered
+                    as a bubble while it's the only thing there. */}
+                {aiMessages.length <= 1 ? (
+                  <div style={{ textAlign:"center", animation:"fadeUp .4s ease" }}>
+                    <img src="/kroft-robot-badge.png" alt="" style={{ width:52, height:52, display:"block", margin:"0 auto 16px" }} />
+                    <div style={{ fontSize:22, fontWeight:800, color:C.text, letterSpacing:-.5 }}>What can I help with, {firstNameOf(user.name)||"there"}?</div>
+                  </div>
+                ) : aiMessages.map((m,i) => (
                   <div key={m.id || i} style={{ display:"flex", flexDirection:"column", alignItems:m.role==="user"?"flex-end":"flex-start", animation:"fadeUp .3s ease" }}>
                     <div style={{ background:m.role==="user"?C.white:C.surface, border:`1px solid ${m.role==="user"?C.soft:C.cardB}`, borderRadius:m.role==="user"?"14px 14px 3px 14px":"14px 14px 14px 3px", padding:"10px 14px", maxWidth:"80%" }}>
                       {m.role==="assistant" && <Mono style={{ display:"block", color:C.muted, fontSize:9, letterSpacing:.8, marginBottom:5 }}>KROFT</Mono>}
