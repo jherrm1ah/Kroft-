@@ -387,6 +387,17 @@ const setPreferredVoiceId = id => { preferredVoiceId = resolveVoiceId(id); };
 let preferredVoiceSpeed = 1.0;
 const setPreferredVoiceSpeed = mul => { preferredVoiceSpeed = typeof mul === "number" && mul > 0 ? mul : 1.0; };
 
+// Wired to KroftApp's toast() once it exists (same reasoning as the voice pref setters above —
+// speak() lives outside React). speechSynthesis.speak() can fail completely silently on real
+// devices with no exception and no error event: Android Chrome's own per-site "Sound" mute
+// (long-press a tab → Site settings → Sound: Block) and a phone with no text-to-speech voice
+// pack installed (Settings → Accessibility → Text-to-speech output) both produce exactly this —
+// speak() runs, nothing throws, nothing plays. Neither condition is visible to JS, so the best
+// speak() can do is notice the utterance never actually started and say so, instead of leaving
+// someone staring at silence with no idea whether the tap even registered.
+let notifyTtsFailure = null;
+const setTtsFailureNotifier = fn => { notifyTtsFailure = fn; };
+
 // Assigning an incompatible value to utterance.voice throws synchronously — a real browser
 // behavior (reproduced directly: SpeechSynthesisUtterance.voice's setter validates its argument
 // and rejects one it doesn't recognize as a genuine SpeechSynthesisVoice from this engine).
@@ -446,6 +457,16 @@ function speak(raw, opts = {}) {
   // re-triggers the WHOLE sequence a second time, reading it twice. `started` makes run()
   // idempotent regardless of which trigger fires first, or in what order.
   let started = false;
+  // Set once the first utterance actually reports starting — checked below to tell a genuine
+  // silent failure (nothing ever started) apart from a normal short line that simply finished
+  // playing before the check fires.
+  let beganSpeaking = false;
+  let failureReported = false;
+  const reportSilentFailure = () => {
+    if (failureReported || beganSpeaking || window.speechSynthesis.speaking) return;
+    failureReported = true;
+    notifyTtsFailure?.("Nothing played. Check this site isn't muted (Chrome: ⋮ menu → Site settings → Sound) and that a text-to-speech voice is installed on this device (Settings → Accessibility → Text-to-speech output).");
+  };
   const run = () => {
     if (started) return;
     started = true;
@@ -454,11 +475,17 @@ function speak(raw, opts = {}) {
     let i = 0;
     const next = () => {
       if (i >= chunks.length) return;
+      const isFirst = i === 0;
       const u = new SpeechSynthesisUtterance(chunks[i++]);
       u.rate = rate; u.pitch = 1.0; applyVoice(u, voice);
+      u.onstart = () => { beganSpeaking = true; };
       u.onend = () => setTimeout(next, pauseMs);
       u.onerror = () => setTimeout(next, pauseMs);
       window.speechSynthesis.speak(u);
+      // Only the first chunk needs watching — if that one plays, the rest are presumed fine.
+      // 1.8s is generous enough that a slow-starting engine isn't flagged as broken, but short
+      // enough that "did this actually work" doesn't take forever to surface.
+      if (isFirst) setTimeout(reportSilentFailure, 1800);
     };
     next();
   };
@@ -3330,6 +3357,10 @@ function KroftApp({ onFullReset } = {}) {
     // announcement when the only chance to reverse a deletion disappears.
     setTimeout(() => setToasts(p => p.filter(t => t.id !== id)), onUndo ? UNDO_MS : 4200);
   }, []);
+
+  // Lets speak() (a plain module-level function — see its own comment) surface a toast when an
+  // utterance silently never plays, instead of failing with no visible sign anything went wrong.
+  useEffect(() => { setTtsFailureNotifier(toast); return () => setTtsFailureNotifier(null); }, [toast]);
 
   // A real "moment" — confetti + a distinct, more festive haptic pattern — reserved for genuine
   // milestones (see call sites: all tasks cleared, first-ever finance entry, KROFT Plus
