@@ -1427,7 +1427,7 @@ function PatternDetailModal({ pattern, onClose }) {
   useEffect(() => { const t = setTimeout(() => setGrown(true), 30); return () => clearTimeout(t); }, []);
   return (
     <div style={{ position:"fixed", inset:0, zIndex:950, background:"rgba(0,0,0,.93)", display:"flex", alignItems:"center", justifyContent:"center", padding:24 }} onClick={onClose}>
-      <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:18, padding:26, maxWidth:420, width:"100%", animation:"pop .3s cubic-bezier(.34,1.56,.64,1)" }} onClick={e => e.stopPropagation()}>
+      <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:28, padding:26, maxWidth:420, width:"100%", animation:"pop .3s cubic-bezier(.34,1.56,.64,1)" }} onClick={e => e.stopPropagation()}>
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:10, marginBottom:14 }}>
           <div style={{ fontSize:16, fontWeight:700, color:C.white, lineHeight:1.4 }}>{pattern.insight}</div>
           <button onClick={onClose} aria-label="Close" style={{ background:"none", border:"none", color:C.muted, fontSize:20, cursor:"pointer", padding:2, lineHeight:1, flexShrink:0 }}>✕</button>
