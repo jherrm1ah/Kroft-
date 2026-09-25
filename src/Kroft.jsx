@@ -2413,6 +2413,17 @@ const QUICK_RESET_KINDS = [
   { key:"eyes", label:"Close your eyes", seconds:90, guide:"Close your eyes and let your mind rest for a moment." },
 ];
 
+// Around Me's category grid hits Overpass, whose single public instance is a well-documented
+// bottleneck (see api/places.js) — re-fetching the same category at the same spot every time it's
+// tapped (switching tabs and back, re-opening a category after backing out) wastes a request
+// against that shared resource for data that hasn't had time to change. A short-lived, in-memory
+// cache is enough: it survives switching screens within the session but not a reload, and expires
+// on its own so a long-running session still eventually sees new/changed places. Module-level
+// (like LP above) rather than component state, since it should outlive this component's re-renders
+// but doesn't need to persist beyond the tab being open.
+const PLACES_CACHE_TTL_MS = 5 * 60 * 1000;
+const placesCache = new Map();
+
 function KroftApp({ onFullReset } = {}) {
   // Theme: "dark" or "light". C's properties are reassigned in place (see effect below)
   // rather than swapping which object C points to, since ~250 style props across this file
@@ -6289,6 +6300,17 @@ ${voiceMode
     // the proxy, not Nominatim's free-text search — see api/places.js's comment for why a category
     // label like "Restaurants" doesn't actually find real nearby restaurants there.
     if (categoryKey) {
+      // Rounded to ~11m precision — well within Overpass's multi-hundred-meter-radius search, so
+      // it only ever collapses true floating-point noise between reads of the same fixed
+      // userCoords, never two genuinely different locations into one cache entry.
+      const cacheKey = `${categoryKey}:${userCoords.lat.toFixed(4)},${userCoords.lng.toFixed(4)}`;
+      const cached = placesCache.get(cacheKey);
+      if (cached && Date.now() - cached.time < PLACES_CACHE_TTL_MS) {
+        setAroundResults(cached.results);
+        if (cached.results.length === 0) setAroundError(`No ${categoryOrQuery.toLowerCase()} found nearby. Try a different category or search.`);
+        setAroundLoading(false);
+        return;
+      }
       try {
         const res = await fetch(`/api/places?mode=category&category=${encodeURIComponent(categoryKey)}&lat=${userCoords.lat}&lon=${userCoords.lng}`);
         const data = await res.json();
@@ -6298,6 +6320,7 @@ ${voiceMode
         // restaurants found nearby" instead of telling the user the service itself failed.
         if (!res.ok || data.error) throw new Error(data.error || "Places service unavailable");
         const results = data.results || [];
+        placesCache.set(cacheKey, { time: Date.now(), results });
         setAroundResults(results);
         if (results.length === 0) setAroundError(`No ${categoryOrQuery.toLowerCase()} found nearby. Try a different category or search.`);
       } catch (e) {
