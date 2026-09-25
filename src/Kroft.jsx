@@ -102,6 +102,9 @@ const ANIM = `
 @keyframes celebratePop{0%{transform:scale(.3);opacity:0}45%{transform:scale(1.2);opacity:1}70%{transform:scale(.92)}100%{transform:scale(1);opacity:1}}
 @keyframes confettiFall{0%{transform:translate(0,-10px) rotate(0deg);opacity:1}100%{transform:translate(var(--drift,0px),100vh) rotate(var(--spin,540deg));opacity:0}}
 @keyframes alarmPulse{0%,100%{transform:scale(1);opacity:.7}50%{transform:scale(1.12);opacity:1}}
+/* Slow ambient glow behind the Quick Reset countdown ring — a calmer, longer cycle than
+   alarmPulse above, meant to read as "breathing" rather than an alert. */
+@keyframes breathe{0%,100%{transform:scale(1);opacity:.35}50%{transform:scale(1.18);opacity:.75}}
 `;
 
 // Uses Intl's native currency formatting instead of a hand-maintained symbol map, so any
@@ -937,6 +940,19 @@ const Dot = ({ color=C.white, size=6 }) => (
   <div style={{ width:size, height:size, borderRadius:"50%", background:color, flexShrink:0 }} />
 );
 
+// Rising signal-strength-style bar meter — used by the Energy/Stress check-in buttons instead of
+// an emoji face. `index` is the level's own position in its 4-entry array (0-3), so "how many bars
+// are lit" reads the same way a signal or battery icon does: index 0 lights one short bar, index 3
+// lights all four. Colored by the level's own tone; unlit bars fall back to a neutral dim tone
+// rather than disappearing, so the full 4-bar shape is always visible.
+const LevelMeter = ({ index, color, total=4 }) => (
+  <div style={{ display:"flex", alignItems:"flex-end", gap:2.5, height:15 }} aria-hidden="true">
+    {Array.from({ length: total }).map((_, i) => (
+      <div key={i} style={{ width:4, height:5 + i*3.2, borderRadius:2, background:i<=index?color:C.cardB, transition:"background .2s ease" }} />
+    ))}
+  </div>
+);
+
 // Shared loading spinner — used everywhere the app is waiting on an async/AI action
 // (fingerprint check, Around Me search, Generate Report, AI Suggest) so "working on it"
 // looks and feels the same throughout the app instead of some spots getting a spinner
@@ -1375,9 +1391,13 @@ function QuickResetModal({ session, onCancel }) {
   const mm = Math.floor(session.seconds / 60), ss = session.seconds % 60;
   return (
     <div role="dialog" aria-modal="true" aria-label={session.label} style={{ position:"fixed", inset:0, zIndex:1300, background:C.bg, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:24 }}>
-      <Mono style={{ color:C.muted, letterSpacing:.8, marginBottom:22 }}>{session.label}</Mono>
-      <div style={{ position:"relative", width:180, height:180, marginBottom:26 }}>
-        <svg viewBox="0 0 180 180" style={{ width:180, height:180, transform:"rotate(-90deg)" }}>
+      <Mono style={{ color:C.muted, letterSpacing:.8, marginBottom:22, animation:"fadeUp .3s ease" }}>{session.label}</Mono>
+      <div style={{ position:"relative", width:180, height:180, marginBottom:26, animation:"pop .35s cubic-bezier(.34,1.56,.64,1)" }}>
+        {/* A slow ambient glow behind the ring, not tied to the second-by-second countdown —
+            reads as "breathing" rather than a ticking timer, which is the actual point of a
+            Quick Reset. Purely decorative (prefers-reduced-motion turns it off, see ANIM). */}
+        <div style={{ position:"absolute", inset:-22, borderRadius:"50%", background:`radial-gradient(circle, ${C.accent}33, transparent 70%)`, animation:"breathe 4s ease-in-out infinite" }} />
+        <svg viewBox="0 0 180 180" style={{ position:"relative", width:180, height:180, transform:"rotate(-90deg)" }}>
           <circle cx="90" cy="90" r="76" fill="none" stroke={C.card} strokeWidth="10" />
           <circle cx="90" cy="90" r="76" fill="none" stroke={C.accent} strokeWidth="10" strokeLinecap="round"
             strokeDasharray={2*Math.PI*76} strokeDashoffset={2*Math.PI*76*(1-pct)}
@@ -1387,7 +1407,7 @@ function QuickResetModal({ session, onCancel }) {
           {mm}:{String(ss).padStart(2,"0")}
         </div>
       </div>
-      <div style={{ fontSize:14, color:C.soft, textAlign:"center", maxWidth:280, lineHeight:1.6, marginBottom:34 }}>{session.guide}</div>
+      <div style={{ fontSize:14, color:C.soft, textAlign:"center", maxWidth:280, lineHeight:1.6, marginBottom:34, animation:"fadeUp .35s ease" }}>{session.guide}</div>
       <Btn v="outline" onClick={onCancel}>End early</Btn>
     </div>
   );
@@ -1400,9 +1420,14 @@ function QuickResetModal({ session, onCancel }) {
 // never reads as a medical conclusion.
 function PatternDetailModal({ pattern, onClose }) {
   const maxAvg = Math.max(...pattern.groups.map(g => g.avg), 0.01);
+  // Bars grow in from zero on open rather than appearing at full width — a one-shot transition
+  // (not a keyframe, since each bar's target width is a real computed number) that gives the
+  // numbers a moment to visually land instead of just materializing.
+  const [grown, setGrown] = useState(false);
+  useEffect(() => { const t = setTimeout(() => setGrown(true), 30); return () => clearTimeout(t); }, []);
   return (
     <div style={{ position:"fixed", inset:0, zIndex:950, background:"rgba(0,0,0,.93)", display:"flex", alignItems:"center", justifyContent:"center", padding:24 }} onClick={onClose}>
-      <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:18, padding:26, maxWidth:420, width:"100%", animation:"pop .3s ease" }} onClick={e => e.stopPropagation()}>
+      <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:18, padding:26, maxWidth:420, width:"100%", animation:"pop .3s cubic-bezier(.34,1.56,.64,1)" }} onClick={e => e.stopPropagation()}>
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:10, marginBottom:14 }}>
           <div style={{ fontSize:16, fontWeight:700, color:C.white, lineHeight:1.4 }}>{pattern.insight}</div>
           <button onClick={onClose} aria-label="Close" style={{ background:"none", border:"none", color:C.muted, fontSize:20, cursor:"pointer", padding:2, lineHeight:1, flexShrink:0 }}>✕</button>
@@ -1416,7 +1441,7 @@ function PatternDetailModal({ pattern, onClose }) {
                 <Mono style={{ color:C.white }}>{g.avg.toFixed(1)} · {g.n} day{g.n!==1?"s":""}</Mono>
               </div>
               <div style={{ background:C.surface, borderRadius:8, height:8, overflow:"hidden" }}>
-                <div style={{ width:`${Math.max(4, g.avg/maxAvg*100)}%`, height:"100%", background:i===0?C.accent:C.muted, borderRadius:8 }} />
+                <div style={{ width:grown?`${Math.max(4, g.avg/maxAvg*100)}%`:"0%", height:"100%", background:i===0?C.accent:C.muted, borderRadius:8, transition:`width .7s ${i*.08}s cubic-bezier(.16,1,.3,1)` }} />
               </div>
             </div>
           ))}
@@ -1668,7 +1693,11 @@ function ProfileScreenHeader({ title, onBack }) {
 function ProfileRow({ label, sub, expanded, onToggle, children, right }) {
   return (
     <div style={{ borderBottom:`1px solid ${C.div}` }}>
-      <div onClick={onToggle} style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"13px 2px", cursor:"pointer" }}>
+      {/* className="row" gets the app's shared hover highlight (pointer devices only — see the
+          global .row:hover rule); the negative margin/matching extra padding lets that highlight
+          read as a soft rounded pill inset from the card edge, instead of a hard-edged rectangle
+          flush against it. */}
+      <div className="row" onClick={onToggle} style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"13px 8px", margin:"0 -8px", borderRadius:12, cursor:"pointer", transition:"background .15s ease" }}>
         <div>
           <div style={{ fontSize:13, fontWeight:600, color:C.white }}>{label}</div>
           {sub && <Mono style={{ display:"block", color:C.muted, marginTop:2 }}>{sub}</Mono>}
@@ -1679,7 +1708,7 @@ function ProfileRow({ label, sub, expanded, onToggle, children, right }) {
         </div>
       </div>
       {expanded && children && (
-        <div style={{ padding:"0 2px 16px", animation:"fadeIn .2s ease" }}>{children}</div>
+        <div style={{ padding:"0 2px 16px", animation:"fadeUp .25s ease" }}>{children}</div>
       )}
     </div>
   );
@@ -2257,16 +2286,16 @@ const STORAGE_KEYS = {
 // shared between the button rows that render them and the handlers that log them, so the label
 // shown to the user and the label used in a toast/pattern sentence can never drift apart.
 const ENERGY_LEVELS = [
-  { key:"low", label:"Low", emoji:"🔋", tone:"negative" },
-  { key:"okay", label:"Okay", emoji:"🙂", tone:"warning" },
-  { key:"good", label:"Good", emoji:"😊", tone:"accent" },
-  { key:"great", label:"Great", emoji:"⚡", tone:"positive" },
+  { key:"low", label:"Low", tone:"negative" },
+  { key:"okay", label:"Okay", tone:"warning" },
+  { key:"good", label:"Good", tone:"accent" },
+  { key:"great", label:"Great", tone:"positive" },
 ];
 const STRESS_LEVELS = [
-  { key:"calm", label:"Calm", emoji:"😌", tone:"positive" },
-  { key:"neutral", label:"Neutral", emoji:"😐", tone:"accent" },
-  { key:"worried", label:"Worried", emoji:"😟", tone:"warning" },
-  { key:"overwhelmed", label:"Overwhelmed", emoji:"😣", tone:"negative" },
+  { key:"calm", label:"Calm", tone:"positive" },
+  { key:"neutral", label:"Neutral", tone:"accent" },
+  { key:"worried", label:"Worried", tone:"warning" },
+  { key:"overwhelmed", label:"Overwhelmed", tone:"negative" },
 ];
 // seconds:0 marks the "close your eyes" session, whose duration the user picks freely rather than
 // the app dictating one.
@@ -9058,8 +9087,8 @@ ${voiceMode
                 ) : (
                   <div style={{ display:"flex", flexDirection:"column", gap:8, paddingBottom:4 }}>
                     {wellnessPatterns.map(p => (
-                      <button key={p.id} onClick={() => setPatternDetail(p)}
-                        style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:10, textAlign:"left", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:14, padding:"12px 13px", cursor:"pointer" }}>
+                      <button key={p.id} className="row" onClick={() => setPatternDetail(p)}
+                        style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:10, textAlign:"left", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:14, padding:"12px 13px", cursor:"pointer", transition:"background .15s ease" }}>
                         <div style={{ fontSize:12.5, color:C.text, lineHeight:1.5 }}>{p.insight}</div>
                         <NavIcon id="trendUp" size={13} color={C.muted} />
                       </button>
@@ -9074,8 +9103,8 @@ ${voiceMode
                 onToggle={() => setOpenWellnessRow(v => v==="reset" ? null : "reset")}>
                 <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:9, paddingBottom:4 }}>
                   {QUICK_RESET_KINDS.map(k => (
-                    <button key={k.key} onClick={() => startQuickReset(k.key)}
-                      style={{ background:C.card, border:`1px solid ${C.accent}2a`, borderRadius:14, padding:"11px 10px", cursor:"pointer", textAlign:"left" }}>
+                    <button key={k.key} className="row" onClick={() => startQuickReset(k.key)}
+                      style={{ background:C.card, border:`1px solid ${C.accent}2a`, borderRadius:14, padding:"11px 10px", cursor:"pointer", textAlign:"left", transition:"background .15s ease" }}>
                       <div style={{ fontSize:12, fontWeight:700, color:C.white, marginBottom:2 }}>{k.label}</div>
                       <Mono style={{ color:C.muted, fontSize:10 }}>{k.seconds < 60 ? `${k.seconds}s` : `${Math.round(k.seconds/60)} min`}</Mono>
                     </button>
@@ -9095,14 +9124,18 @@ ${voiceMode
                 <div style={{ paddingBottom:4 }}>
                   <Mono style={{ display:"block", color:C.muted, letterSpacing:.8, marginBottom:10 }}>How's your energy today?</Mono>
                   <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:7, marginBottom:16 }}>
-                    {ENERGY_LEVELS.map(l => {
+                    {ENERGY_LEVELS.map((l, i) => {
                       const today = todayISO();
                       const active = energyLog.find(e => e.date===today)?.level === l.key;
                       const lColor = C[l.tone];
                       return (
-                        <button key={l.key} onClick={() => applyEnergy(l.key)}
-                          style={{ background:active?lColor+"22":C.surface, border:`1.5px solid ${active?lColor:C.cardB}`, borderRadius:12, padding:"10px 4px", cursor:"pointer", textAlign:"center" }}>
-                          <div style={{ fontSize:16, marginBottom:3 }}>{l.emoji}</div>
+                        // Keying on the active transition (not just l.key) so the pop-in
+                        // animation replays every tap, matching the mood buttons on Overview.
+                        <button key={active ? `${l.key}-on` : l.key} onClick={() => applyEnergy(l.key)}
+                          style={{ background:active?lColor+"22":C.surface, border:`1.5px solid ${active?lColor:C.cardB}`, borderRadius:12, padding:"10px 4px", cursor:"pointer", textAlign:"center", boxShadow:active?`0 0 12px ${lColor}40`:"none", animation:active?"bouncePop .4s cubic-bezier(.34,1.56,.64,1)":"none" }}>
+                          <div style={{ display:"flex", justifyContent:"center", marginBottom:5 }}>
+                            <LevelMeter index={i} color={lColor} />
+                          </div>
                           <Mono style={{ color:active?lColor:C.soft, fontSize:10, fontWeight:700 }}>{l.label}</Mono>
                         </button>
                       );
@@ -9110,14 +9143,16 @@ ${voiceMode
                   </div>
                   <Mono style={{ display:"block", color:C.muted, letterSpacing:.8, marginBottom:10 }}>How stressed are you right now?</Mono>
                   <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:7 }}>
-                    {STRESS_LEVELS.map(l => {
+                    {STRESS_LEVELS.map((l, i) => {
                       const today = todayISO();
                       const active = stressLog.find(e => e.date===today)?.level === l.key;
                       const lColor = C[l.tone];
                       return (
-                        <button key={l.key} onClick={() => applyStress(l.key)}
-                          style={{ background:active?lColor+"22":C.surface, border:`1.5px solid ${active?lColor:C.cardB}`, borderRadius:12, padding:"10px 4px", cursor:"pointer", textAlign:"center" }}>
-                          <div style={{ fontSize:16, marginBottom:3 }}>{l.emoji}</div>
+                        <button key={active ? `${l.key}-on` : l.key} onClick={() => applyStress(l.key)}
+                          style={{ background:active?lColor+"22":C.surface, border:`1.5px solid ${active?lColor:C.cardB}`, borderRadius:12, padding:"10px 4px", cursor:"pointer", textAlign:"center", boxShadow:active?`0 0 12px ${lColor}40`:"none", animation:active?"bouncePop .4s cubic-bezier(.34,1.56,.64,1)":"none" }}>
+                          <div style={{ display:"flex", justifyContent:"center", marginBottom:5 }}>
+                            <LevelMeter index={i} color={lColor} />
+                          </div>
                           <Mono style={{ color:active?lColor:C.soft, fontSize:10, fontWeight:700 }}>{l.label}</Mono>
                         </button>
                       );
