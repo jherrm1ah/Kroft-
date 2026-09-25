@@ -953,35 +953,53 @@ const Tag = ({ children, hi, tone, style }) => {
   );
 };
 
-// Splash screen — matches the KROFT brand reference: white bg, scattered icon cards,
-// orange accent underlines, centered wordmark. Always light/white regardless of app theme,
-// since this is a fixed branding moment, not a themed screen.
-const SPLASH_ORANGE = "#F97316";
-const SPLASH_CARDS = [
-  { top:"14%", left:"11%", rot:-6, icon:<svg viewBox="0 0 24 24" width={26} height={26}><path d="M4.5 6.5a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H10l-4 3.5v-3.5H6.5a2 2 0 0 1-2-2z" stroke="#0a0a0a" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" fill="none" /><circle cx="9" cy="10.3" r=".9" fill="#0a0a0a" /><circle cx="12.3" cy="10.3" r=".9" fill="#0a0a0a" /><circle cx="15.6" cy="10.3" r=".9" fill="#0a0a0a" /></svg> },
-  { top:"20%", left:"66%", rot:5, icon:<svg viewBox="0 0 24 24" width={26} height={26}><rect x="3.5" y="7" width="17" height="12" rx="2.2" stroke="#0a0a0a" strokeWidth={1.6} fill="none" /><path d="M3.5 10h17" stroke="#0a0a0a" strokeWidth={1.6} /><circle cx="16.5" cy="14.2" r="1.1" fill="#0a0a0a" /></svg> },
-  { top:"39%", left:"2%", rot:-4, icon:<svg viewBox="0 0 24 24" width={26} height={26}><rect x="4" y="5.5" width="16" height="15" rx="2" stroke="#0a0a0a" strokeWidth={1.6} fill="none" /><path d="M4 9.5h16M8 3.5v3M16 3.5v3" stroke="#0a0a0a" strokeWidth={1.6} strokeLinecap="round" /></svg> },
-  { top:"55%", left:"78%", rot:6, icon:<svg viewBox="0 0 24 24" width={26} height={26}><rect x="4" y="4" width="16" height="16" rx="3.2" stroke="#0a0a0a" strokeWidth={1.6} fill="none" /><path d="M8 12.3l2.6 2.6L16.5 9" stroke="#0a0a0a" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round" fill="none" /></svg> },
-  { top:"72%", left:"4%", rot:4, icon:<svg viewBox="0 0 24 24" width={26} height={26}><path d="M6 19v-4.5M12 19V9M18 19V6" stroke="#0a0a0a" strokeWidth={2} strokeLinecap="round" /></svg> },
-  { top:"78%", left:"66%", rot:-5, icon:<svg viewBox="0 0 24 24" width={26} height={26}><path d="M6 4.5h9l3 3V19a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V5.5a1 1 0 0 1 1-1z" stroke="#0a0a0a" strokeWidth={1.6} fill="none" /><path d="M8.5 11h7M8.5 14.3h7M8.5 17.6h4" stroke="#0a0a0a" strokeWidth={1.4} strokeLinecap="round" /></svg> },
-  { top:"91%", left:"38%", rot:0, icon:<svg viewBox="0 0 24 24" width={26} height={26}><circle cx="12" cy="8.2" r="3.4" stroke="#0a0a0a" strokeWidth={1.6} fill="none" /><path d="M5 20c0-3.6 3.1-6.4 7-6.4s7 2.8 7 6.4" stroke="#0a0a0a" strokeWidth={1.6} fill="none" strokeLinecap="round" /></svg> },
-];
+// Both onboarding images are cropped to the phone's screen content only (status bar/notch and
+// home indicator removed), at a fixed 531:949 pixel ratio. This wrapper reproduces
+// object-fit:contain sizing manually (max-width driven by height*ratio, max-height driven by
+// width/ratio) so the rendered box always has that exact same ratio, at any viewport size — which
+// is what makes the percentage-based button overlays in WelcomeScreen line up with the image
+// pixels underneath them regardless of device screen shape.
+const ONBOARD_RATIO = 531 / 949;
+const OnboardImageFrame = ({ children }) => (
+  <div style={{ position:"fixed", inset:0, background:"#f4f2ee", display:"flex", alignItems:"center", justifyContent:"center" }}>
+    <div style={{ position:"relative", width:"100%", height:"100%", maxWidth:`calc(100vh * ${ONBOARD_RATIO})`, maxHeight:`calc(100vw / ${ONBOARD_RATIO})` }}>
+      {children}
+    </div>
+  </div>
+);
+
+// Screen 1 of the onboarding reference, used as-is (the exact provided image, cropped to just the
+// phone's screen content) rather than recreated in code.
 function SplashScreen({ fading }) {
   return (
-    <div style={{ position:"fixed", inset:0, zIndex:9999, background:"#ffffff", overflow:"hidden", opacity:fading?0:1, transition:"opacity .6s ease", pointerEvents:fading?"none":"all" }}>
-      <div style={{ position:"absolute", top:"30%", left:"50%", transform:"translate(-50%,-50%)", width:340, height:340, borderRadius:"50%", border:"1px solid rgba(0,0,0,.06)" }} />
-      {SPLASH_CARDS.map((c,i) => (
-        <div key={i} style={{ position:"absolute", top:c.top, left:c.left, width:76, height:76, borderRadius:20, background:"#fff", boxShadow:"0 10px 28px rgba(0,0,0,.08)", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:7, transform:`rotate(${c.rot}deg)`, animation:`fadeUp .6s ease ${i*0.08}s both` }}>
-          {c.icon}
-          <div style={{ width:16, height:3, borderRadius:2, background:SPLASH_ORANGE }} />
-        </div>
-      ))}
-      <div style={{ position:"absolute", top:"50%", left:"50%", transform:"translate(-50%,-50%)", textAlign:"center", width:"80%" }}>
-        <div style={{ fontSize:44, fontWeight:800, letterSpacing:10, color:"#0a0a0a", fontFamily:"'Space Grotesk',sans-serif" }}>KROFT</div>
-        <div style={{ width:28, height:3, borderRadius:2, background:SPLASH_ORANGE, margin:"14px auto" }} />
-        <div style={{ fontSize:15, color:"#4a4a4a", lineHeight:1.5, fontFamily:"'Space Grotesk',sans-serif" }}>Your AI Assistant<br/>for Life &amp; Business.</div>
-      </div>
-      <div style={{ position:"absolute", bottom:"7%", left:"50%", transform:"translateX(-50%)", fontSize:13, color:"#8a8a8a", fontFamily:"'Space Grotesk',sans-serif", letterSpacing:.3 }}>Smart. Simple. All in one.</div>
+    <div style={{ position:"fixed", inset:0, zIndex:9999, opacity:fading?0:1, transition:"opacity .6s ease", pointerEvents:fading?"none":"all" }}>
+      <OnboardImageFrame>
+        <img src="/onboarding-screen-1.png" alt="" style={{ width:"100%", height:"100%", display:"block" }} />
+      </OnboardImageFrame>
+    </div>
+  );
+}
+
+// Screen 2 of the onboarding reference — same exact image, plus two invisible clickable overlays
+// positioned (as percentages of the image's own pixel dimensions) exactly over the "Get Started"
+// and "I already have an account" buttons drawn into the picture, so tapping the picture's own
+// buttons triggers real navigation without redrawing them.
+function WelcomeScreen({ onGetStarted, onLogIn }) {
+  return (
+    <div style={{ position:"fixed", inset:0, zIndex:900 }}>
+      <OnboardImageFrame>
+        <img src="/onboarding-screen-2.png" alt="" style={{ width:"100%", height:"100%", display:"block" }} />
+        <button
+          onClick={onGetStarted}
+          aria-label="Get Started"
+          style={{ position:"absolute", left:"6.8%", top:"81.1%", width:"87.1%", height:"7.1%", background:"transparent", border:"none", padding:0, cursor:"pointer" }}
+        />
+        <button
+          onClick={onLogIn}
+          aria-label="I already have an account"
+          style={{ position:"absolute", left:"6.8%", top:"89.8%", width:"87.1%", height:"7.2%", background:"transparent", border:"none", padding:0, cursor:"pointer" }}
+        />
+      </OnboardImageFrame>
     </div>
   );
 }
@@ -2449,12 +2467,13 @@ function KroftApp({ onFullReset } = {}) {
   const [voiceSpeed, setVoiceSpeed] = useState(1.0);
   useEffect(() => { setPreferredVoiceSpeed(voiceSpeed); }, [voiceSpeed]);
 
-  // Starts at signup. With Supabase configured, the load effect below jumps straight to the
-  // dashboard when a real session already exists (a returning, still-signed-in user), the same
-  // way any app with real sessions keeps you signed in across a reload. Without Supabase
-  // configured (local-only mode), it instead switches to login once a saved local account is
-  // found, matching this app's original device-local behavior.
-  const [step, setStep] = useState("signup");
+  // A brand-new visitor sees the Welcome screen (image) first. With Supabase configured, the
+  // load effect below jumps straight to the dashboard when a real session already exists (a
+  // returning, still-signed-in user), the same way any app with real sessions keeps you signed
+  // in across a reload. Without Supabase configured (local-only mode), it instead switches to
+  // login once a saved local account is found, matching this app's original device-local
+  // behavior — so a returning user never actually sees Welcome flash past.
+  const [step, setStep] = useState("welcome");
   // True only while "business" or "prefs" is showing because Profile's Edit Details /
   // Preferences opened it on an already-signed-in account — as opposed to the same two screens
   // showing as part of first-time onboarding, reached by signing up. Both cases render the same
@@ -6353,6 +6372,10 @@ ${voiceMode
   if (step !== "dashboard") return (
     <div key={themeTick} style={{ fontFamily:"'Space Grotesk',sans-serif", overflowX:"hidden", maxWidth:"100vw", touchAction:"pan-y" }}>
       <style>{G}</style>
+
+      {step === "welcome" && (
+        <WelcomeScreen onGetStarted={() => setStep("signup")} onLogIn={() => setStep("login")} />
+      )}
 
       {step === "login" && (
         <OShell step="login">
