@@ -105,6 +105,9 @@ const ANIM = `
 /* Slow ambient glow behind the Quick Reset countdown ring — a calmer, longer cycle than
    alarmPulse above, meant to read as "breathing" rather than an alert. */
 @keyframes breathe{0%,100%{transform:scale(1);opacity:.35}50%{transform:scale(1.18);opacity:.75}}
+/* Real blinks are infrequent (every few seconds) and brief — most of the cycle sits at
+   scaleY(0) (eyelid hidden, eyes open), with a quick close-and-reopen near the end. */
+@keyframes robotBlink{0%,90%,100%{transform:scaleY(0)}93%,95%{transform:scaleY(1)}}
 `;
 
 // Uses Intl's native currency formatting instead of a hand-maintained symbol map, so any
@@ -1041,6 +1044,21 @@ const LevelMeter = ({ index, color, total=4 }) => (
 // and others only a text swap.
 const Spinner = ({ size=14, color=C.white, thickness=2 }) => (
   <div style={{ width:size, height:size, border:`${thickness}px solid ${color}`, borderTopColor:"transparent", borderRadius:"50%", animation:"spin .7s linear infinite", flexShrink:0 }} />
+);
+
+// The robot mascot icon (kroft-robot-badge.png, background removed) used on auth screens and
+// the Ask Kroft empty state. Two small overlay shapes sit exactly over the photo's own eye
+// arcs, colored to match its screen's exact near-black tone (#1c1b1a, sampled from the asset)
+// so at rest they're invisible against it — the robotBlink keyframe (see ANIM) briefly scales
+// them up to cover the eyes and back down, simulating a blink without needing separate eye
+// layers baked into the image itself. Positions are percentages of the image's own pixel
+// dimensions (measured directly from the 512×512 asset), so they stay aligned at any size.
+const RobotIcon = ({ size=48 }) => (
+  <div style={{ position:"relative", width:size, height:size, flexShrink:0 }}>
+    <img src="/kroft-robot-badge.png" alt="" style={{ width:"100%", height:"100%", display:"block", objectFit:"contain" }} />
+    <div style={{ position:"absolute", left:"32.6%", top:"45%", width:"15%", height:"8%", background:"#1c1b1a", borderRadius:"40%", transformOrigin:"center", animation:"robotBlink 4.8s ease-in-out infinite" }} />
+    <div style={{ position:"absolute", left:"52.4%", top:"45%", width:"15%", height:"8%", background:"#1c1b1a", borderRadius:"40%", transformOrigin:"center", animation:"robotBlink 4.8s ease-in-out infinite" }} />
+  </div>
 );
 
 // Minimal location pin icon, drawn with SVG to match the monochrome aesthetic — no emoji
@@ -6402,7 +6420,7 @@ ${voiceMode
         <OShell step="login">
           <div style={{ textAlign:"center", marginBottom:28 }}>
             <div style={{ margin:"0 auto 18px", width:64, height:64, borderRadius:18, background:C.white, display:"flex", alignItems:"center", justifyContent:"center", boxShadow:`0 0 0 8px ${C.fillStrong}` }}>
-              <img src="/kroft-robot-badge.png" alt="" style={{ width:"66%", height:"66%", objectFit:"contain" }} />
+              <RobotIcon size={42} />
             </div>
             <h1 style={{ fontSize:30, fontWeight:800, color:C.white, letterSpacing:-1.5, marginBottom:4 }}>Welcome back</h1>
             <Mono style={{ color:C.muted }}>Sign in to KROFT by Virt Technologies</Mono>
@@ -6497,7 +6515,7 @@ ${voiceMode
         <OShell step="reset-password">
           <div style={{ textAlign:"center", marginBottom:28 }}>
             <div style={{ margin:"0 auto 18px", width:64, height:64, borderRadius:18, background:C.white, display:"flex", alignItems:"center", justifyContent:"center", boxShadow:`0 0 0 8px ${C.fillStrong}` }}>
-              <img src="/kroft-robot-badge.png" alt="" style={{ width:"66%", height:"66%", objectFit:"contain" }} />
+              <RobotIcon size={42} />
             </div>
             <h1 style={{ fontSize:30, fontWeight:800, color:C.white, letterSpacing:-1.5, marginBottom:4 }}>Set a new password</h1>
             <Mono style={{ color:C.muted }}>Choose a new password for your account</Mono>
@@ -6525,7 +6543,7 @@ ${voiceMode
         <OShell step="signup" light>
           <div style={{ textAlign:"center", marginBottom:22 }}>
             <div style={{ margin:"0 auto 16px", width:60, height:60, borderRadius:16, background:LIGHT.white, display:"flex", alignItems:"center", justifyContent:"center" }}>
-              <img src="/kroft-robot-badge.png" alt="" style={{ width:"66%", height:"66%", objectFit:"contain" }} />
+              <RobotIcon size={40} />
             </div>
             <h1 style={{ fontSize:28, fontWeight:800, color:LIGHT.white, letterSpacing:-1, marginBottom:4 }}>Create account</h1>
             <Mono light style={{ color:LIGHT.muted }}>Set up your KROFT profile</Mono>
@@ -9458,7 +9476,7 @@ ${voiceMode
                     as a bubble while it's the only thing there. */}
                 {aiMessages.length <= 1 ? (
                   <div style={{ textAlign:"center", animation:"fadeUp .4s ease" }}>
-                    <img src="/kroft-robot-badge.png" alt="" style={{ width:52, height:52, display:"block", margin:"0 auto 16px" }} />
+                    <div style={{ margin:"0 auto 16px" }}><RobotIcon size={52} /></div>
                     <div style={{ fontSize:22, fontWeight:800, color:C.text, letterSpacing:-.5 }}>What can I help with, {firstNameOf(user.name)||"there"}?</div>
                   </div>
                 ) : aiMessages.map((m,i) => (
