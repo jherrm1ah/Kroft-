@@ -9001,10 +9001,16 @@ ${voiceMode
                 })}
               </div>
             </Card>
+            {/* A thin hairline between each major Wellness section, on top of the existing gap —
+                the page reads as one continuous flow of sections rather than loose floating
+                cards. Same C.div token every other hairline divider in the app already uses
+                (see ProfileRow's own row divider). */}
+            <div style={{ height:1, background:C.div, marginBottom:14 }} />
             {/* The score only ever existed as a single "today" number — nothing showed whether
                 this week is actually trending up or down, only whatever day happened to be
                 showing. wellnessHistory records each day's score right before it rolls over. */}
             {wellnessTrend.length > 1 && (
+              <>
               <Card style={{ marginBottom:14, borderRadius:22 }}>
                 <Mono style={{ display:"block", color:C.muted, marginBottom:12, letterSpacing:.8 }}>Score · last {wellnessTrend.length} days</Mono>
                 {/* Bars instead of a line — today solid, every earlier day a lighter tint of the
@@ -9022,6 +9028,8 @@ ${voiceMode
                   </BarChart>
                 </ResponsiveContainer>
               </Card>
+              <div style={{ height:1, background:C.div, marginBottom:14 }} />
+              </>
             )}
             {/* The five new Wellness features (Your Patterns, Quick Reset, Energy & Stress, Sleep,
                 Journal) live as pull-out rows in one Card — the same collapsed-row/expand-in-place
@@ -9246,6 +9254,7 @@ ${voiceMode
                 </div>
               </ProfileRow>
             </Card>
+            <div style={{ height:1, background:C.div, marginBottom:14 }} />
             <Card style={{ borderRadius:22 }}>
               <Mono style={{ display:"block", color:C.muted, letterSpacing:.8, marginBottom:13 }}>Daily recommendations</Mono>
               {wellnessTips().map((r,i) => (
