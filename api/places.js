@@ -20,6 +20,32 @@ function jsonResponse(body, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
 
+// Both upstream services are free and keyless, which is exactly why they're not always fast or
+// even up: Nominatim enforces a strict 1 req/s per caller, and Overpass's single public instance
+// (overpass-api.de) is a well-documented bottleneck that regularly queues, slows to a crawl, or
+// drops connections under load — completely independent of anything this app does. A plain
+// fetch() with no timeout means a stalled upstream leaves the request hanging until the
+// platform's own ceiling, which is a much worse, much slower failure than a clear, fast error.
+const TIMEOUT_MS = 9000;
+async function fetchWithTimeout(url, opts = {}) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...opts, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Overpass has no equivalent to a load balancer for anonymous callers, but several independent
+// community-run instances mirror the same data and accept the same query language — so a second,
+// different-operator instance is a real fallback when overpass-api.de itself is the thing having
+// a bad day, not just a retry against the same overloaded server.
+const OVERPASS_ENDPOINTS = [
+  "https://overpass-api.de/api/interpreter",
+  "https://overpass.kumi.systems/api/interpreter",
+];
+
 // Maps each Around Me category key to the real OSM tag(s) that identify it. Some categories are
 // genuinely more than one tag (there's no single "entertainment" or "transport" amenity in OSM),
 // so a category can union several node/way clauses in one Overpass query.
@@ -59,7 +85,12 @@ export default async function handler(req) {
     if (mode === "reverse") {
       const lat = url.searchParams.get("lat"), lon = url.searchParams.get("lon");
       if (!lat || !lon) return jsonResponse({ error: "Missing lat/lon" }, 400);
-      const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}`, { headers:{ "User-Agent":USER_AGENT } });
+      let res;
+      try {
+        res = await fetchWithTimeout(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}`, { headers:{ "User-Agent":USER_AGENT } });
+      } catch (e) {
+        return jsonResponse({ error: e.name === "AbortError" ? "Places service timed out" : "Places service unavailable" }, 504);
+      }
       if (!res.ok) return jsonResponse({ error:"Places service unavailable" }, 502);
       return jsonResponse(await res.json());
     }
@@ -69,7 +100,12 @@ export default async function handler(req) {
       if (!q) return jsonResponse({ error:"Missing q" }, 400);
       const params = new URLSearchParams({ format:"jsonv2", q, limit:"12" });
       if (viewbox) { params.set("viewbox", viewbox); params.set("bounded", "1"); }
-      const res = await fetch(`https://nominatim.openstreetmap.org/search?${params}`, { headers:{ "User-Agent":USER_AGENT } });
+      let res;
+      try {
+        res = await fetchWithTimeout(`https://nominatim.openstreetmap.org/search?${params}`, { headers:{ "User-Agent":USER_AGENT } });
+      } catch (e) {
+        return jsonResponse({ error: e.name === "AbortError" ? "Places service timed out" : "Places service unavailable" }, 504);
+      }
       if (!res.ok) return jsonResponse({ error:"Places service unavailable" }, 502);
       return jsonResponse(await res.json());
     }
@@ -80,16 +116,31 @@ export default async function handler(req) {
       const radius = Math.min(Number(url.searchParams.get("radius")) || 3000, 10000);
       const clauses = CATEGORY_TAGS[category];
       if (!clauses || !lat || !lon) return jsonResponse({ error:"Missing or unknown category, or missing lat/lon" }, 400);
-      const query = `[out:json][timeout:15];(${clauses.map(c => `${c}(around:${radius},${lat},${lon});`).join("")});out center 20;`;
-      const res = await fetch("https://overpass-api.de/api/interpreter", {
-        method:"POST",
-        headers:{ "Content-Type":"application/x-www-form-urlencoded", "User-Agent":USER_AGENT },
-        body:`data=${encodeURIComponent(query)}`,
-      });
-      if (!res.ok) return jsonResponse({ error:"Places service unavailable" }, 502);
-      const data = await res.json();
-      const results = (data.elements || []).map(parseOverpassElement).filter(Boolean).slice(0, 12);
-      return jsonResponse({ results });
+      const query = `[out:json][timeout:8];(${clauses.map(c => `${c}(around:${radius},${lat},${lon});`).join("")});out center 20;`;
+
+      // Try each mirror in turn — a timeout or 5xx from one is exactly the "this instance is
+      // having a bad day" case the second mirror exists for, not a reason to give up. A 4xx
+      // (bad query) would repeat identically on every mirror, so that alone stops the loop early.
+      let lastError = "Places service unavailable";
+      for (const endpoint of OVERPASS_ENDPOINTS) {
+        let res;
+        try {
+          res = await fetchWithTimeout(endpoint, {
+            method:"POST",
+            headers:{ "Content-Type":"application/x-www-form-urlencoded", "User-Agent":USER_AGENT },
+            body:`data=${encodeURIComponent(query)}`,
+          });
+        } catch (e) {
+          lastError = e.name === "AbortError" ? "Places service timed out" : "Places service unavailable";
+          continue;
+        }
+        if (res.status >= 400 && res.status < 500) return jsonResponse({ error:"Places service unavailable" }, 502);
+        if (!res.ok) { lastError = "Places service unavailable"; continue; }
+        const data = await res.json();
+        const results = (data.elements || []).map(parseOverpassElement).filter(Boolean).slice(0, 12);
+        return jsonResponse({ results });
+      }
+      return jsonResponse({ error: lastError }, 504);
     }
 
     return jsonResponse({ error:"Unknown mode" }, 400);
