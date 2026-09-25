@@ -953,35 +953,52 @@ const Tag = ({ children, hi, tone, style }) => {
   );
 };
 
-// Splash screen — matches the KROFT brand reference: white bg, scattered icon cards,
-// orange accent underlines, centered wordmark. Always light/white regardless of app theme,
-// since this is a fixed branding moment, not a themed screen.
+// Splash screen — six feature cards evenly orbiting a ring above the wordmark, orange accent
+// underlines. Always light/white regardless of app theme, since this is a fixed branding moment,
+// not a themed screen.
+//
+// The previous version positioned 7 cards with independent top/left percentages while the ring
+// and cards themselves were fixed pixel sizes — on a real phone (a different aspect ratio than
+// whatever screen the percentages were eyeballed against), that mismatch meant cards drifted
+// outside the ring instead of orbiting it, and the bottom-most one sat right at the screen edge.
+// This version ties every position to the ring's own radius via a CSS custom property (--r, in
+// vmin so it scales with the smaller of viewport width/height) and places cards with the standard
+// "rotate, translate out, rotate back" technique — so cards are mathematically ON the ring's edge
+// at fixed clock positions (1/3/5/7/9/11 o'clock, deliberately skipping 12/6 so none of them ever
+// crowds the wordmark below or the status bar above), and it holds together on any real screen
+// instead of only the one it was tuned against.
 const SPLASH_ORANGE = "#F97316";
-const SPLASH_CARDS = [
-  { top:"14%", left:"11%", rot:-6, icon:<svg viewBox="0 0 24 24" width={26} height={26}><path d="M4.5 6.5a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H10l-4 3.5v-3.5H6.5a2 2 0 0 1-2-2z" stroke="#0a0a0a" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" fill="none" /><circle cx="9" cy="10.3" r=".9" fill="#0a0a0a" /><circle cx="12.3" cy="10.3" r=".9" fill="#0a0a0a" /><circle cx="15.6" cy="10.3" r=".9" fill="#0a0a0a" /></svg> },
-  { top:"20%", left:"66%", rot:5, icon:<svg viewBox="0 0 24 24" width={26} height={26}><rect x="3.5" y="7" width="17" height="12" rx="2.2" stroke="#0a0a0a" strokeWidth={1.6} fill="none" /><path d="M3.5 10h17" stroke="#0a0a0a" strokeWidth={1.6} /><circle cx="16.5" cy="14.2" r="1.1" fill="#0a0a0a" /></svg> },
-  { top:"39%", left:"2%", rot:-4, icon:<svg viewBox="0 0 24 24" width={26} height={26}><rect x="4" y="5.5" width="16" height="15" rx="2" stroke="#0a0a0a" strokeWidth={1.6} fill="none" /><path d="M4 9.5h16M8 3.5v3M16 3.5v3" stroke="#0a0a0a" strokeWidth={1.6} strokeLinecap="round" /></svg> },
-  { top:"55%", left:"78%", rot:6, icon:<svg viewBox="0 0 24 24" width={26} height={26}><rect x="4" y="4" width="16" height="16" rx="3.2" stroke="#0a0a0a" strokeWidth={1.6} fill="none" /><path d="M8 12.3l2.6 2.6L16.5 9" stroke="#0a0a0a" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round" fill="none" /></svg> },
-  { top:"72%", left:"4%", rot:4, icon:<svg viewBox="0 0 24 24" width={26} height={26}><path d="M6 19v-4.5M12 19V9M18 19V6" stroke="#0a0a0a" strokeWidth={2} strokeLinecap="round" /></svg> },
-  { top:"78%", left:"66%", rot:-5, icon:<svg viewBox="0 0 24 24" width={26} height={26}><path d="M6 4.5h9l3 3V19a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V5.5a1 1 0 0 1 1-1z" stroke="#0a0a0a" strokeWidth={1.6} fill="none" /><path d="M8.5 11h7M8.5 14.3h7M8.5 17.6h4" stroke="#0a0a0a" strokeWidth={1.4} strokeLinecap="round" /></svg> },
-  { top:"91%", left:"38%", rot:0, icon:<svg viewBox="0 0 24 24" width={26} height={26}><circle cx="12" cy="8.2" r="3.4" stroke="#0a0a0a" strokeWidth={1.6} fill="none" /><path d="M5 20c0-3.6 3.1-6.4 7-6.4s7 2.8 7 6.4" stroke="#0a0a0a" strokeWidth={1.6} fill="none" strokeLinecap="round" /></svg> },
+const SPLASH_FEATURES = [
+  { angle:30, icon:<svg viewBox="0 0 24 24" width={22} height={22}><path d="M4.5 6.5a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H10l-4 3.5v-3.5H6.5a2 2 0 0 1-2-2z" stroke="#0a0a0a" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" fill="none" /><circle cx="9" cy="10.3" r=".9" fill="#0a0a0a" /><circle cx="12.3" cy="10.3" r=".9" fill="#0a0a0a" /><circle cx="15.6" cy="10.3" r=".9" fill="#0a0a0a" /></svg> }, // chat
+  { angle:90, icon:<svg viewBox="0 0 24 24" width={22} height={22}><rect x="3.5" y="7" width="17" height="12" rx="2.2" stroke="#0a0a0a" strokeWidth={1.6} fill="none" /><path d="M3.5 10h17" stroke="#0a0a0a" strokeWidth={1.6} /><circle cx="16.5" cy="14.2" r="1.1" fill="#0a0a0a" /></svg> }, // finance
+  { angle:150, icon:<svg viewBox="0 0 24 24" width={22} height={22}><rect x="4" y="5.5" width="16" height="15" rx="2" stroke="#0a0a0a" strokeWidth={1.6} fill="none" /><path d="M4 9.5h16M8 3.5v3M16 3.5v3" stroke="#0a0a0a" strokeWidth={1.6} strokeLinecap="round" /></svg> }, // calendar
+  { angle:210, icon:<svg viewBox="0 0 24 24" width={22} height={22}><rect x="4" y="4" width="16" height="16" rx="3.2" stroke="#0a0a0a" strokeWidth={1.6} fill="none" /><path d="M8 12.3l2.6 2.6L16.5 9" stroke="#0a0a0a" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round" fill="none" /></svg> }, // tasks
+  { angle:270, icon:<svg viewBox="0 0 24 24" width={22} height={22}><path d="M6 19v-4.5M12 19V9M18 19V6" stroke="#0a0a0a" strokeWidth={2} strokeLinecap="round" /></svg> }, // analytics
+  { angle:330, icon:<svg viewBox="0 0 24 24" width={22} height={22}><path d="M6 4.5h9l3 3V19a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V5.5a1 1 0 0 1 1-1z" stroke="#0a0a0a" strokeWidth={1.6} fill="none" /><path d="M8.5 11h7M8.5 14.3h7M8.5 17.6h4" stroke="#0a0a0a" strokeWidth={1.4} strokeLinecap="round" /></svg> }, // documents
 ];
 function SplashScreen({ fading }) {
   return (
     <div style={{ position:"fixed", inset:0, zIndex:9999, background:"#ffffff", overflow:"hidden", opacity:fading?0:1, transition:"opacity .6s ease", pointerEvents:fading?"none":"all" }}>
-      <div style={{ position:"absolute", top:"30%", left:"50%", transform:"translate(-50%,-50%)", width:340, height:340, borderRadius:"50%", border:"1px solid rgba(0,0,0,.06)" }} />
-      {SPLASH_CARDS.map((c,i) => (
-        <div key={i} style={{ position:"absolute", top:c.top, left:c.left, width:76, height:76, borderRadius:20, background:"#fff", boxShadow:"0 10px 28px rgba(0,0,0,.08)", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:7, transform:`rotate(${c.rot}deg)`, animation:`fadeUp .6s ease ${i*0.08}s both` }}>
-          {c.icon}
-          <div style={{ width:16, height:3, borderRadius:2, background:SPLASH_ORANGE }} />
-        </div>
-      ))}
-      <div style={{ position:"absolute", top:"50%", left:"50%", transform:"translate(-50%,-50%)", textAlign:"center", width:"80%" }}>
+      <div style={{ position:"absolute", top:"30%", left:"50%", transform:"translate(-50%,-50%)", width:"min(56vmin,280px)", height:"min(56vmin,280px)", "--r":"min(28vmin,140px)" }}>
+        <div style={{ position:"absolute", inset:0, borderRadius:"50%", border:"1px solid rgba(0,0,0,.06)" }} />
+        {SPLASH_FEATURES.map((f,i) => (
+          <div key={i} style={{
+            position:"absolute", top:"50%", left:"50%", width:56, height:56, marginTop:-28, marginLeft:-28,
+            borderRadius:16, background:"#fff", boxShadow:"0 10px 28px rgba(0,0,0,.08)",
+            display:"flex", alignItems:"center", justifyContent:"center",
+            transform:`rotate(${f.angle}deg) translateY(calc(var(--r) * -1)) rotate(${-f.angle}deg)`,
+            animation:`fadeUp .6s ease ${i*0.08}s both`,
+          }}>
+            {f.icon}
+          </div>
+        ))}
+      </div>
+      <div style={{ position:"absolute", top:"58%", left:"50%", transform:"translate(-50%,-50%)", textAlign:"center", width:"80%" }}>
         <div style={{ fontSize:44, fontWeight:800, letterSpacing:10, color:"#0a0a0a", fontFamily:"'Space Grotesk',sans-serif" }}>KROFT</div>
         <div style={{ width:28, height:3, borderRadius:2, background:SPLASH_ORANGE, margin:"14px auto" }} />
         <div style={{ fontSize:15, color:"#4a4a4a", lineHeight:1.5, fontFamily:"'Space Grotesk',sans-serif" }}>Your AI Assistant<br/>for Life &amp; Business.</div>
       </div>
-      <div style={{ position:"absolute", bottom:"7%", left:"50%", transform:"translateX(-50%)", fontSize:13, color:"#8a8a8a", fontFamily:"'Space Grotesk',sans-serif", letterSpacing:.3 }}>Smart. Simple. All in one.</div>
+      <div style={{ position:"absolute", bottom:"8%", left:"50%", transform:"translateX(-50%)", fontSize:13, color:"#8a8a8a", fontFamily:"'Space Grotesk',sans-serif", letterSpacing:.3 }}>Smart. Simple. All in one.</div>
     </div>
   );
 }
