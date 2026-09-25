@@ -1,6 +1,12 @@
-import { useState, useEffect, useRef, useCallback, useMemo, Component } from "react";
-import { BarChart, ComposedChart, Bar, Line, PieChart, Pie, Cell, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend } from "recharts";
+import { useState, useEffect, useRef, useCallback, useMemo, Component, lazy, Suspense } from "react";
 import { supabase, isSupabaseConfigured } from "./supabaseClient.js";
+import { fmtCur } from "./charts/format.js";
+
+// recharts is a large dependency only needed by these three charts — lazy-loading them keeps it
+// out of the initial bundle so it's fetched only when a screen with a chart is actually opened.
+const MonthlyTrendChart = lazy(() => import("./charts/MonthlyTrendChart.jsx"));
+const CategoryPieChart = lazy(() => import("./charts/CategoryPieChart.jsx"));
+const WellnessTrendChart = lazy(() => import("./charts/WellnessTrendChart.jsx"));
 
 // Theme-aware palette — black, white and off-white only, no grey scale.
 // Dark mode: near-black surfaces, white/off-white text.
@@ -110,19 +116,6 @@ const ANIM = `
 @keyframes robotBlink{0%,90%,100%{transform:scaleY(0)}93%,95%{transform:scaleY(1)}}
 `;
 
-// Uses Intl's native currency formatting instead of a hand-maintained symbol map, so any
-// valid ISO 4217 code (NGN, GHS, INR, JPY, ...) formats correctly out of the box — adding
-// support for a new currency never requires a code change here. Falls back to "<CODE> <amount>"
-// only if the code itself is invalid/unrecognized, rather than silently mislabeling it as $.
-const fmtCur = (n, cur = "USD") => {
-  try {
-    return new Intl.NumberFormat("en-US", { style:"currency", currency:cur, currencyDisplay:"narrowSymbol", minimumFractionDigits:2, maximumFractionDigits:2 }).format(n);
-  } catch {
-    const neg = n < 0;
-    const formatted = new Intl.NumberFormat("en-US", { minimumFractionDigits:2, maximumFractionDigits:2 }).format(Math.abs(n));
-    return `${neg ? "-" : ""}${cur} ${formatted}`;
-  }
-};
 // A curated, region-grouped starting list for the currency picker — not exhaustive, since any
 // valid ISO 4217 code works correctly via fmtCur's Intl formatting above. The picker also takes
 // free-text entry for anything not listed here (see the CURRENCY step), so a user isn't limited
@@ -7127,18 +7120,9 @@ ${voiceMode
             ) : (
               <Card style={{ marginBottom:16 }}>
                 <Mono style={{ display:"block", color:C.muted, marginBottom:12, letterSpacing:.8 }}>Income vs expenses · last 6 months</Mono>
-                <ResponsiveContainer width="100%" height={190}>
-                  <ComposedChart data={monthlyTrend}>
-                    <CartesianGrid strokeDasharray="3 3" stroke={C.cardB} vertical={false} />
-                    <XAxis dataKey="label" tick={{ fill:C.muted, fontSize:10 }} axisLine={false} tickLine={false} />
-                    <YAxis tick={{ fill:C.muted, fontSize:10 }} axisLine={false} tickLine={false} tickFormatter={v=>fmtCur(0,user.currency).replace(/0\.00/,"").trim()+v} />
-                    <Tooltip formatter={v=>fmtCur(v,user.currency)} contentStyle={{ background:C.card, border:`1px solid ${C.cardB}`, borderRadius:12, fontSize:11, color:C.white }} />
-                    <Legend wrapperStyle={{ fontSize:10, color:C.muted }} formatter={v=>({income:"Income",expenses:"Expenses",net:"Net"}[v]||v)} />
-                    <Bar dataKey="income" fill={C.positive} radius={[4,4,0,0]} opacity={.9} />
-                    <Bar dataKey="expenses" fill={C.negative} radius={[4,4,0,0]} opacity={.9} />
-                    <Line type="monotone" dataKey="net" stroke={C.accent} strokeWidth={2} dot={{ r:3, fill:C.accent }} />
-                  </ComposedChart>
-                </ResponsiveContainer>
+                <Suspense fallback={<div style={{ height:190, display:"flex", alignItems:"center", justifyContent:"center" }}><Spinner size={16} color={C.muted} /></div>}>
+                  <MonthlyTrendChart data={monthlyTrend} c={C} currency={user.currency} />
+                </Suspense>
               </Card>
             )}
             <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:13 }}>
@@ -7247,14 +7231,9 @@ ${voiceMode
                 <Card level="raised" style={{ marginBottom:14 }}>
                   <Mono style={{ display:"block", color:C.muted, marginBottom:12, letterSpacing:.8 }}>Spending by category · this month</Mono>
                   <div style={{ display:"flex", alignItems:"center", gap:16, flexWrap:"wrap" }}>
-                    <ResponsiveContainer width={140} height={140} style={{ flexShrink:0 }}>
-                      <PieChart>
-                        <Pie data={categoryBreakdown} dataKey="amt" nameKey="cat" innerRadius={38} outerRadius={62} paddingAngle={2} stroke="none">
-                          {categoryBreakdown.map((c, i) => <Cell key={c.cat} fill={pieColors[i % pieColors.length]} />)}
-                        </Pie>
-                        <Tooltip formatter={(v, n) => [fmtCur(v, user.currency), n]} contentStyle={{ background:C.card, border:`1px solid ${C.cardB}`, borderRadius:12, fontSize:11, color:C.white }} />
-                      </PieChart>
-                    </ResponsiveContainer>
+                    <Suspense fallback={<div style={{ width:140, height:140, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}><Spinner size={16} color={C.muted} /></div>}>
+                      <CategoryPieChart data={categoryBreakdown} pieColors={pieColors} c={C} currency={user.currency} />
+                    </Suspense>
                     <div style={{ flex:1, minWidth:140, display:"flex", flexDirection:"column", gap:7 }}>
                       {categoryBreakdown.slice(0, 6).map((c, i) => (
                         <div key={c.cat} style={{ display:"flex", alignItems:"center", gap:7 }}>
@@ -9218,17 +9197,9 @@ ${voiceMode
                 {/* Bars instead of a line — today solid, every earlier day a lighter tint of the
                     same color, so "which one is now" reads at a glance instead of needing to
                     trace the line to the last point. */}
-                <ResponsiveContainer width="100%" height={160}>
-                  <BarChart data={wellnessTrend} margin={{ top:18, right:4, left:4, bottom:0 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke={C.cardB} vertical={false} />
-                    <XAxis dataKey="label" tick={{ fill:C.muted, fontSize:10 }} axisLine={false} tickLine={false} />
-                    <YAxis domain={[0,100]} hide />
-                    <Tooltip formatter={v=>`${v}/100`} contentStyle={{ background:C.card, border:`1px solid ${C.cardB}`, borderRadius:12, fontSize:11, color:C.white }} cursor={{ fill:C.surface }} />
-                    <Bar dataKey="score" radius={[6,6,0,0]} maxBarSize={28} label={{ position:"top", fill:C.muted, fontSize:10, fontFamily:"'Space Grotesk',sans-serif" }}>
-                      {wellnessTrend.map((e,i) => <Cell key={i} fill={e.label==="Today" ? wColor : wColor+"33"} />)}
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
+                <Suspense fallback={<div style={{ height:160, display:"flex", alignItems:"center", justifyContent:"center" }}><Spinner size={16} color={C.muted} /></div>}>
+                  <WellnessTrendChart data={wellnessTrend} c={C} activeColor={wColor} />
+                </Suspense>
               </Card>
               <div style={{ height:1, background:C.div, marginBottom:14 }} />
               </>
