@@ -83,11 +83,7 @@ const C = { ...LIGHT };
 // Space Mono is no longer used anywhere (see the Mono component below — small text switched to
 // this same sans-serif for legibility), so it's dropped from the import rather than fetched and
 // left unused.
-// Fredoka is scoped to the "Kroft" wordmark on the two onboarding screens only (Space Grotesk
-// remains the app's font everywhere else) — the onboarding reference this was rebuilt from uses a
-// distinctly rounder, friendlier lowercase treatment for the brand name than the all-caps
-// Space Grotesk lockup used inside the app itself.
-const FONT = `@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Fredoka:wght@500;600;700&display=swap');`;
+const FONT = `@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&display=swap');`;
 
 const ANIM = `
 @keyframes fadeUp{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:translateY(0)}}
@@ -957,100 +953,15 @@ const Tag = ({ children, hi, tone, style }) => {
   );
 };
 
-// Onboarding — rebuilt to match a reference showing a plain cream background (no gradient), a
-// rounded lowercase "Kroft" wordmark, and a welcome screen whose hero is a ring of 8 flat icon
-// tiles orbiting a real illustrated mascot rather than an abstract sparkle. Positions are still
-// tied to the ring's own radius via a CSS custom property (--r, in vmin so it scales with the
-// smaller of viewport width/height) and placed with the standard "rotate, translate out, rotate
-// back" technique, evenly spaced 45° apart — see the per-card comment below for why the entrance
-// animation and the positioning transform still have to live on separate elements.
-const SPLASH_FEATURES = [
-  { angle:0, icon:<svg viewBox="0 0 24 24" width={22} height={22}><rect x="4" y="5.5" width="16" height="15" rx="2" stroke="#0a0a0a" strokeWidth={1.6} fill="none" /><path d="M4 9.5h16M8 3.5v3M16 3.5v3" stroke="#0a0a0a" strokeWidth={1.6} strokeLinecap="round" /></svg> }, // calendar
-  { angle:45, icon:<svg viewBox="0 0 24 24" width={22} height={22}><rect x="3.5" y="5.5" width="17" height="13" rx="2" stroke="#0a0a0a" strokeWidth={1.6} fill="none" /><path d="M4 7l8 6 8-6" stroke="#0a0a0a" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" fill="none" /></svg> }, // email
-  { angle:90, icon:<svg viewBox="0 0 24 24" width={22} height={22}><rect x="3.5" y="7" width="17" height="12" rx="2.4" stroke="#0a0a0a" strokeWidth={1.6} fill="none" /><path d="M8.5 7l1.6-2.3h3.8L15.5 7" stroke="#0a0a0a" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" fill="none" /><circle cx="12" cy="13.2" r="3.1" stroke="#0a0a0a" strokeWidth={1.6} fill="none" /></svg> }, // camera
-  { angle:135, icon:<svg viewBox="0 0 24 24" width={22} height={22}><path d="M6 19v-4.5M12 19V9M18 19V6" stroke="#0a0a0a" strokeWidth={2} strokeLinecap="round" /></svg> }, // analytics
-  { angle:180, icon:<svg viewBox="0 0 24 24" width={22} height={22}><circle cx="12" cy="8.3" r="3.3" stroke="#0a0a0a" strokeWidth={1.6} fill="none" /><path d="M5.5 19.5c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6" stroke="#0a0a0a" strokeWidth={1.6} strokeLinecap="round" fill="none" /></svg> }, // contacts
-  { angle:225, icon:<svg viewBox="0 0 24 24" width={22} height={22}><path d="M12 21s-6.5-5.4-6.5-10.5a6.5 6.5 0 1 1 13 0C18.5 15.6 12 21 12 21z" stroke="#0a0a0a" strokeWidth={1.6} strokeLinejoin="round" fill="none" /><circle cx="12" cy="10.3" r="2.2" stroke="#0a0a0a" strokeWidth={1.6} fill="none" /></svg> }, // location
-  { angle:270, icon:<svg viewBox="0 0 24 24" width={22} height={22}><path d="M6 4.5h9l3 3V19a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V5.5a1 1 0 0 1 1-1z" stroke="#0a0a0a" strokeWidth={1.6} fill="none" /><path d="M8.5 11h7M8.5 14.3h7M8.5 17.6h4" stroke="#0a0a0a" strokeWidth={1.4} strokeLinecap="round" /></svg> }, // documents
-  { angle:315, icon:<svg viewBox="0 0 24 24" width={22} height={22}><rect x="4" y="4" width="16" height="16" rx="3.2" stroke="#0a0a0a" strokeWidth={1.6} fill="none" /><path d="M8 12.3l2.6 2.6L16.5 9" stroke="#0a0a0a" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round" fill="none" /></svg> }, // tasks
-];
-
-// The onboarding-only wordmark — lowercase, rounded (Fredoka, not the app's usual Space Grotesk),
-// dark-on-cream. Scoped to these two screens deliberately, not a global rebrand: everywhere else
-// in the app still uses the existing all-caps "KROFT" + K-badge lockup.
-const KroftWordmark = ({ fontSize=32 }) => (
-  <div style={{ fontSize, fontWeight:600, color:"#0a0a0a", fontFamily:"'Fredoka',sans-serif", letterSpacing:-.3 }}>Kroft</div>
-);
-
-// Splash — a brief, pure branding moment: plain background + wordmark, nothing else. What used to
-// live here (the feature orbit, tagline) moved to WelcomeScreen below, which is the actual next
-// screen a new visitor sees — splitting "this is Kroft" from "here's what it does and how to
-// start" the same way a real product intro screen does, instead of cramming both into the few
-// hundred milliseconds people spend looking at a loading screen.
+// Cold-load gate — covers the brief window while storage/session data is still loading, so
+// nothing half-rendered flashes before the app knows whether this is a new visitor (-> signup)
+// or a returning one (-> login/dashboard). Deliberately not a branded/designed screen: it's a
+// functional loading placeholder, not an onboarding step, so it reuses the app's own background
+// and Spinner rather than introducing new visual design.
 function SplashScreen({ fading }) {
   return (
-    <div style={{ position:"fixed", inset:0, zIndex:9999, background:"#f4f2ee", overflow:"hidden", opacity:fading?0:1, transition:"opacity .6s ease", pointerEvents:fading?"none":"all", display:"flex", alignItems:"center", justifyContent:"center" }}>
-      <div style={{ animation:"fadeUp .5s ease" }}>
-        <KroftWordmark fontSize={44} />
-      </div>
-    </div>
-  );
-}
-
-// Welcome — the real first screen a brand-new visitor lands on after the splash: the wordmark at
-// top, a ring of feature icons orbiting the mascot as a hero, a headline and copy, and the two
-// paths forward. Laid out with flexbox instead of percentage positions — the header/hero/footer
-// regions size themselves relative to each other and to real content, not to guessed numbers, so
-// it can't drift on a screen shaped differently than whatever it was checked against.
-function WelcomeScreen({ onGetStarted, onLogIn }) {
-  return (
-    <div style={{ position:"fixed", inset:0, zIndex:900, background:"#f4f2ee", display:"flex", flexDirection:"column", animation:"fadeIn .3s ease" }}>
-      <div style={{ paddingTop:"calc(7% + env(safe-area-inset-top))", paddingLeft:26, flexShrink:0 }}>
-        <KroftWordmark fontSize={22} />
-      </div>
-      <div style={{ flex:1, minHeight:0, position:"relative", display:"flex", alignItems:"center", justifyContent:"center" }}>
-        <div style={{ position:"relative", width:"min(64vmin,290px)", height:"min(64vmin,290px)", "--r":"min(32vmin,145px)" }}>
-          {SPLASH_FEATURES.map((f,i) => (
-            // Positioning (the orbit transform) and the entrance animation (fadeUp, which also
-            // touches `transform`) live on separate elements deliberately — a CSS animation whose
-            // keyframes include `transform` fully owns that property on the element it's applied
-            // to for as long as it's active (and, with fill:both, forever after finishing) rather
-            // than composing with a base value, so putting both on the same div meant every card
-            // snapped to fadeUp's own resting transform (translateY(0), i.e. dead center) the
-            // instant its entrance animation finished — confirmed via getAnimations() showing
-            // playState:"finished" on a card that had visibly collapsed to the ring's middle.
-            <div key={i} style={{
-              position:"absolute", top:"50%", left:"50%", width:48, height:48, marginTop:-24, marginLeft:-24,
-              transform:`rotate(${f.angle}deg) translateY(calc(var(--r) * -1)) rotate(${-f.angle}deg)`,
-            }}>
-              <div style={{
-                width:"100%", height:"100%", borderRadius:14, background:"#fff", boxShadow:"0 8px 20px rgba(0,0,0,.10)",
-                display:"flex", alignItems:"center", justifyContent:"center",
-                animation:`fadeUp .6s ease ${i*0.06}s both`,
-              }}>
-                {f.icon}
-              </div>
-            </div>
-          ))}
-          {/* The mascot sits dead center. Centering is done with margin offsets, not transform, so
-              it can safely share fadeUp's entrance animation on the same element without the
-              transform-ownership conflict noted above. Its own PNG background already matches the
-              screen's cream (#f4f2ee), so it blends in without needing a circular mask. */}
-          <img src="/kroft-mascot.png" alt="" style={{
-            position:"absolute", top:"50%", left:"50%", width:"48%", height:"48%", marginTop:"-24%", marginLeft:"-24%",
-            objectFit:"contain", animation:"fadeUp .5s ease both",
-          }} />
-        </div>
-      </div>
-      <div style={{ padding:"6px 26px calc(30px + env(safe-area-inset-bottom))", flexShrink:0, animation:"slideUp .4s ease" }}>
-        <h1 style={{ fontSize:26, fontWeight:800, color:"#0a0a0a", letterSpacing:-.6, lineHeight:1.25, margin:"0 0 10px", fontFamily:"'Space Grotesk',sans-serif" }}>Let&rsquo;s get you started</h1>
-        <div style={{ fontSize:14, color:"#8a8a8a", lineHeight:1.55, marginBottom:28, fontFamily:"'Space Grotesk',sans-serif" }}>Kroft is your AI personal assistant &mdash; helping you stay organized, get things done, and make your day simpler, smarter and more productive.</div>
-        <button onClick={onGetStarted} style={{ width:"100%", background:"#0a0a0a", color:"#fff", border:"none", borderRadius:14, padding:"15px", fontSize:15, fontWeight:700, fontFamily:"'Space Grotesk',sans-serif", cursor:"pointer", marginBottom:10, display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
-          Get Started
-          <svg viewBox="0 0 24 24" width={16} height={16}><path d="M5 12h13M13 6l6 6-6 6" stroke="#fff" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" fill="none" /></svg>
-        </button>
-        <button onClick={onLogIn} style={{ width:"100%", background:"#ece8e0", color:"#0a0a0a", border:"none", borderRadius:14, padding:"15px", fontSize:15, fontWeight:700, fontFamily:"'Space Grotesk',sans-serif", cursor:"pointer" }}>I already have an account</button>
-      </div>
+    <div style={{ position:"fixed", inset:0, zIndex:9999, background:C.bg, opacity:fading?0:1, transition:"opacity .6s ease", pointerEvents:fading?"none":"all", display:"flex", alignItems:"center", justifyContent:"center" }}>
+      <Spinner size={28} thickness={2.5} />
     </div>
   );
 }
@@ -2523,10 +2434,7 @@ function KroftApp({ onFullReset } = {}) {
   // way any app with real sessions keeps you signed in across a reload. Without Supabase
   // configured (local-only mode), it instead switches to login once a saved local account is
   // found, matching this app's original device-local behavior.
-  // A brand-new visitor sees the Welcome screen first; the hydrate effect below overwrites this
-  // to "login" for a returning device with a saved account, before the splash ever finishes
-  // showing — so a returning user never actually sees Welcome flash past.
-  const [step, setStep] = useState("welcome");
+  const [step, setStep] = useState("signup");
   // True only while "business" or "prefs" is showing because Profile's Edit Details /
   // Preferences opened it on an already-signed-in account — as opposed to the same two screens
   // showing as part of first-time onboarding, reached by signing up. Both cases render the same
@@ -6425,10 +6333,6 @@ ${voiceMode
   if (step !== "dashboard") return (
     <div key={themeTick} style={{ fontFamily:"'Space Grotesk',sans-serif", overflowX:"hidden", maxWidth:"100vw", touchAction:"pan-y" }}>
       <style>{G}</style>
-
-      {step === "welcome" && (
-        <WelcomeScreen onGetStarted={() => setStep("signup")} onLogIn={() => setStep("login")} />
-      )}
 
       {step === "login" && (
         <OShell step="login">
