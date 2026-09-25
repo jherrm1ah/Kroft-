@@ -953,15 +953,23 @@ const Tag = ({ children, hi, tone, style }) => {
   );
 };
 
-// Cold-load gate — covers the brief window while storage/session data is still loading, so
-// nothing half-rendered flashes before the app knows whether this is a new visitor (-> signup)
-// or a returning one (-> login/dashboard). Deliberately not a branded/designed screen: it's a
-// functional loading placeholder, not an onboarding step, so it reuses the app's own background
-// and Spinner rather than introducing new visual design.
+// Screen 1 of the onboarding reference, used as-is (the exact provided image, just cropped to
+// the phone's screen area) rather than recreated in code — per instruction, no layout/behavior
+// added here yet, just placing the image as this step.
 function SplashScreen({ fading }) {
   return (
-    <div style={{ position:"fixed", inset:0, zIndex:9999, background:C.bg, opacity:fading?0:1, transition:"opacity .6s ease", pointerEvents:fading?"none":"all", display:"flex", alignItems:"center", justifyContent:"center" }}>
-      <Spinner size={28} thickness={2.5} />
+    <div style={{ position:"fixed", inset:0, zIndex:9999, background:"#f4f2ee", opacity:fading?0:1, transition:"opacity .6s ease", pointerEvents:fading?"none":"all" }}>
+      <img src="/onboarding-screen-1.png" alt="" style={{ width:"100%", height:"100%", objectFit:"contain" }} />
+    </div>
+  );
+}
+
+// Screen 2 of the onboarding reference, same as above — the exact provided image, cropped to the
+// phone's screen area, placed as-is. Not yet wired to any navigation/behavior.
+function WelcomeScreen() {
+  return (
+    <div style={{ position:"fixed", inset:0, zIndex:900, background:"#f4f2ee" }}>
+      <img src="/onboarding-screen-2.png" alt="" style={{ width:"100%", height:"100%", objectFit:"contain" }} />
     </div>
   );
 }
@@ -2429,12 +2437,13 @@ function KroftApp({ onFullReset } = {}) {
   const [voiceSpeed, setVoiceSpeed] = useState(1.0);
   useEffect(() => { setPreferredVoiceSpeed(voiceSpeed); }, [voiceSpeed]);
 
-  // Starts at signup. With Supabase configured, the load effect below jumps straight to the
-  // dashboard when a real session already exists (a returning, still-signed-in user), the same
-  // way any app with real sessions keeps you signed in across a reload. Without Supabase
-  // configured (local-only mode), it instead switches to login once a saved local account is
-  // found, matching this app's original device-local behavior.
-  const [step, setStep] = useState("signup");
+  // A brand-new visitor sees the Welcome screen (image) first. With Supabase configured, the
+  // load effect below jumps straight to the dashboard when a real session already exists (a
+  // returning, still-signed-in user), the same way any app with real sessions keeps you signed
+  // in across a reload. Without Supabase configured (local-only mode), it instead switches to
+  // login once a saved local account is found, matching this app's original device-local
+  // behavior — so a returning user never actually sees Welcome flash past.
+  const [step, setStep] = useState("welcome");
   // True only while "business" or "prefs" is showing because Profile's Edit Details /
   // Preferences opened it on an already-signed-in account — as opposed to the same two screens
   // showing as part of first-time onboarding, reached by signing up. Both cases render the same
@@ -6333,6 +6342,8 @@ ${voiceMode
   if (step !== "dashboard") return (
     <div key={themeTick} style={{ fontFamily:"'Space Grotesk',sans-serif", overflowX:"hidden", maxWidth:"100vw", touchAction:"pan-y" }}>
       <style>{G}</style>
+
+      {step === "welcome" && <WelcomeScreen />}
 
       {step === "login" && (
         <OShell step="login">
