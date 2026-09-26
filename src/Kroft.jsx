@@ -2,11 +2,39 @@ import { useState, useEffect, useRef, useCallback, useMemo, Component, lazy, Sus
 import { supabase, isSupabaseConfigured } from "./supabaseClient.js";
 import { fmtCur } from "./charts/format.js";
 
+// A lazy chunk fetched over a flaky mobile connection can fail with a plain network error —
+// dynamic import() rejects, and React throws that straight into the nearest error boundary,
+// crashing the whole app to the generic "Something went wrong" screen over what's really just a
+// dropped request for one chart's code. Retries a couple of times with a short delay first, so a
+// bad moment on the network doesn't take the session down.
+const retryImport = (importFn, retriesLeft = 2, delayMs = 750) => importFn().catch(err => {
+  if (retriesLeft > 0) {
+    return new Promise(resolve => setTimeout(resolve, delayMs)).then(() => retryImport(importFn, retriesLeft - 1, delayMs));
+  }
+  // Out of retries. A message like this usually means the browser genuinely can't fetch that
+  // exact file any more — most often because a new deployment replaced every chunk's filename
+  // (they're content-hashed) since this tab last loaded index.html, so retrying the identical
+  // stale URL can never succeed. Only a fresh page load re-reads the current index.html and picks
+  // up the right filenames. Reloads at most once per tab (the sessionStorage flag), so a device
+  // that's actually offline shows the normal error screen instead of reload-looping forever.
+  const looksStale = /dynamically imported module|loading chunk|failed to fetch/i.test(err?.message || "");
+  try {
+    if (looksStale && !sessionStorage.getItem("kroftChunkReload")) {
+      sessionStorage.setItem("kroftChunkReload", "1");
+      window.location.reload();
+      return new Promise(() => {}); // reloading now — never resolve, the reload takes over
+    }
+  } catch {
+    // sessionStorage can throw in some restricted contexts (private/embedded webviews) — fall
+    // through to the normal error boundary rather than let the safety net itself crash.
+  }
+  throw err;
+});
 // recharts is a large dependency only needed by these three charts — lazy-loading them keeps it
 // out of the initial bundle so it's fetched only when a screen with a chart is actually opened.
-const MonthlyTrendChart = lazy(() => import("./charts/MonthlyTrendChart.jsx"));
-const CategoryPieChart = lazy(() => import("./charts/CategoryPieChart.jsx"));
-const WellnessTrendChart = lazy(() => import("./charts/WellnessTrendChart.jsx"));
+const MonthlyTrendChart = lazy(() => retryImport(() => import("./charts/MonthlyTrendChart.jsx")));
+const CategoryPieChart = lazy(() => retryImport(() => import("./charts/CategoryPieChart.jsx")));
+const WellnessTrendChart = lazy(() => retryImport(() => import("./charts/WellnessTrendChart.jsx")));
 
 // Theme-aware palette — black, white and off-white only, no grey scale.
 // Dark mode: near-black surfaces, white/off-white text.
