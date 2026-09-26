@@ -8454,8 +8454,7 @@ ${voiceMode
             )}
             {/* In grid view, picking a date narrows this same list down to just that day instead
                 of duplicating the row markup in a separate place. */}
-            {(calendarView==="grid" && calendarSelectedDate ? appts.filter(a=>a.date===calendarSelectedDate) : appts)
-              .slice().sort((a,b)=>(a.date||"").localeCompare(b.date||"")||(a.time||"").localeCompare(b.time||"")).map(a => (
+            {sortAppts(calendarView==="grid" && calendarSelectedDate ? appts.filter(a=>a.date===calendarSelectedDate) : appts).map(a => (
               editingAppt && editingAppt.id===a.id ? (
                 <Card key={a.id} style={{ marginBottom:11, border:`1px solid ${C.soft}` }}>
                   <div style={{ fontSize:13, fontWeight:700, color:C.text, marginBottom:11 }}>Edit appointment</div>
