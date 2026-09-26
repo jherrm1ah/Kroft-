@@ -238,6 +238,22 @@ const advanceRepeatDate = (iso, repeat) => {
   else return iso;
   return ymdLocal(d);
 };
+// Repeatedly advances an ISO date via advanceRepeatDate until it reaches or passes targetISO —
+// the shared "catch this recurring item up to today" step for both rollRecurring (appointments)
+// and completing an overdue recurring task. Bails out early rather than spinning forever if a
+// step doesn't actually move the date forward, which advanceRepeatDate does on purpose for an
+// unrecognized repeat cadence or an unparseable date (returns its input unchanged) — without this
+// check, a malformed `repeat`/date from a hand-edited or corrupted backup would leave the while
+// loop's condition permanently true and freeze the tab.
+const advanceRepeatDateTo = (iso, repeat, targetISO) => {
+  let date = iso;
+  while (date < targetISO) {
+    const next = advanceRepeatDate(date, repeat);
+    if (next === date) break;
+    date = next;
+  }
+  return date;
+};
 const monthLabel = iso => { if (!iso) return ""; const d = new Date(iso + "T00:00:00"); return isNaN(d) ? "" : d.toLocaleDateString("en-US", { month:"long", year:"numeric" }); };
 // Appointment times are free text (the field's own placeholder is "Time e.g. 4:00 PM"), not a
 // structured value, so finding "the next appointment" needs to parse that text into something
@@ -3885,8 +3901,7 @@ function KroftApp({ onFullReset } = {}) {
         let changed = false;
         const next = prev.map(a => {
           if (a.repeat === "none" || !a.date || a.date >= today) return a;
-          let date = a.date;
-          while (date < today) date = advanceRepeatDate(date, a.repeat);
+          const date = advanceRepeatDateTo(a.date, a.repeat, today);
           changed = true;
           return { ...a, date };
         });
@@ -8750,8 +8765,7 @@ ${voiceMode
                       // task that's sat overdue for days lands on today/the future, not still in
                       // the past — same catch-up rollRecurring already does for appointments.
                       if (completing && target.repeat !== "none") {
-                        let nextDue = target.dueDate || "";
-                        if (nextDue) { const today = todayISO(); while (nextDue < today) nextDue = advanceRepeatDate(nextDue, target.repeat); }
+                        const nextDue = target.dueDate ? advanceRepeatDateTo(target.dueDate, target.repeat, todayISO()) : "";
                         return [{ id:uid(), title:target.title, priority:target.priority, repeat:target.repeat, contactId:target.contactId, dueDate:nextDue, done:false }, ...toggled];
                       }
                       return toggled;
