@@ -1924,7 +1924,8 @@ function Briefing({ user, income, expenses, emails, appts, onClose }) {
 // Tapping navigates to a dedicated screen rather than expanding inline.
 function ProfileCategoryRow({ label, sub, onClick, isLast }) {
   return (
-    <div onClick={onClick} style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"15px 2px", cursor:"pointer", borderBottom:isLast?"none":`1px solid ${C.div}` }}>
+    <div role="button" tabIndex={0} onClick={onClick} onKeyDown={e => { if (e.key==="Enter"||e.key===" ") { e.preventDefault(); onClick(); } }} aria-label={label}
+      style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"15px 2px", cursor:"pointer", borderBottom:isLast?"none":`1px solid ${C.div}` }}>
       <div>
         <div style={{ fontSize:14, fontWeight:700, color:C.white }}>{label}</div>
         {sub && <Mono style={{ display:"block", color:C.muted, marginTop:2 }}>{sub}</Mono>}
@@ -1953,7 +1954,7 @@ function ProfileRow({ label, sub, expanded, onToggle, children, right }) {
           global .row:hover rule); the negative margin/matching extra padding lets that highlight
           read as a soft rounded pill inset from the card edge, instead of a hard-edged rectangle
           flush against it. */}
-      <div className="row" onClick={onToggle} style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"13px 8px", margin:"0 -8px", borderRadius:12, cursor:"pointer", transition:"background .15s ease" }}>
+      <div className="row" role="button" tabIndex={0} aria-expanded={expanded} onClick={onToggle} onKeyDown={e => { if (e.key==="Enter"||e.key===" ") { e.preventDefault(); onToggle(); } }} style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"13px 8px", margin:"0 -8px", borderRadius:12, cursor:"pointer", transition:"background .15s ease" }}>
         <div>
           <div style={{ fontSize:13, fontWeight:600, color:C.white }}>{label}</div>
           {sub && <Mono style={{ display:"block", color:C.muted, marginTop:2 }}>{sub}</Mono>}
