@@ -7306,7 +7306,7 @@ ${voiceMode
 
         {tab==="home" && homeSection==="finance" && (
           <div style={{ animation:"fadeUp .4s ease" }}>
-            <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:14 }}>
+            <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:14 }}>
               <h2 style={{ fontSize:22, fontWeight:700, color:C.white, letterSpacing:-1 }}>Finance</h2>
               <button onClick={() => setShowEntryHistory(true)} aria-label="Entry history" title="Entry history" style={{ background:"none", border:"none", color:C.white, cursor:"pointer", padding:6, lineHeight:1, display:"flex" }}>
                 <NavIcon id="history" size={19} color={C.white} />
