@@ -7632,6 +7632,27 @@ ${voiceMode
                       <Btn sm onClick={() => remind(upcomingAppts[0])} style={{ width:"100%", minWidth:0 }}>Remind</Btn>
                       <Btn sm v="outline" onClick={() => setUberDest(upcomingAppts[0])} style={{ width:"100%", minWidth:0 }}>Uber</Btn>
                     </div>
+                    {(() => {
+                      // A quiet "leave in X min" nudge for a same-day appointment that's coming up
+                      // soon — fills the empty space left under the buttons on a short-titled
+                      // appointment with something actually useful, rather than nothing. The 10-min
+                      // buffer matches the app's own existing appointment-reminder lead time, not an
+                      // invented travel-time estimate (there's no real ETA/routing data behind it),
+                      // and it only shows within a 3-hour window so it stays a timely nudge rather
+                      // than announcing "leave in 170 min" for something hours off.
+                      const appt = upcomingAppts[0];
+                      const startMins = parseApptTime(appt.time);
+                      if (startMins == null || appt.date !== todayISO()) return null;
+                      const now = new Date();
+                      const minsUntilStart = startMins - (now.getHours()*60 + now.getMinutes());
+                      if (minsUntilStart <= 0 || minsUntilStart > 180) return null;
+                      const leaveIn = minsUntilStart - 10;
+                      return (
+                        <Mono style={{ display:"block", color:C.accent, marginTop:8 }}>
+                          {leaveIn <= 0 ? "Leave now to be on time." : `Leave in ${leaveIn} min to be on time.`}
+                        </Mono>
+                      );
+                    })()}
                     {upcomingAppts[0].contactId && contacts.find(c=>c.id===upcomingAppts[0].contactId) && (
                       <Tag tone="accent" style={{ display:"inline-block", marginTop:8, maxWidth:"100%", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{contacts.find(c=>c.id===upcomingAppts[0].contactId).name}</Tag>
                     )}
