@@ -267,6 +267,31 @@ const findApptConflict = (list, date, time, excludeId) => {
   if (mins == null) return null;
   return list.find(a => a.id !== excludeId && a.date === date && parseApptTime(a.time) === mins) || null;
 };
+const fmtMinsShort = mins => {
+  if (mins < 60) return `${mins} min`;
+  const h = Math.floor(mins/60), m = mins%60;
+  return m ? `${h}h ${m}m` : `${h}h`;
+};
+// Appointments have no stored duration (see findApptConflict's own comment on the same
+// limitation), so "in progress" vs "ended" can't be exact — this assumes a generic 60-minute
+// length purely to decide which status phrase to show, the same default a calendar app falls
+// back to for an untimed event. It's never treated as real data anywhere else — conflict
+// detection above still only ever compares exact start times, nothing derived from this.
+const ASSUMED_APPT_DURATION_MIN = 60;
+function apptStatusLine(appt, now) {
+  const startMins = parseApptTime(appt.time);
+  if (startMins == null || appt.date !== todayISO()) return null;
+  const diff = startMins - (now.getHours()*60 + now.getMinutes()); // >0 still to come, <=0 already started
+  if (diff > 0) {
+    if (diff > 180) return null; // more than 3 hours off isn't a timely nudge yet
+    return { text:`Starts in ${fmtMinsShort(diff)}`, color:C.accent, dot:false };
+  }
+  const sinceStart = -diff;
+  if (sinceStart < ASSUMED_APPT_DURATION_MIN) return { text:"In progress", color:C.negative, dot:true };
+  const sinceEnd = sinceStart - ASSUMED_APPT_DURATION_MIN;
+  if (sinceEnd > 720) return null; // more than 12h past its assumed end — too stale to mention
+  return { text:`Ended · ${fmtMinsShort(sinceEnd)} ago`, color:C.muted, dot:false };
+}
 // Lower rank = more urgent = sorts first. The task list used to only ever group by done/not-done —
 // priority was fully editable and stored but never actually affected ordering, so an "Urgent" task
 // added after a "Low" one just sat below it.
@@ -3670,6 +3695,13 @@ function KroftApp({ onFullReset } = {}) {
   // appended to.
   const upcomingAppts = useMemo(() => sortAppts(appts.filter(a => a.date >= todayISO())), [appts]);
   const todaysAppts = useMemo(() => sortAppts(appts.filter(a => a.date === todayISO())), [appts]);
+
+  // Forces a re-render on the app's shared 30s heartbeat, purely so the Next appointment card's
+  // live status line (Starts in.../In progress/Ended...) keeps ticking on its own — nothing else
+  // about this state is ever read. Piggybacks on the existing shared timer (see heartbeat's own
+  // comment) rather than adding a dedicated interval just for this one card.
+  const [, forceApptTick] = useState(0);
+  useEffect(() => heartbeat(() => forceApptTick(t => t+1)), []);
 
   const pw = signupPw;
   const pwChecks = { length:pw.length>=8, upper:/[A-Z]/.test(pw), lower:/[a-z]/.test(pw), number:/[0-9]/.test(pw), special:/[^A-Za-z0-9]/.test(pw) };
@@ -7693,23 +7725,20 @@ ${voiceMode
                       <Btn sm v="outline" onClick={() => setUberDest(upcomingAppts[0])} style={{ width:"100%", minWidth:0 }}>Uber</Btn>
                     </div>
                     {(() => {
-                      // A quiet "leave in X min" nudge for a same-day appointment that's coming up
-                      // soon — fills the empty space left under the buttons on a short-titled
-                      // appointment with something actually useful, rather than nothing. The 10-min
-                      // buffer matches the app's own existing appointment-reminder lead time, not an
-                      // invented travel-time estimate (there's no real ETA/routing data behind it),
-                      // and it only shows within a 3-hour window so it stays a timely nudge rather
-                      // than announcing "leave in 170 min" for something hours off.
-                      const appt = upcomingAppts[0];
-                      const startMins = parseApptTime(appt.time);
-                      if (startMins == null || appt.date !== todayISO()) return null;
-                      const now = new Date();
-                      const minsUntilStart = startMins - (now.getHours()*60 + now.getMinutes());
-                      if (minsUntilStart <= 0 || minsUntilStart > 180) return null;
-                      const leaveIn = minsUntilStart - 10;
+                      // A live status line filling the space left under the buttons — ticks on
+                      // its own via forceApptTick's heartbeat subscription above, so "Starts in
+                      // 42 min" counts down to 41, 40... without needing any other state to
+                      // change, then flips to "In progress" and eventually "Ended · X min ago" as
+                      // real time passes. upcomingAppts only filters by date, not time-of-day, so
+                      // a same-day appointment can otherwise sit here for hours after it's already
+                      // happened with no indication — see apptStatusLine's own comment on why
+                      // "in progress"/"ended" are a heuristic, not real duration data.
+                      const status = apptStatusLine(upcomingAppts[0], new Date());
+                      if (!status) return null;
                       return (
-                        <Mono style={{ display:"block", color:C.accent, marginTop:8 }}>
-                          {leaveIn <= 0 ? "Leave now to be on time." : `Leave in ${leaveIn} min to be on time.`}
+                        <Mono style={{ display:"flex", alignItems:"center", gap:5, color:status.color, marginTop:8 }}>
+                          {status.dot && <span style={{ width:6, height:6, borderRadius:"50%", background:status.color, flexShrink:0 }} />}
+                          {status.text}
                         </Mono>
                       );
                     })()}
