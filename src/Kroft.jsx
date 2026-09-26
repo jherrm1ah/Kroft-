@@ -7306,16 +7306,16 @@ ${voiceMode
 
         {tab==="home" && homeSection==="finance" && (
           <div style={{ animation:"fadeUp .4s ease" }}>
-            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:18 }}>
+            <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:14 }}>
               <h2 style={{ fontSize:22, fontWeight:700, color:C.white, letterSpacing:-1 }}>Finance</h2>
-              <div style={{ display:"flex", gap:8, flexWrap:"wrap", justifyContent:"flex-end", alignItems:"center" }}>
-                <button onClick={() => setShowEntryHistory(true)} aria-label="Entry history" title="Entry history" style={{ background:"none", border:"none", color:C.white, cursor:"pointer", padding:6, lineHeight:1, display:"flex" }}>
-                  <NavIcon id="history" size={19} color={C.white} />
-                </button>
-                <Btn sm onClick={() => { setShowAddInc(v=>!v); setShowAddExp(false); }}>Add Income</Btn>
-                <Btn sm v="outline" onClick={() => { setShowAddExp(v=>!v); setShowAddInc(false); }}>Add Expense</Btn>
-                <Btn sm v="outline" onClick={exportFinanceCsv}>Export</Btn>
-              </div>
+              <button onClick={() => setShowEntryHistory(true)} aria-label="Entry history" title="Entry history" style={{ background:"none", border:"none", color:C.white, cursor:"pointer", padding:6, lineHeight:1, display:"flex" }}>
+                <NavIcon id="history" size={19} color={C.white} />
+              </button>
+            </div>
+            <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:18 }}>
+              <Btn sm onClick={() => { setShowAddInc(v=>!v); setShowAddExp(false); }}>Add Income</Btn>
+              <Btn sm v="outline" onClick={() => { setShowAddExp(v=>!v); setShowAddInc(false); }}>Add Expense</Btn>
+              <Btn sm v="outline" onClick={exportFinanceCsv}>Export</Btn>
             </div>
             {!dataLoaded && <><SkeletonCard lines={2} /><SkeletonCard lines={4} /></>}
             {dataLoaded && (income.length>0||expenses.length>0) && <Mono style={{ display:"block", color:C.muted, marginBottom:14 }}>Tap an entry to edit it. Press and hold for more options.</Mono>}
