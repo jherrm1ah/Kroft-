@@ -6467,6 +6467,13 @@ ${voiceMode
   // the same spot (a few meters of drift, not a real move) doesn't spend another Nominatim call on
   // a label that wouldn't change anyway.
   const lastGeocodedKey = useRef(null);
+  // Guards against a slower, older search's response landing after a faster, newer one — every
+  // other async flow in this file (calendar sync, mail sync, billing, ...) already uses an
+  // AbortController or a token for exactly this; searchNearby had neither. Without it, tapping
+  // "Restaurants" (slow Overpass query) then immediately tapping "Pharmacies" (fast query) shows
+  // pharmacies first, then silently overwrites them with the stale restaurant results moments
+  // later, with the screen still labeled "Pharmacies."
+  const aroundSearchTokenRef = useRef(0);
   const requestLocation = () => {
     if (locationStatus === "requesting") return;
     if (!navigator.geolocation) { setLocationStatus("error"); setAroundError("Geolocation isn't supported on this device."); return; }
@@ -6510,6 +6517,8 @@ ${voiceMode
 
   const searchNearby = async (categoryOrQuery, { isNaturalLanguage=false, categoryKey=null } = {}) => {
     if (!userCoords) { requestLocation(); return; }
+    const myToken = ++aroundSearchTokenRef.current;
+    const isCurrent = () => myToken === aroundSearchTokenRef.current;
     setAroundLoading(true); setAroundError(""); setAroundSearched(true); setAroundResults([]);
 
     // Category browsing (the CATEGORIES grid, and "Feeling hungry?") goes straight to Overpass via
@@ -6530,6 +6539,7 @@ ${voiceMode
       try {
         const res = await fetch(`/api/places?mode=category&category=${encodeURIComponent(categoryKey)}&lat=${userCoords.lat}&lon=${userCoords.lng}`);
         const data = await res.json();
+        if (!isCurrent()) return; // a newer search superseded this one while the request was in flight
         // A backend failure (Overpass down, bad request) still comes back as valid JSON —
         // `{error:"..."}`, no `results` field — which `data.results || []` would otherwise
         // silently treat as a real empty search, misreporting a connection error as "no
@@ -6540,6 +6550,7 @@ ${voiceMode
         setAroundResults(results);
         if (results.length === 0) setAroundError(`No ${categoryOrQuery.toLowerCase()} found nearby. Try a different category or search.`);
       } catch (e) {
+        if (!isCurrent()) return;
         // The proxy distinguishes a slow/overloaded upstream (both Overpass mirrors timed out)
         // from an outright failure — worth telling the person apart, since one suggests "try
         // again in a bit" and the other suggests "check your connection."
@@ -6547,7 +6558,7 @@ ${voiceMode
           ? "The places service is taking too long to respond. Try again in a moment."
           : "Couldn't reach the places service. Check your connection and try again.");
       }
-      setAroundLoading(false);
+      if (isCurrent()) setAroundLoading(false);
       return;
     }
 
@@ -6569,14 +6580,17 @@ ${voiceMode
           }),
         });
         const data = await res.json();
+        if (!isCurrent()) return;
         searchTerm = data.content?.map(b=>b.text||"").join("").trim() || categoryOrQuery;
       } catch { searchTerm = categoryOrQuery; }
+      if (!isCurrent()) return;
     }
 
     try {
       const viewbox = `${userCoords.lng-0.05},${userCoords.lat+0.05},${userCoords.lng+0.05},${userCoords.lat-0.05}`;
       const res = await fetch(`/api/places?mode=search&q=${encodeURIComponent(searchTerm)}&viewbox=${encodeURIComponent(viewbox)}`);
       const data = await res.json();
+      if (!isCurrent()) return; // a newer search superseded this one while the request was in flight
       // Same reasoning as the category branch above — a backend failure comes back as
       // `{error:"..."}`, not an array, so check explicitly instead of relying on the incidental
       // TypeError .map() would throw on a plain object to fall into the catch below.
@@ -6591,11 +6605,12 @@ ${voiceMode
       setAroundResults(results);
       if (results.length === 0) setAroundError(`No results found for "${searchTerm}" nearby. Try a different search.`);
     } catch (e) {
+      if (!isCurrent()) return;
       setAroundError(e.message === "Places service timed out"
         ? "The places service is taking too long to respond. Try again in a moment."
         : "Couldn't reach the places service. Check your connection and try again.");
     }
-    setAroundLoading(false);
+    if (isCurrent()) setAroundLoading(false);
   };
 
   const distanceFrom = (lat, lng) => {
