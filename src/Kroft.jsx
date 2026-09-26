@@ -2449,7 +2449,12 @@ function KroftApp({ onFullReset } = {}) {
   // rather than swapping which object C points to, since ~250 style props across this file
   // already read C.xxx directly. themeTick forces React to re-render after that mutation,
   // since mutating an object in place doesn't itself trigger a re-render.
-  const [theme, setTheme] = useState("light");
+  // Defaults to the device's own OS preference for a fresh session — the persisted-profile
+  // load effect below (`if (p.theme) setTheme(p.theme)`) overrides this the moment a saved
+  // choice is found, so this only ever matters before the user (or a prior session) has
+  // actually settled on one. Computed in the lazy useState initializer, not an effect, so it's
+  // correct on the very first render — same reasoning as the anti-flash comment just below.
+  const [theme, setTheme] = useState(() => (typeof window !== "undefined" && window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) ? "dark" : "light");
   const [themeTick, setThemeTick] = useState(0);
   // Applied during render rather than in an effect, so the mutation lands before the browser
   // paints. Doing it in an effect meant one frame was drawn with the previous theme's colours
