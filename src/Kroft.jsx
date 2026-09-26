@@ -142,6 +142,11 @@ const ANIM = `
 /* Real blinks are infrequent (every few seconds) and brief — most of the cycle sits at
    scaleY(0) (eyelid hidden, eyes open), with a quick close-and-reopen near the end. */
 @keyframes robotBlink{0%,90%,100%{transform:scaleY(0)}93%,95%{transform:scaleY(1)}}
+/* Expanding-and-fading ring around the chat mic while it's actively recording — a static color
+   change on a small 36px button was too easy to miss at a glance; this reads as "listening" even
+   out of the corner of your eye. Colored inline by whatever renders it (theme-aware), same as
+   robotBlink's eyelids above — this keyframe only ever controls the shape, never the color. */
+@keyframes micRipple{0%{transform:scale(.9);opacity:.7}100%{transform:scale(1.9);opacity:0}}
 `;
 
 // A curated, region-grouped starting list for the currency picker — not exhaustive, since any
@@ -9738,7 +9743,7 @@ ${voiceMode
                     el.style.height = Math.min(el.scrollHeight, 120) + "px";
                   }}
                   onKeyDown={e => { if (e.key==="Enter" && !e.shiftKey) { e.preventDefault(); askKroft(); } }}
-                  placeholder="Message KROFT…"
+                  placeholder={listening ? "Listening…" : "Message KROFT…"}
                   rows={1}
                   style={{ width:"100%", fontSize:13, fontFamily:"'Space Grotesk',sans-serif", background:"transparent", border:"none", padding:"4px 6px", color:C.text, outline:"none", resize:"none", maxHeight:120, overflowY:"auto", lineHeight:1.4, boxSizing:"border-box" }}
                   onFocus={() => setAiInputFocused(true)}
@@ -9774,10 +9779,18 @@ ${voiceMode
                         (Notes' own Voice button), and stops there — reviewing before Send stays
                         possible, rather than sending the instant speech recognition finishes. */}
                     {SRSupported && !aiLoading && (
-                      <button onClick={toggleListen} aria-label={listening ? "Stop recording" : "Dictate a message"} title={listening ? "Stop recording" : "Dictate a message"}
-                        style={{ background:listening?C.accentBg:C.card, border:`1px solid ${listening?C.accent:C.cardB}`, borderRadius:"50%", width:36, height:36, flexShrink:0, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>
-                        <NavIcon id="mic" size={16} color={listening?C.accent:C.text} />
-                      </button>
+                      <div style={{ position:"relative", width:36, height:36, flexShrink:0 }}>
+                        {/* A static color change on a 36px button was too subtle to register at a
+                            glance — this ring keeps expanding and fading for as long as listening
+                            stays true, reading as "actively recording" even peripherally. */}
+                        {listening && (
+                          <div style={{ position:"absolute", inset:0, borderRadius:"50%", border:`2px solid ${C.accent}`, animation:"micRipple 1.3s ease-out infinite", pointerEvents:"none" }} />
+                        )}
+                        <button onClick={toggleListen} aria-label={listening ? "Stop recording" : "Dictate a message"} title={listening ? "Stop recording" : "Dictate a message"}
+                          style={{ position:"relative", background:listening?C.accentBg:C.card, border:`1px solid ${listening?C.accent:C.cardB}`, borderRadius:"50%", width:36, height:36, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>
+                          <NavIcon id="mic" size={16} color={listening?C.accent:C.text} />
+                        </button>
+                      </div>
                     )}
                     {/* One button in one place: the mic sits there until you start typing, then it
                         becomes Send. Showing both at once meant a permanently greyed-out Send
