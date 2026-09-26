@@ -136,6 +136,14 @@ const ANIM = `
 @keyframes celebratePop{0%{transform:scale(.3);opacity:0}45%{transform:scale(1.2);opacity:1}70%{transform:scale(.92)}100%{transform:scale(1);opacity:1}}
 @keyframes confettiFall{0%{transform:translate(0,-10px) rotate(0deg);opacity:1}100%{transform:translate(var(--drift,0px),100vh) rotate(var(--spin,540deg));opacity:0}}
 @keyframes alarmPulse{0%,100%{transform:scale(1);opacity:.7}50%{transform:scale(1.12);opacity:1}}
+/* One-shot reactions for the mood orbs' faces (see MoodFace/MoodOrb) — each mood gets its own
+   character instead of the same generic pop for all four: Calm eases into a slow breath, Happy
+   bounces with a little joyful wobble, Stressed and Angry both shake but Angry sharper/faster,
+   reading as more intense than merely uneasy. */
+@keyframes moodCalmBreathe{0%,100%{transform:scale(1)}50%{transform:scale(1.1)}}
+@keyframes moodHappyBounce{0%,100%{transform:translateY(0) rotate(0deg)}30%{transform:translateY(-4px) rotate(-8deg)}60%{transform:translateY(0) rotate(6deg)}100%{transform:translateY(0) rotate(0deg)}}
+@keyframes moodStressedShake{0%,100%{transform:translateX(0) rotate(0deg)}20%{transform:translateX(-2px) rotate(-3deg)}40%{transform:translateX(2px) rotate(3deg)}60%{transform:translateX(-2px) rotate(-2deg)}80%{transform:translateX(2px) rotate(2deg)}}
+@keyframes moodAngryShake{0%,100%{transform:translateX(0) rotate(0deg)}15%{transform:translateX(-3px) rotate(-5deg)}30%{transform:translateX(3px) rotate(5deg)}45%{transform:translateX(-3px) rotate(-4deg)}60%{transform:translateX(3px) rotate(4deg)}75%{transform:translateX(-2px) rotate(-2deg)}90%{transform:translateX(2px) rotate(2deg)}}
 /* Slow ambient glow behind the Quick Reset countdown ring — a calmer, longer cycle than
    alarmPulse above, meant to read as "breathing" rather than an alert. */
 @keyframes breathe{0%,100%{transform:scale(1);opacity:.35}50%{transform:scale(1.18);opacity:.75}}
@@ -994,25 +1002,25 @@ const subscribeToPush = async authedFetch => {
 // shapes so each reads instantly at the orb's modest on-screen size, in the same friendly,
 // hand-drawn spirit as the reference the mood-orb design brief was built from, without copying
 // its exact geometry.
-function MoodFace({ mood, size = 28 }) {
+function MoodFace({ mood, size = 28, style }) {
   const stroke = "#20222b";
   const s = { stroke, strokeWidth:7, strokeLinecap:"round", strokeLinejoin:"round", fill:"none" };
   if (mood === "calm") return (
-    <svg width={size} height={size} viewBox="0 0 100 100" aria-hidden="true">
+    <svg width={size} height={size} viewBox="0 0 100 100" aria-hidden="true" style={style}>
       <path d="M26 44 Q34 38 42 44" {...s} />
       <path d="M58 44 Q66 38 74 44" {...s} />
       <path d="M34 65 Q50 75 66 65" {...s} />
     </svg>
   );
   if (mood === "happy") return (
-    <svg width={size} height={size} viewBox="0 0 100 100" aria-hidden="true">
+    <svg width={size} height={size} viewBox="0 0 100 100" aria-hidden="true" style={style}>
       <path d="M24 42 Q34 28 44 40" {...s} />
       <path d="M56 40 Q66 28 76 42" {...s} />
       <path d="M27 59 Q50 88 73 59 Q50 73 27 59 Z" fill={stroke} stroke="none" />
     </svg>
   );
   if (mood === "stressed") return (
-    <svg width={size} height={size} viewBox="0 0 100 100" aria-hidden="true">
+    <svg width={size} height={size} viewBox="0 0 100 100" aria-hidden="true" style={style}>
       <path d="M24 36 L44 47" {...s} />
       <path d="M76 36 L56 47" {...s} />
       <circle cx="34" cy="57" r="5" fill={stroke} />
@@ -1022,7 +1030,7 @@ function MoodFace({ mood, size = 28 }) {
   );
   // angry
   return (
-    <svg width={size} height={size} viewBox="0 0 100 100" aria-hidden="true">
+    <svg width={size} height={size} viewBox="0 0 100 100" aria-hidden="true" style={style}>
       <path d="M24 33 L46 46" {...s} />
       <path d="M76 33 L54 46" {...s} />
       <circle cx="34" cy="58" r="5" fill={stroke} />
@@ -1031,6 +1039,15 @@ function MoodFace({ mood, size = 28 }) {
     </svg>
   );
 }
+// One-shot animation played on the face itself when its mood is (re-)selected — see the
+// matching @keyframes above. Kept separate from MOOD_ORB_GLOW/MOOD_META since this is purely a
+// per-tap animation name, not a persistent color or score.
+const MOOD_FACE_ANIM = {
+  calm:     "moodCalmBreathe .6s ease-in-out",
+  happy:    "moodHappyBounce .5s ease-in-out",
+  stressed: "moodStressedShake .5s ease-in-out",
+  angry:    "moodAngryShake .5s ease-in-out",
+};
 
 // A soft, glowing 3D-style orb for one of KROFT's four moods — a radial gradient plus a matching
 // outer glow stands in for real depth/lighting without an actual 3D asset. Keyed on its own tap
@@ -1056,7 +1073,7 @@ function MoodOrb({ mood, label, active, onClick }) {
         display:"flex", alignItems:"center", justifyContent:"center",
         animation: active ? "bouncePop .4s cubic-bezier(.34,1.56,.64,1)" : "none",
       }}>
-        <MoodFace mood={mood} size={20} />
+        <MoodFace mood={mood} size={20} style={{ transformOrigin:"center", animation: active ? MOOD_FACE_ANIM[mood] : "none" }} />
       </div>
       <span style={{ fontSize:11, fontWeight:700, color: active ? `rgb(${glow})` : C.soft, fontFamily:"'Space Grotesk',sans-serif" }}>{label}</span>
     </button>
