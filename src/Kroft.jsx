@@ -341,6 +341,12 @@ const speechLang = () => (typeof navigator !== "undefined" && navigator.language
 // genuinely different-sounding options rather than quietly showing fewer.
 const FEMALE_VOICE_HINTS = /female|woman|samantha|karen|victoria|zira|susan|fiona|moira|tessa|serena|salli|joanna|kendra|kimberly|ivy|amy|emma|allison|ava|zoe|shelley|aria|jenny/i;
 const MALE_VOICE_HINTS = /male|\bman\b|daniel|alex|fred|david|\bguy\b|aaron|matthew|justin|joey|eric|ryan|brian|george|kevin|gordon|arthur|thomas/i;
+// Checked against both the voice's display name and its voiceURI — Android's built-in TTS
+// engine routinely exposes voices with a generic display name (e.g. "English (America)") that
+// carries zero gender hint, while its underlying voiceURI encodes it instead (e.g.
+// "...#male_1-local"). Name-only matching missed these entirely, which is exactly the class of
+// device where the two heuristics below silently mattered most.
+const voiceHints = (v, re) => re.test(v.name) || re.test(v.voiceURI || "");
 function categorizeVoices(vs) {
   const pool = vs.filter(v => v.lang?.startsWith("en"));
   const used = new Set();
@@ -351,8 +357,8 @@ function categorizeVoices(vs) {
       used.add(v.voiceURI); out.push(v);
     }
   };
-  const female = []; take(v => FEMALE_VOICE_HINTS.test(v.name), 2, female);
-  const male = []; take(v => MALE_VOICE_HINTS.test(v.name), 2, male);
+  const female = []; take(v => voiceHints(v, FEMALE_VOICE_HINTS), 2, female);
+  const male = []; take(v => voiceHints(v, MALE_VOICE_HINTS), 2, male);
   const leftovers = pool.filter(v => !used.has(v.voiceURI));
   while (female.length < 2 && leftovers.length) { const v = leftovers.shift(); used.add(v.voiceURI); female.push(v); }
   while (male.length < 2 && leftovers.length) { const v = leftovers.shift(); used.add(v.voiceURI); male.push(v); }
@@ -488,7 +494,15 @@ const pickVoiceForPersona = voiceIdOverride => {
   }
   const bySlot = categorizeVoices(vs)[profile.genderSlot];
   if (bySlot) return { profile, voice:bySlot };
-  const fallback = vs.find(v => /Samantha|Google US English|Karen|Serena/i.test(v.name))
+  // Reaching here means the device didn't expose enough distinctly-gendered English voices to
+  // fill every slot (common on Android and stripped-down browsers). This used to fall back to a
+  // hardcoded female-leaning name list (Samantha/Google US English/Karen/Serena) for every
+  // persona regardless of gender — so a male persona with no dedicated male voice available was
+  // actively steered onto a female one instead of just leaving the choice to the platform.
+  // Searching the same MALE/FEMALE hint regex the persona itself is keyed to keeps this
+  // gender-consistent instead.
+  const genderHints = profile.gender === "male" ? MALE_VOICE_HINTS : FEMALE_VOICE_HINTS;
+  const fallback = vs.find(v => voiceHints(v, genderHints))
       || vs.find(v => v.lang === "en-US" && !/compact/i.test(v.name))
       || vs.find(v => v.lang?.startsWith("en"))
       || null;
