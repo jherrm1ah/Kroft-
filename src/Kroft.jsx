@@ -142,11 +142,6 @@ const ANIM = `
 /* Real blinks are infrequent (every few seconds) and brief — most of the cycle sits at
    scaleY(0) (eyelid hidden, eyes open), with a quick close-and-reopen near the end. */
 @keyframes robotBlink{0%,90%,100%{transform:scaleY(0)}93%,95%{transform:scaleY(1)}}
-/* Expanding-and-fading ring around the chat mic while it's actively recording — a static color
-   change on a small 36px button was too easy to miss at a glance; this reads as "listening" even
-   out of the corner of your eye. Colored inline by whatever renders it (theme-aware), same as
-   robotBlink's eyelids above — this keyframe only ever controls the shape, never the color. */
-@keyframes micRipple{0%{transform:scale(.9);opacity:.7}100%{transform:scale(1.9);opacity:0}}
 `;
 
 // A curated, region-grouped starting list for the currency picker — not exhaustive, since any
@@ -2890,6 +2885,10 @@ function KroftApp({ onFullReset } = {}) {
   const aiAbortRef = useRef(null);
   const chatEnd = useRef(null);
   const recRef = useRef(null);
+  // Set right before calling recRef.current.stop() from the recording bar's Send button — the
+  // final transcript only arrives asynchronously via onresult, so this tells that handler "once
+  // you have the text, send it" instead of just dropping it into the input box to review.
+  const sendAfterStopRef = useRef(false);
   // A separate recognizer/ref pair for the Wellness Journal's "speak an entry" button — toggleListen
   // above is hardcoded to always hand its transcript to the AI chat input and jump to that tab
   // (setAiInput/setTab("nova")), which is exactly wrong here: journal dictation needs to land in
@@ -4745,11 +4744,40 @@ function KroftApp({ onFullReset } = {}) {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) { toast("Speech recognition needs Chrome or Edge."); return; }
     const r = new SR(); r.continuous=false; r.interimResults=true; r.lang=speechLang();
-    r.onstart = () => setListening(true); r.onend = () => setListening(false);
-    r.onresult = e => { const t = Array.from(e.results).map(x => x[0].transcript).join(""); setTranscript(t); if (e.results[0].isFinal) { setAiInput(t); setTab("nova"); setTranscript(""); } };
-    r.onerror = () => { setListening(false); toast("Mic error — check permissions."); };
+    r.onstart = () => setListening(true);
+    r.onend = () => { setListening(false); sendAfterStopRef.current = false; };
+    r.onresult = e => {
+      const t = Array.from(e.results).map(x => x[0].transcript).join("");
+      setTranscript(t);
+      if (e.results[0].isFinal) {
+        setTranscript("");
+        // Send's own tap already sets this flag right before calling stop() — the final text
+        // only exists once this handler runs, so this is the earliest point it can actually be
+        // sent from.
+        if (sendAfterStopRef.current) { sendAfterStopRef.current = false; askKroft(t); }
+        else { setAiInput(t); setTab("nova"); }
+      }
+    };
+    r.onerror = () => { setListening(false); sendAfterStopRef.current = false; toast("Mic error — check permissions."); };
     recRef.current = r; r.start();
   }, [listening]);
+
+  // Cancel: discards whatever was said instead of reviewing it — abort() (unlike stop()) fires no
+  // further onresult, so nothing reaches the input box.
+  const cancelListen = useCallback(() => {
+    sendAfterStopRef.current = false;
+    recRef.current?.abort?.();
+    setTranscript("");
+    setListening(false);
+  }, []);
+
+  // Stop-and-send in one tap: sets the flag toggleListen's onresult checks, then stops exactly
+  // like the mic button's own Stop does.
+  const stopAndSend = useCallback(() => {
+    sendAfterStopRef.current = true;
+    recRef.current?.stop();
+    setListening(false);
+  }, []);
 
   // Wellness Journal's own dictation — see journalRecRef's comment above for why this can't just
   // reuse toggleListen. Appends the finished phrase to whatever's already been typed/spoken rather
@@ -9749,6 +9777,29 @@ ${voiceMode
                   onFocus={() => setAiInputFocused(true)}
                   onBlur={() => setAiInputFocused(false)}
                 />
+                {listening ? (
+                  /* Recording mode: the whole control row becomes cancel/waveform/stop/send,
+                     replacing the attach + mic + send cluster below — matching the pattern most
+                     dictation UIs use (e.g. ChatGPT's own), instead of leaving the normal row's
+                     buttons in place next to a small ripple. */
+                  <div style={{ display:"flex", alignItems:"center", gap:10, marginTop:2 }}>
+                    <button onClick={cancelListen} aria-label="Cancel recording" title="Cancel"
+                      style={{ background:"none", border:"none", color:C.soft, cursor:"pointer", width:28, height:28, flexShrink:0, display:"flex", alignItems:"center", justifyContent:"center", fontSize:18, lineHeight:1, padding:0 }}>
+                      ✕
+                    </button>
+                    <div style={{ flex:1, display:"flex", justifyContent:"center" }}>
+                      <WaveBar active color={C.accent} />
+                    </div>
+                    <button onClick={toggleListen} aria-label="Stop recording" title="Stop"
+                      style={{ background:C.text, border:"none", borderRadius:"50%", width:34, height:34, flexShrink:0, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>
+                      <span style={{ width:11, height:11, borderRadius:3, background:C.card, display:"block" }} />
+                    </button>
+                    <button onClick={stopAndSend} aria-label="Stop and send" title="Send"
+                      style={{ background:C.text, border:"none", borderRadius:"50%", width:36, height:36, flexShrink:0, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>
+                      <NavIcon id="send" size={17} color={C.card} />
+                    </button>
+                  </div>
+                ) : (
                 <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginTop:2 }}>
                   {/* "New chat" moved to the header (it's still right there) — the "+" now opens
                       a real attach menu instead of duplicating that action. */}
@@ -9777,20 +9828,14 @@ ${voiceMode
                         back-and-forth conversation), this records one utterance, transcribes it
                         into the text field via the same toggleListen already used elsewhere
                         (Notes' own Voice button), and stops there — reviewing before Send stays
-                        possible, rather than sending the instant speech recognition finishes. */}
+                        possible, rather than sending the instant speech recognition finishes.
+                        Only ever rendered while idle now — the recording state gets its own full
+                        row above instead of a ripple on this same small button. */}
                     {SRSupported && !aiLoading && (
-                      <div style={{ position:"relative", width:36, height:36, flexShrink:0 }}>
-                        {/* A static color change on a 36px button was too subtle to register at a
-                            glance — this ring keeps expanding and fading for as long as listening
-                            stays true, reading as "actively recording" even peripherally. */}
-                        {listening && (
-                          <div style={{ position:"absolute", inset:0, borderRadius:"50%", border:`2px solid ${C.accent}`, animation:"micRipple 1.3s ease-out infinite", pointerEvents:"none" }} />
-                        )}
-                        <button onClick={toggleListen} aria-label={listening ? "Stop recording" : "Dictate a message"} title={listening ? "Stop recording" : "Dictate a message"}
-                          style={{ position:"relative", background:listening?C.accentBg:C.card, border:`1px solid ${listening?C.accent:C.cardB}`, borderRadius:"50%", width:36, height:36, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>
-                          <NavIcon id="mic" size={16} color={listening?C.accent:C.text} />
-                        </button>
-                      </div>
+                      <button onClick={toggleListen} aria-label="Dictate a message" title="Dictate a message"
+                        style={{ background:C.card, border:`1px solid ${C.cardB}`, borderRadius:"50%", width:36, height:36, flexShrink:0, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>
+                        <NavIcon id="mic" size={16} color={C.text} />
+                      </button>
                     )}
                     {/* One button in one place: the mic sits there until you start typing, then it
                         becomes Send. Showing both at once meant a permanently greyed-out Send
@@ -9813,6 +9858,7 @@ ${voiceMode
                     )}
                   </div>
                 </div>
+                )}
               </div>
             </div>
           </div>
