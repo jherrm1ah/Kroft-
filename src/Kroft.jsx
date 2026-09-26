@@ -2670,6 +2670,11 @@ function KroftApp({ onFullReset } = {}) {
   // this date" across both at once.
   const [showEntryHistory, setShowEntryHistory] = useState(false);
   const [entryHistoryQuery, setEntryHistoryQuery] = useState("");
+  // "+N more" used to be static text with nothing to tap — these expand the rest of their list in
+  // place instead of leaving the data with nowhere to go.
+  const [showAllCategories, setShowAllCategories] = useState(false);
+  const [showAllUnbudgeted, setShowAllUnbudgeted] = useState(false);
+  const [showAllUpcoming, setShowAllUpcoming] = useState(false);
   const [monthlyReport, setMonthlyReport] = useState(null);
   const [generatingReport, setGeneratingReport] = useState(false);
   const [weeklyRecap, setWeeklyRecap] = useState(null);
@@ -7414,14 +7419,18 @@ ${voiceMode
                       <CategoryPieChart data={categoryBreakdown} pieColors={pieColors} c={C} currency={user.currency} />
                     </Suspense>
                     <div style={{ flex:1, minWidth:140, display:"flex", flexDirection:"column", gap:7 }}>
-                      {categoryBreakdown.slice(0, 6).map((c, i) => (
+                      {(showAllCategories ? categoryBreakdown : categoryBreakdown.slice(0, 6)).map((c, i) => (
                         <div key={c.cat} style={{ display:"flex", alignItems:"center", gap:7 }}>
                           <div style={{ width:8, height:8, borderRadius:99, background:pieColors[i % pieColors.length], flexShrink:0 }} />
                           <Mono style={{ color:C.text, flex:1, minWidth:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{c.cat}</Mono>
                           <Mono style={{ color:C.muted, flexShrink:0 }}>{fmtCur(c.amt, user.currency)} · {Math.round(c.pct*100)}%</Mono>
                         </div>
                       ))}
-                      {categoryBreakdown.length > 6 && <Mono style={{ color:C.muted }}>+{categoryBreakdown.length - 6} more</Mono>}
+                      {categoryBreakdown.length > 6 && (
+                        <button onClick={() => setShowAllCategories(v => !v)} style={{ background:"none", border:"none", padding:0, cursor:"pointer", textAlign:"left" }}>
+                          <Mono style={{ color:C.text, textDecoration:"underline" }}>{showAllCategories ? "Show less" : `+${categoryBreakdown.length - 6} more`}</Mono>
+                        </button>
+                      )}
                     </div>
                   </div>
                 </Card>
@@ -7518,13 +7527,17 @@ ${voiceMode
                           <div style={{ fontSize:12.5, fontWeight:600, color:C.muted }}>Not budgeted</div>
                           <Mono style={{ color:C.muted, flexShrink:0 }}>{fmtCur(total, user.currency)} this month</Mono>
                         </div>
-                        {rows.slice(0, 4).map(([cat, amt]) => (
+                        {(showAllUnbudgeted ? rows : rows.slice(0, 4)).map(([cat, amt]) => (
                           <div key={cat} style={{ display:"flex", justifyContent:"space-between", gap:8, padding:"3px 0" }}>
                             <Mono style={{ color:C.soft, minWidth:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{cat}</Mono>
                             <Mono style={{ color:C.soft, flexShrink:0 }}>{fmtCur(amt, user.currency)}</Mono>
                           </div>
                         ))}
-                        {rows.length > 4 && <Mono style={{ display:"block", color:C.muted, marginTop:3 }}>+{rows.length - 4} more</Mono>}
+                        {rows.length > 4 && (
+                          <button onClick={() => setShowAllUnbudgeted(v => !v)} style={{ background:"none", border:"none", padding:0, cursor:"pointer", textAlign:"left", marginTop:3 }}>
+                            <Mono style={{ color:C.text, textDecoration:"underline" }}>{showAllUnbudgeted ? "Show less" : `+${rows.length - 4} more`}</Mono>
+                          </button>
+                        )}
                       </div>
                     );
                   })()}
@@ -7568,7 +7581,7 @@ ${voiceMode
                 </Mono>
               ) : (
                 <div style={{ display:"flex", flexDirection:"column", gap:7 }}>
-                  {upcomingCashFlow.items.slice(0, 6).map(e => (
+                  {(showAllUpcoming ? upcomingCashFlow.items : upcomingCashFlow.items.slice(0, 6)).map(e => (
                     <div key={e.id} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:8 }}>
                       <div style={{ minWidth:0 }}>
                         <div style={{ fontSize:12, fontWeight:600, color:C.text, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{e.label}</div>
@@ -7577,7 +7590,11 @@ ${voiceMode
                       <Mono style={{ color:e.sign==="+"?C.positive:C.negative, fontWeight:700, flexShrink:0 }}>{e.sign}{fmtCur(e.amount, user.currency)}</Mono>
                     </div>
                   ))}
-                  {upcomingCashFlow.items.length > 6 && <Mono style={{ color:C.muted, marginTop:2 }}>+{upcomingCashFlow.items.length - 6} more</Mono>}
+                  {upcomingCashFlow.items.length > 6 && (
+                    <button onClick={() => setShowAllUpcoming(v => !v)} style={{ background:"none", border:"none", padding:0, cursor:"pointer", textAlign:"left", marginTop:2 }}>
+                      <Mono style={{ color:C.text, textDecoration:"underline" }}>{showAllUpcoming ? "Show less" : `+${upcomingCashFlow.items.length - 6} more`}</Mono>
+                    </button>
+                  )}
                 </div>
               )}
             </Card>
