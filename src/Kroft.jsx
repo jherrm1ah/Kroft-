@@ -268,17 +268,25 @@ const PRIORITY_RANK = { Urgent:0, High:1, Normal:2, Low:3 };
 // tab's mood-log tags, and moodToScore's day-aggregation. Previously each of those three kept its
 // own independent {mood: color/score} map, so adding a mood meant remembering to update all three
 // in lockstep — easy to miss one and end up with an entry the picker could log but the history
-// list rendered with no color, or that never factored into the wellness score. `color` is one of
-// Tag's four supported tones (this app's whole palette is deliberately just four semantic colors,
-// not one per mood), so a couple of moods sharing a tone is a real, accepted tradeoff rather than
-// a gap. score follows the existing happy=4..angry=1 scale — higher is better.
+// list rendered with no color, or that never factored into the wellness score. KROFT deliberately
+// tracks exactly these four moods — `color` is one of Tag's four supported tones, one per mood, no
+// sharing needed at this count. score follows the existing happy=4..angry=1 scale — higher is
+// better.
 const MOOD_META = {
   calm:     { label:"Calm",     color:"positive", score:3 },
   happy:    { label:"Happy",    color:"accent",   score:4 },
-  sad:      { label:"Sad",      color:"warning",  score:2 },
-  anxious:  { label:"Anxious",  color:"warning",  score:2 },
   stressed: { label:"Stressed", color:"warning",  score:2 },
   angry:    { label:"Angry",    color:"negative", score:1 },
+};
+// A distinct glow palette for the Overview's mood orbs only (MoodOrb below) — kept separate from
+// MOOD_META.color, which every other mood consumer (the Wellness mood log's tags, moodToScore)
+// still uses. This card gets its own original, vivid identity without recoloring a mood's tag
+// anywhere else in the app to match.
+const MOOD_ORB_GLOW = {
+  calm:     "112,196,165",
+  happy:    "237,181,84",
+  stressed: "121,148,222",
+  angry:    "224,104,97",
 };
 
 // Turns written text into something that reads aloud cleanly. AI replies come back with
@@ -981,6 +989,73 @@ const subscribeToPush = async authedFetch => {
     // on working. In-app/OS notifications while the app is open are unaffected either way.
   }
 };
+
+// Minimal, original expressions for KROFT's four tracked moods — thick, rounded, single-stroke
+// shapes so each reads instantly at the orb's modest on-screen size, in the same friendly,
+// hand-drawn spirit as the reference the mood-orb design brief was built from, without copying
+// its exact geometry.
+function MoodFace({ mood, size = 28 }) {
+  const stroke = "#20222b";
+  const s = { stroke, strokeWidth:7, strokeLinecap:"round", strokeLinejoin:"round", fill:"none" };
+  if (mood === "calm") return (
+    <svg width={size} height={size} viewBox="0 0 100 100" aria-hidden="true">
+      <path d="M26 44 Q34 38 42 44" {...s} />
+      <path d="M58 44 Q66 38 74 44" {...s} />
+      <path d="M34 65 Q50 75 66 65" {...s} />
+    </svg>
+  );
+  if (mood === "happy") return (
+    <svg width={size} height={size} viewBox="0 0 100 100" aria-hidden="true">
+      <path d="M24 42 Q34 28 44 40" {...s} />
+      <path d="M56 40 Q66 28 76 42" {...s} />
+      <path d="M27 59 Q50 88 73 59 Q50 73 27 59 Z" fill={stroke} stroke="none" />
+    </svg>
+  );
+  if (mood === "stressed") return (
+    <svg width={size} height={size} viewBox="0 0 100 100" aria-hidden="true">
+      <path d="M24 36 L44 47" {...s} />
+      <path d="M76 36 L56 47" {...s} />
+      <circle cx="34" cy="57" r="5" fill={stroke} />
+      <circle cx="66" cy="57" r="5" fill={stroke} />
+      <path d="M29 77 Q37 68 45 77 T61 77 T73 77" {...s} />
+    </svg>
+  );
+  // angry
+  return (
+    <svg width={size} height={size} viewBox="0 0 100 100" aria-hidden="true">
+      <path d="M24 33 L46 46" {...s} />
+      <path d="M76 33 L54 46" {...s} />
+      <circle cx="34" cy="58" r="5" fill={stroke} />
+      <circle cx="66" cy="58" r="5" fill={stroke} />
+      <path d="M31 79 Q50 64 69 79" {...s} />
+    </svg>
+  );
+}
+
+// A soft, glowing 3D-style orb for one of KROFT's four moods — a radial gradient plus a matching
+// outer glow stands in for real depth/lighting without an actual 3D asset. Keyed on its own tap
+// counter (not just `mood`) so the pop-in animation replays on every tap, including tapping a
+// mood that was already active a moment ago — otherwise re-selecting the same mood twice in a row
+// would only animate the first time.
+function MoodOrb({ mood, label, active, onClick }) {
+  const [tap, setTap] = useState(0);
+  const glow = MOOD_ORB_GLOW[mood];
+  return (
+    <button onClick={() => { setTap(t => t+1); onClick(); }} aria-label={label} aria-pressed={active}
+      style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:7, background:"none", border:"none", cursor:"pointer", padding:4, WebkitTapHighlightColor:"transparent" }}>
+      <div key={`${mood}-${tap}`} style={{
+        width:"100%", maxWidth:60, aspectRatio:"1", borderRadius:"50%",
+        background:`radial-gradient(circle at 32% 26%, rgba(${glow},1) 0%, rgba(${glow},.82) 55%, rgba(${glow},.6) 100%)`,
+        boxShadow: active ? `0 0 0 2.5px rgba(${glow},.85), 0 8px 20px rgba(${glow},.4)` : `0 4px 12px rgba(${glow},.22)`,
+        display:"flex", alignItems:"center", justifyContent:"center",
+        animation: active ? "bouncePop .4s cubic-bezier(.34,1.56,.64,1)" : "none",
+      }}>
+        <MoodFace mood={mood} size={28} />
+      </div>
+      <span style={{ fontSize:11, fontWeight:700, color: active ? `rgb(${glow})` : C.soft, fontFamily:"'Space Grotesk',sans-serif" }}>{label}</span>
+    </button>
+  );
+}
 
 // Placeholder blocks shown while stored data is still loading. Without these the app renders
 // its empty states first — a finance app briefly announcing "No financial data yet" to someone
@@ -6150,7 +6225,7 @@ ${voiceMode
     // Only today's check-ins count. Now that the log persists across days, slicing the tail
     // blindly would let last week's bad afternoon drive today's advice.
     const recentMoods = moodLog.filter(m => (m.date || today) === today).slice(-3).map(m => m.mood);
-    const stressed = recentMoods.filter(m => m === "stressed" || m === "angry" || m === "anxious").length >= 2;
+    const stressed = recentMoods.filter(m => m === "stressed" || m === "angry").length >= 2;
 
     // Money worry is a real driver of how a day feels, so it belongs here alongside mood and
     // workload rather than only in the finance tab.
@@ -7524,20 +7599,11 @@ ${voiceMode
             )}
             <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:13 }}>
               <Card>
-                <Mono style={{ display:"block", color:C.muted, marginBottom:12, letterSpacing:.8 }}>Mood detection</Mono>
-                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:7 }}>
-                  {Object.keys(MOOD_META).map(m => {
-                    const mColor = C[MOOD_META[m].color];
-                    const active = mood===m;
-                    return (
-                    // Keying on the active transition (not just `m`) forces a fresh DOM node the
-                    // moment a mood is picked, so its pop-in animation replays every tap — even
-                    // tapping the same mood again a moment later, not just the first time.
-                    <button key={active ? `${m}-on` : m} onClick={() => applyMood(m)} style={{ background:active?mColor+"22":C.surface, border:`1.5px solid ${active?mColor:C.cardB}`, borderRadius:10, padding:"9px 6px", cursor:"pointer", color:active?mColor:C.soft, fontSize:11, fontWeight:700, textAlign:"center", boxShadow:active?`0 0 12px ${mColor}40`:"none", transition:"all .15s", animation:active?"bouncePop .4s cubic-bezier(.34,1.56,.64,1)":"none" }}>
-                      {MOOD_META[m].label}
-                    </button>
-                    );
-                  })}
+                <Mono style={{ display:"block", color:C.muted, marginBottom:14, letterSpacing:.8 }}>Mood detection</Mono>
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, justifyItems:"center" }}>
+                  {Object.keys(MOOD_META).map(m => (
+                    <MoodOrb key={m} mood={m} label={MOOD_META[m].label} active={mood===m} onClick={() => applyMood(m)} />
+                  ))}
                 </div>
               </Card>
               <Card>
