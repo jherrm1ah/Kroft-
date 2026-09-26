@@ -824,6 +824,17 @@ const fmtMemoLength = secs => {
 // wherever it was when the modal closes.
 const useModalA11y = (onClose, active = true) => {
   const ref = useRef(null);
+  // onClose is passed at nearly every call site as an inline arrow (`onClose={() => setX(false)}`),
+  // a fresh function identity on every render of the parent — including a render triggered by
+  // typing a single character into a field inside this very dialog. That used to sit directly in
+  // this effect's dependency array, so every keystroke re-ran the whole effect below: it steals
+  // focus onto the dialog's first focusable element (typically its ✕ close button) every time it
+  // runs, which yanked focus straight out of whatever the person was typing into and dismissed the
+  // on-screen keyboard — needing a tap back into the field for every single letter. Reading the
+  // latest onClose through a ref instead lets the effect depend on nothing but `active`, so it
+  // only ever runs on mount/unmount, while Escape still always calls the current onClose.
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
   useEffect(() => {
     if (!active) return;
     const previouslyFocused = document.activeElement;
@@ -837,7 +848,7 @@ const useModalA11y = (onClose, active = true) => {
     (first || node)?.focus?.();
 
     const onKey = e => {
-      if (e.key === "Escape") { e.stopPropagation(); onClose?.(); return; }
+      if (e.key === "Escape") { e.stopPropagation(); onCloseRef.current?.(); return; }
       if (e.key !== "Tab") return;
       const items = focusables();
       if (!items.length) return;
@@ -853,7 +864,7 @@ const useModalA11y = (onClose, active = true) => {
       // top of the document with no idea where they were.
       previouslyFocused?.focus?.();
     };
-  }, [active, onClose]);
+  }, [active]);
   return ref;
 };
 
