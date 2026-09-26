@@ -2889,6 +2889,13 @@ function KroftApp({ onFullReset } = {}) {
   // final transcript only arrives asynchronously via onresult, so this tells that handler "once
   // you have the text, send it" instead of just dropping it into the input box to review.
   const sendAfterStopRef = useRef(false);
+  // Real recognizers don't reliably deliver a final (isFinal) result before onend — stop()/
+  // abort() can end a session with only interim results ever having arrived, especially when
+  // Stop/Send is tapped right as someone finishes speaking. These back onresult's own commit
+  // with a fallback in onend, so what was actually heard never just vanishes silently.
+  const lastTranscriptRef = useRef("");
+  const committedRef = useRef(false);
+  const cancelledRef = useRef(false);
   // A separate recognizer/ref pair for the Wellness Journal's "speak an entry" button — toggleListen
   // above is hardcoded to always hand its transcript to the AI chat input and jump to that tab
   // (setAiInput/setTab("nova")), which is exactly wrong here: journal dictation needs to land in
@@ -4744,35 +4751,54 @@ function KroftApp({ onFullReset } = {}) {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) { toast("Speech recognition needs Chrome or Edge."); return; }
     const r = new SR(); r.continuous=false; r.interimResults=true; r.lang=speechLang();
+    lastTranscriptRef.current = ""; committedRef.current = false; cancelledRef.current = false;
     r.onstart = () => setListening(true);
-    r.onend = () => { setListening(false); sendAfterStopRef.current = false; };
     r.onresult = e => {
       const t = Array.from(e.results).map(x => x[0].transcript).join("");
+      lastTranscriptRef.current = t;
       setTranscript(t);
       if (e.results[0].isFinal) {
         setTranscript("");
+        committedRef.current = true;
         // Send's own tap already sets this flag right before calling stop() — the final text
         // only exists once this handler runs, so this is the earliest point it can actually be
         // sent from.
-        if (sendAfterStopRef.current) { sendAfterStopRef.current = false; askKroft(t); }
+        if (sendAfterStopRef.current) { sendAfterStopRef.current = false; if (t.trim()) askKroft(t); }
         else { setAiInput(t); setTab("nova"); }
+      }
+    };
+    r.onend = () => {
+      setListening(false);
+      const wantsSend = sendAfterStopRef.current;
+      sendAfterStopRef.current = false;
+      // The common failure mode this guards against: stop()/abort() ends the session before a
+      // final isFinal result ever arrives (real recognizers do this often, especially right as
+      // someone finishes speaking), so onresult's own commit above never ran — without this,
+      // whatever was actually heard just vanishes, which is exactly "Send doesn't send."
+      if (!committedRef.current && !cancelledRef.current) {
+        const pending = lastTranscriptRef.current;
+        setTranscript("");
+        if (pending.trim()) { if (wantsSend) askKroft(pending); else { setAiInput(pending); setTab("nova"); } }
       }
     };
     r.onerror = () => { setListening(false); sendAfterStopRef.current = false; toast("Mic error — check permissions."); };
     recRef.current = r; r.start();
   }, [listening]);
 
-  // Cancel: discards whatever was said instead of reviewing it — abort() (unlike stop()) fires no
-  // further onresult, so nothing reaches the input box.
+  // Cancel: discards whatever was said instead of reviewing or sending it. cancelledRef suppresses
+  // onend's own fallback above, which would otherwise still commit any interim transcript already
+  // captured before abort() was called.
   const cancelListen = useCallback(() => {
     sendAfterStopRef.current = false;
+    cancelledRef.current = true;
     recRef.current?.abort?.();
     setTranscript("");
     setListening(false);
   }, []);
 
-  // Stop-and-send in one tap: sets the flag toggleListen's onresult checks, then stops exactly
-  // like the mic button's own Stop does.
+  // Stop-and-send in one tap: sets the flag toggleListen's onresult/onend check, then stops
+  // exactly like the mic button's own Stop does. Whichever of the two actually ends up firing
+  // (a final result, or onend's fallback if one never arrives) is what sends it.
   const stopAndSend = useCallback(() => {
     sendAfterStopRef.current = true;
     recRef.current?.stop();
