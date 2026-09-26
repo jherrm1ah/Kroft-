@@ -3046,6 +3046,11 @@ function KroftApp({ onFullReset } = {}) {
 
   // Workspace — Reminders (smart, AI-suggested — separate from calendar appointment reminders)
   const [smartReminders, setSmartReminders] = useState([]);
+  // Mirrors smartReminders for code that needs the CURRENT list from inside a long-lived timeout
+  // (snoozeReminderAlarm's 10-minute re-ring) — reading the state variable there would close over
+  // whatever it was at snooze time, missing a done/delete that happened in between.
+  const smartRemindersRef = useRef([]);
+  useEffect(() => { smartRemindersRef.current = smartReminders; }, [smartReminders]);
   const [newReminder, setNewReminder] = useState({ text:"", when:"", contactId:null });
   const [editingReminder, setEditingReminder] = useState(null);
   const [showAddReminder, setShowAddReminder] = useState(false);
@@ -3284,7 +3289,11 @@ function KroftApp({ onFullReset } = {}) {
     }
     if (data.finance) { setIncome(data.finance.income||[]); setExpenses(data.finance.expenses||[]); setBudgets(data.finance.budgets||{}); setBudgetAlerts(data.finance.budgetAlerts||{}); setBudgetCarryover(data.finance.budgetCarryover||{}); if (data.finance.budgetRolloverMonth) setBudgetRolloverMonth(data.finance.budgetRolloverMonth); }
     if (data.productivity) {
-      setTasks(data.productivity.tasks||[]);
+      // Normalizes any task saved with a priority outside the app's real set (Urgent/High/
+      // Normal/Low) back to Normal — Ask Kroft used to default to a nonexistent "Medium" here,
+      // which the Add/Edit Task dropdown can't render as a selected option.
+      const validPriority = new Set(["Urgent","High","Normal","Low"]);
+      setTasks((data.productivity.tasks||[]).map(t => validPriority.has(t.priority) ? t : { ...t, priority:"Normal" }));
       setSmartReminders(data.productivity.smartReminders||[]);
       setNotes(data.productivity.notes||[]);
       // A pending call from days ago (the browser was closed the whole time) shouldn't
@@ -5024,7 +5033,13 @@ function KroftApp({ onFullReset } = {}) {
     if (!r) return;
     setRingingReminder(null);
     toast(`Snoozed — "${r.text}" again in 10 minutes.`);
-    setTimeout(() => setRingingReminder(prev => prev ? prev : r), 10 * 60000);
+    setTimeout(() => {
+      // Re-checks the reminder still exists and isn't done — it may have been completed or
+      // deleted during the snooze window, in which case it has nothing left to ring for.
+      const current = smartRemindersRef.current.find(x => x.id === r.id);
+      if (!current || current.done) return;
+      setRingingReminder(prev => prev ? prev : current);
+    }, 10 * 60000);
   };
 
   const answerCall = () => {
@@ -5288,7 +5303,7 @@ ACTIONS
 When ${user.name||"the user"} asks you to record, add, schedule, change or remove something, actually do it by appending ONE action block to the very end of your reply, after your normal sentence:
 <action>{"type":"...","...":"..."}</action>
 Valid types and their fields:
-{"type":"add_task","title":"string","priority":"High|Medium|Low"}
+{"type":"add_task","title":"string","priority":"Urgent|High|Normal|Low"}
 {"type":"add_expense","label":"string","amount":number,"cat":"string"}
 {"type":"add_income","label":"string","amount":number,"cat":"string"}
 {"type":"add_appointment","title":"string","date":"YYYY-MM-DD","time":"HH:MM","location":"string"}
@@ -5359,7 +5374,7 @@ ${voiceMode
       }
       case "add_task": {
         const title = str(action.title); if (!title) return null;
-        const priority = ["High","Medium","Low"].includes(action.priority) ? action.priority : "Medium";
+        const priority = ["Urgent","High","Normal","Low"].includes(action.priority) ? action.priority : "Normal";
         const item = { id:uid(), title, priority, repeat:"none", contactId:null, done:false };
         setTasks(p => [item, ...p]);
         return { label:`Task added: ${title}`, undo:() => setTasks(p => p.filter(x => x.id !== item.id)) };
@@ -6580,9 +6595,12 @@ ${voiceMode
 
   // A field containing a comma, quote or newline has to be quoted, with any internal quote
   // doubled — otherwise a description like `Lunch, client meeting` would silently split into two
-  // spreadsheet columns on open.
+  // spreadsheet columns on open. A leading =, +, -, or @ gets a guarding leading apostrophe too —
+  // Excel/Sheets treat those as the start of a formula, so a label typed as `=1+1` would otherwise
+  // execute as one instead of showing as the plain text it is (CSV formula injection).
   const csvField = v => {
-    const s = String(v ?? "");
+    let s = String(v ?? "");
+    if (/^[=+\-@]/.test(s)) s = `'${s}`;
     return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   };
   const exportFinanceCsv = () => {
@@ -8728,9 +8746,13 @@ ${voiceMode
                       // moment the current one is completed — the completed one stays as a record.
                       // Its due date (if any) advances by the same cadence, same as a recurring
                       // appointment — otherwise the new copy would already show as overdue the
-                      // instant it's created.
+                      // instant it's created. Loops forward (not just one step) so completing a
+                      // task that's sat overdue for days lands on today/the future, not still in
+                      // the past — same catch-up rollRecurring already does for appointments.
                       if (completing && target.repeat !== "none") {
-                        return [{ id:uid(), title:target.title, priority:target.priority, repeat:target.repeat, contactId:target.contactId, dueDate:target.dueDate?advanceRepeatDate(target.dueDate,target.repeat):"", done:false }, ...toggled];
+                        let nextDue = target.dueDate || "";
+                        if (nextDue) { const today = todayISO(); while (nextDue < today) nextDue = advanceRepeatDate(nextDue, target.repeat); }
+                        return [{ id:uid(), title:target.title, priority:target.priority, repeat:target.repeat, contactId:target.contactId, dueDate:nextDue, done:false }, ...toggled];
                       }
                       return toggled;
                     });
