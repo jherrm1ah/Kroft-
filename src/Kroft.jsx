@@ -249,6 +249,16 @@ const sortAppts = list => [...list].sort((a, b) => {
   if (a.date !== b.date) return (a.date||"") < (b.date||"") ? -1 : 1;
   return (parseApptTime(a.time) ?? -1) - (parseApptTime(b.time) ?? -1);
 });
+// Appointments have no duration field, so "conflict" can only mean "already something booked at
+// this exact date+time" — not true overlap detection. Compared via parseApptTime (not string
+// equality) so "4:00 PM" and one synced in as "16:00" are still recognized as the same slot.
+// Time-less appointments (parseApptTime returns null) never conflict with anything, since
+// there's no slot to collide with.
+const findApptConflict = (list, date, time, excludeId) => {
+  const mins = parseApptTime(time);
+  if (mins == null) return null;
+  return list.find(a => a.id !== excludeId && a.date === date && parseApptTime(a.time) === mins) || null;
+};
 // Lower rank = more urgent = sorts first. The task list used to only ever group by done/not-done —
 // priority was fully editable and stored but never actually affected ordering, so an "Urgent" task
 // added after a "Low" one just sat below it.
@@ -5184,9 +5194,13 @@ ${voiceMode
       case "add_appointment": {
         const title = str(action.title); if (!title) return null;
         const item = { id:uid(), title, date:validDate(action.date)?action.date:todayISO(), time:str(action.time)||"09:00", location:str(action.location), notes:"", urgent:false, repeat:"none", contactId:null };
+        const conflict = findApptConflict(appts, item.date, item.time, item.id);
         setAppts(p => [...p, item]);
         mirrorAppointmentToCalendars(item);
-        return { label:`Appointment added: ${title}`, undo:() => setAppts(p => p.filter(x => x.id !== item.id)) };
+        const label = conflict
+          ? `Appointment added: ${title} — heads up, that's the same time as "${conflict.title}."`
+          : `Appointment added: ${title}`;
+        return { label, undo:() => setAppts(p => p.filter(x => x.id !== item.id)) };
       }
       case "add_note": {
         const body = str(action.body); const title = str(action.title);
@@ -8132,11 +8146,28 @@ ${voiceMode
                   <div style={{ display:"flex", gap:8 }}><Inp placeholder="Title *" value={newAppt.title} onChange={e=>setNewAppt(v=>({...v,title:e.target.value}))} style={{ flex:2 }} /><Inp placeholder="Time e.g. 4:00 PM" value={newAppt.time} onChange={e=>setNewAppt(v=>({...v,time:e.target.value}))} style={{ flex:1 }} /></div>
                   <div style={{ display:"flex", gap:8 }}><input type="date" value={newAppt.date||todayISO()} onChange={e=>setNewAppt(v=>({...v,date:e.target.value}))} style={{ flex:1, background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 12px", color:C.text, fontSize:13, fontFamily:"'Space Grotesk',sans-serif", outline:"none", colorScheme:theme }} /><Inp placeholder="Location" value={newAppt.location} onChange={e=>setNewAppt(v=>({...v,location:e.target.value}))} style={{ flex:1 }} /></div>
                   <Inp placeholder="Notes (optional)" value={newAppt.notes} onChange={e=>setNewAppt(v=>({...v,notes:e.target.value}))} />
+                  {(() => {
+                    const conflict = findApptConflict(appts, newAppt.date||todayISO(), newAppt.time, null);
+                    return conflict && (
+                      <Mono style={{ color:C.warning, display:"block" }}>
+                        Heads up — you already have "{conflict.title}" at this same time.
+                      </Mono>
+                    );
+                  })()}
                   <div style={{ display:"flex", gap:10, alignItems:"center", flexWrap:"wrap" }}>
                     <label style={{ display:"flex", alignItems:"center", gap:6, cursor:"pointer" }}><input type="checkbox" checked={newAppt.urgent} onChange={e=>setNewAppt(v=>({...v,urgent:e.target.checked}))} style={{ accentColor:C.white, width:14, height:14 }} /><Mono style={{ color:C.soft }}>Urgent</Mono></label>
                     <select value={newAppt.repeat} onChange={e=>setNewAppt(v=>({...v,repeat:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:8, padding:"7px 11px", color:C.text, fontSize:11, fontFamily:"'Space Grotesk',sans-serif", outline:"none" }}>{["none","daily","weekly","monthly"].map(r=><option key={r}>{r}</option>)}</select>
                     {contacts.length > 0 && <ContactSelect value={newAppt.contactId} onChange={id=>setNewAppt(v=>({...v,contactId:id}))} contacts={contacts} />}
-                    <Btn sm onClick={() => { if (!newAppt.title||!newAppt.date) return; const item = {...newAppt,id:uid()}; setAppts(p=>[...p,item]); mirrorAppointmentToCalendars(item); setNewAppt({title:"",time:"",date:todayISO(),location:"",notes:"",urgent:false,repeat:"none",contactId:null}); setShowAddAppt(false); toast(`Appointment added: ${newAppt.title}`); }}>Add</Btn>
+                    <Btn sm onClick={() => {
+                      if (!newAppt.title||!newAppt.date) return;
+                      const conflict = findApptConflict(appts, newAppt.date, newAppt.time, null);
+                      const item = {...newAppt,id:uid()};
+                      setAppts(p=>[...p,item]);
+                      mirrorAppointmentToCalendars(item);
+                      setNewAppt({title:"",time:"",date:todayISO(),location:"",notes:"",urgent:false,repeat:"none",contactId:null});
+                      setShowAddAppt(false);
+                      toast(conflict ? `Appointment added: ${newAppt.title} — same time as "${conflict.title}."` : `Appointment added: ${newAppt.title}`);
+                    }}>Add</Btn>
                   </div>
                 </div>
               </Card>
