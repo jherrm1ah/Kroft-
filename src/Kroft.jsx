@@ -264,6 +264,23 @@ const findApptConflict = (list, date, time, excludeId) => {
 // added after a "Low" one just sat below it.
 const PRIORITY_RANK = { Urgent:0, High:1, Normal:2, Low:3 };
 
+// Single source of truth for every mood-log consumer: the Overview quick-picker, the Wellness
+// tab's mood-log tags, and moodToScore's day-aggregation. Previously each of those three kept its
+// own independent {mood: color/score} map, so adding a mood meant remembering to update all three
+// in lockstep — easy to miss one and end up with an entry the picker could log but the history
+// list rendered with no color, or that never factored into the wellness score. `color` is one of
+// Tag's four supported tones (this app's whole palette is deliberately just four semantic colors,
+// not one per mood), so a couple of moods sharing a tone is a real, accepted tradeoff rather than
+// a gap. score follows the existing happy=4..angry=1 scale — higher is better.
+const MOOD_META = {
+  calm:     { label:"Calm",     color:"positive", score:3 },
+  happy:    { label:"Happy",    color:"accent",   score:4 },
+  sad:      { label:"Sad",      color:"warning",  score:2 },
+  anxious:  { label:"Anxious",  color:"warning",  score:2 },
+  stressed: { label:"Stressed", color:"warning",  score:2 },
+  angry:    { label:"Angry",    color:"negative", score:1 },
+};
+
 // Turns written text into something that reads aloud cleanly. AI replies come back with
 // markdown, and a speech engine reads it literally — "star star Net profit star star",
 // "hash hash Summary", "dash" before every bullet — so it has to be stripped first.
@@ -3425,7 +3442,7 @@ function KroftApp({ onFullReset } = {}) {
   // signal (e.g. real HealthKit sleep or step data) means adding one entry to wellnessDayMaps and
   // WELLNESS_METRIC_META and any PATTERN_PAIRS it belongs in — this loop and the UI that reads its
   // output never need to change. See krofSysPrompt's WELLNESS section for the AI-facing consumer.
-  const moodToScore = m => ({ happy:4, calm:3, stressed:2, angry:1 }[m] ?? null);
+  const moodToScore = m => MOOD_META[m]?.score ?? null;
 
   const wellnessDayMaps = useMemo(() => {
     const maps = { mood:new Map(), sleep:new Map(), wellness:new Map(), breaks:new Map(), water:new Map(), quickReset:new Map() };
@@ -6133,7 +6150,7 @@ ${voiceMode
     // Only today's check-ins count. Now that the log persists across days, slicing the tail
     // blindly would let last week's bad afternoon drive today's advice.
     const recentMoods = moodLog.filter(m => (m.date || today) === today).slice(-3).map(m => m.mood);
-    const stressed = recentMoods.filter(m => m === "stressed" || m === "angry").length >= 2;
+    const stressed = recentMoods.filter(m => m === "stressed" || m === "angry" || m === "anxious").length >= 2;
 
     // Money worry is a real driver of how a day feels, so it belongs here alongside mood and
     // workload rather than only in the finance tab.
@@ -7509,15 +7526,15 @@ ${voiceMode
               <Card>
                 <Mono style={{ display:"block", color:C.muted, marginBottom:12, letterSpacing:.8 }}>Mood detection</Mono>
                 <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:7 }}>
-                  {["calm","happy","stressed","angry"].map(m => {
-                    const mColor = {calm:C.positive,happy:C.accent,stressed:C.warning,angry:C.negative}[m];
+                  {Object.keys(MOOD_META).map(m => {
+                    const mColor = C[MOOD_META[m].color];
                     const active = mood===m;
                     return (
                     // Keying on the active transition (not just `m`) forces a fresh DOM node the
                     // moment a mood is picked, so its pop-in animation replays every tap — even
                     // tapping the same mood again a moment later, not just the first time.
                     <button key={active ? `${m}-on` : m} onClick={() => applyMood(m)} style={{ background:active?mColor+"22":C.surface, border:`1.5px solid ${active?mColor:C.cardB}`, borderRadius:10, padding:"9px 6px", cursor:"pointer", color:active?mColor:C.soft, fontSize:11, fontWeight:700, textAlign:"center", boxShadow:active?`0 0 12px ${mColor}40`:"none", transition:"all .15s", animation:active?"bouncePop .4s cubic-bezier(.34,1.56,.64,1)":"none" }}>
-                      {m.charAt(0).toUpperCase()+m.slice(1)}
+                      {MOOD_META[m].label}
                     </button>
                     );
                   })}
@@ -7530,9 +7547,12 @@ ${voiceMode
                     <div style={{ fontWeight:700, fontSize:14, color:C.white, marginBottom:4 }}>{upcomingAppts[0].title}</div>
                     <Mono style={{ display:"block", color:C.soft, marginBottom:2 }}>{upcomingAppts[0].time} · {fmtDate(upcomingAppts[0].date)||upcomingAppts[0].date}</Mono>
                     <Mono style={{ display:"block", color:C.muted, marginBottom:13 }}>{upcomingAppts[0].location}</Mono>
-                    <div style={{ display:"flex", gap:7, flexWrap:"wrap" }}>
+                    <div style={{ display:"flex", gap:7, flexWrap:"wrap", alignItems:"center" }}>
                       <Btn sm onClick={() => remind(upcomingAppts[0])}>Remind</Btn>
                       <Btn sm v="outline" onClick={() => setUberDest(upcomingAppts[0])}>Uber</Btn>
+                      {upcomingAppts[0].contactId && contacts.find(c=>c.id===upcomingAppts[0].contactId) && (
+                        <Tag tone="accent">{contacts.find(c=>c.id===upcomingAppts[0].contactId).name}</Tag>
+                      )}
                     </div>
                   </>
                 ) : (
@@ -9727,8 +9747,8 @@ ${voiceMode
                       <div key={d} style={{ marginBottom:10 }}>
                         <Mono style={{ display:"block", color:C.muted, marginBottom:5 }}>{d === today ? "Today" : d === "undated" ? "Earlier" : fmtDate(d)}</Mono>
                         {byDay[d].slice().reverse().map(m => {
-                          const mTone = {calm:"positive",happy:"accent",stressed:"warning",angry:"negative"}[m.mood];
-                          const mColor = {positive:C.positive,accent:C.accent,warning:C.warning,negative:C.negative}[mTone]||C.border;
+                          const mTone = MOOD_META[m.mood]?.color;
+                          const mColor = (mTone && C[mTone]) || C.border;
                           return (
                             // Press-and-hold to remove, matching every other list in the app. Mood
                             // entries were the one thing with no way to correct a mistaken tap.
