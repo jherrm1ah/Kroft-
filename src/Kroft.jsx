@@ -6595,13 +6595,28 @@ ${voiceMode
       // `{error:"..."}`, not an array, so check explicitly instead of relying on the incidental
       // TypeError .map() would throw on a plain object to fall into the catch below.
       if (!res.ok || data?.error) throw new Error(data?.error || "Places service unavailable");
-      const results = (data||[]).map(p => ({
-        id:p.place_id,
-        name:p.display_name.split(",")[0],
-        address:p.display_name.split(",").slice(1,3).join(",").trim(),
-        lat:parseFloat(p.lat), lng:parseFloat(p.lon),
-        type:p.type,
-      }));
+      // display_name is a single comma-joined string whose field order varies by locale and place
+      // type — splitting it blindly (the old approach) occasionally put a house number in "name"
+      // and buried the real business name in "address". Nominatim's structured fields (requested
+      // via addressdetails/namedetails above) are far more reliable when present: namedetails.name
+      // is the place's actual name tag, and address[type]/address[class] holds it too for a
+      // result that IS that kind of POI (Nominatim's own convention). Only falls back to the old
+      // split when neither structured field is available.
+      const results = (data||[]).map(p => {
+        const structuredName = p.namedetails?.name || p.address?.[p.type] || p.address?.[p.class];
+        const addrParts = [
+          [p.address?.house_number, p.address?.road].filter(Boolean).join(" "),
+          p.address?.neighbourhood || p.address?.suburb,
+          p.address?.city || p.address?.town || p.address?.village,
+        ].filter(Boolean);
+        return {
+          id:p.place_id,
+          name: structuredName || p.display_name.split(",")[0],
+          address: addrParts.length ? addrParts.join(", ") : p.display_name.split(",").slice(1,3).join(",").trim(),
+          lat:parseFloat(p.lat), lng:parseFloat(p.lon),
+          type:p.type,
+        };
+      });
       setAroundResults(results);
       if (results.length === 0) setAroundError(`No results found for "${searchTerm}" nearby. Try a different search.`);
     } catch (e) {

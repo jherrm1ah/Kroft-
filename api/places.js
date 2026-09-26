@@ -98,7 +98,12 @@ export default async function handler(req) {
     if (mode === "search") {
       const q = url.searchParams.get("q"), viewbox = url.searchParams.get("viewbox");
       if (!q) return jsonResponse({ error:"Missing q" }, 400);
-      const params = new URLSearchParams({ format:"jsonv2", q, limit:"12" });
+      // addressdetails/namedetails ask Nominatim for the structured fields the client needs to
+      // pull a real place name and address out — display_name's field order varies by locale and
+      // place type (sometimes a house number or a bare road leads it), so splitting that single
+      // string by comma alone occasionally puts a house number in the "name" and buries the real
+      // business name in "address". These give the client something reliable to prefer instead.
+      const params = new URLSearchParams({ format:"jsonv2", q, limit:"12", addressdetails:"1", namedetails:"1" });
       if (viewbox) { params.set("viewbox", viewbox); params.set("bounded", "1"); }
       let res;
       try {
