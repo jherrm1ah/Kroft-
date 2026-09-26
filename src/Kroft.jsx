@@ -3902,6 +3902,12 @@ function KroftApp({ onFullReset } = {}) {
         const next = prev.map(a => {
           if (a.repeat === "none" || !a.date || a.date >= today) return a;
           const date = advanceRepeatDateTo(a.date, a.repeat, today);
+          // advanceRepeatDateTo bails out unchanged when it can't make progress (a corrupted
+          // repeat cadence or an unparseable date) — only counting a REAL change here stops that
+          // case from marking the whole list changed on every single heartbeat forever, which
+          // would otherwise re-save to storage and re-schedule push notifications every ~30s for
+          // as long as that one row exists and the tab stays open.
+          if (date === a.date) return a;
           changed = true;
           return { ...a, date };
         });
@@ -6219,21 +6225,30 @@ ${voiceMode
       const run = (list, setList) => {
         setList(prev => {
           const generated = [];
-          let changed = false;
+          let anyChanged = false;
           const next = prev.map(e => {
             if (!e.repeat || e.repeat === "none" || !e.nextDate) return e;
             let cursor = e.nextDate;
             let guard = 0;
+            let itemChanged = false;
             // Guarded so a corrupted cadence can't spin forever; 60 postings covers five years
-            // of monthly or a year of weekly.
+            // of monthly or a year of weekly. The inner break matters separately: a corrupted
+            // repeat cadence or an unparseable nextDate makes advanceRepeatDate return its input
+            // unchanged, which without this check would still run all 60 iterations pushing 60
+            // identical-date duplicate postings — and repeat that again every ~30s heartbeat
+            // forever, since nextDate would never actually move past today.
             while (cursor <= today && guard++ < 60) {
+              const nextCursor = advanceRepeatDate(cursor, e.repeat);
+              if (nextCursor === cursor) break;
               generated.push({ id:uid(), label:e.label, amount:e.amount, cat:e.cat, date:cursor, cur:e.cur || user.currency, fromRecurring:e.id });
-              cursor = advanceRepeatDate(cursor, e.repeat);
-              changed = true;
+              cursor = nextCursor;
+              itemChanged = true;
             }
-            return changed ? { ...e, nextDate:cursor } : e;
+            if (!itemChanged) return e;
+            anyChanged = true;
+            return { ...e, nextDate:cursor };
           });
-          return changed ? [...next, ...generated] : prev;
+          return anyChanged ? [...next, ...generated] : prev;
         });
       };
       run(income, setIncome);
@@ -8763,10 +8778,17 @@ ${voiceMode
                       // appointment — otherwise the new copy would already show as overdue the
                       // instant it's created. Loops forward (not just one step) so completing a
                       // task that's sat overdue for days lands on today/the future, not still in
-                      // the past — same catch-up rollRecurring already does for appointments.
+                      // the past — same catch-up rollRecurring already does for appointments. If
+                      // there's a due date but it can't actually be advanced (a corrupted repeat
+                      // cadence or an unparseable dueDate), spawning a "next occurrence" anyway
+                      // would recreate an identical still-overdue duplicate every single time it's
+                      // completed — so respawn only when a real due date came back, or there was
+                      // no due date to begin with (a normal undated recurring task).
                       if (completing && target.repeat !== "none") {
                         const nextDue = target.dueDate ? advanceRepeatDateTo(target.dueDate, target.repeat, todayISO()) : "";
-                        return [{ id:uid(), title:target.title, priority:target.priority, repeat:target.repeat, contactId:target.contactId, dueDate:nextDue, done:false }, ...toggled];
+                        if (!target.dueDate || nextDue !== target.dueDate) {
+                          return [{ id:uid(), title:target.title, priority:target.priority, repeat:target.repeat, contactId:target.contactId, dueDate:nextDue, done:false }, ...toggled];
+                        }
                       }
                       return toggled;
                     });
