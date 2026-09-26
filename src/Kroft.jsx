@@ -5582,9 +5582,13 @@ ${voiceMode
 
       if (notifPrefs.appointments) {
         appts.filter(a => a.date === today && a.time).forEach(a => {
-          const [h, m] = a.time.split(":").map(Number);
-          if (isNaN(h)) return;
-          const delta = (h * 60 + (m || 0)) - mins;
+          // The field's own placeholder is "Time e.g. 4:00 PM" — a plain `split(":").map(Number)`
+          // parsed "4:00 PM" as hour=4, minute=NaN (falling back to :00), silently firing an
+          // appointment's reminder twelve hours off whenever it was entered in that (normal,
+          // placeholder-suggested) format. parseApptTime actually understands AM/PM.
+          const target = parseApptTime(a.time);
+          if (target == null) return;
+          const delta = target - mins;
           // Fires in the ten minutes before, not after — a notification for something that
           // already started is noise.
           if (delta <= 10 && delta >= 0) {
@@ -5628,10 +5632,12 @@ ${voiceMode
     const items = appts
       .map(a => {
         if (!a.date || !a.time) return null;
-        const [h, m] = a.time.split(":").map(Number);
-        if (isNaN(h)) return null;
+        // Same fix as the in-app reminder check above — a.time is free text ("4:00 PM" is the
+        // field's own placeholder), not guaranteed 24-hour HH:MM.
+        const target = parseApptTime(a.time);
+        if (target == null) return null;
         const fires = new Date(`${a.date}T00:00:00`);
-        fires.setHours(h, m || 0, 0, 0);
+        fires.setHours(Math.floor(target / 60), target % 60, 0, 0);
         fires.setMinutes(fires.getMinutes() - 10);
         if (fires.getTime() <= now) return null; // only ever push for something still ahead
         return { clientKey:`appt:${a.id}`, firesAt:fires.toISOString(), title:`${a.title} in 10 min`, body:[a.time, a.location].filter(Boolean).join(" · ") };
@@ -5965,7 +5971,14 @@ ${voiceMode
     const out = [];
 
     const todaysAppts = appts.filter(a => a.date === today);
-    const laterToday = todaysAppts.filter(a => (a.time || "") > `${String(hour).padStart(2,"0")}:00`);
+    // (a.time || "") > "14:00"-style string comparison silently broke on the free-text format the
+    // time field's own placeholder suggests ("4:00 PM") — "9:00 AM" lexically sorts after "14:00"
+    // (the digit '9' beats '1'), so an appointment that already happened this morning could still
+    // be offered up as "Next up" in the afternoon. parseApptTime + a numeric comparison, then
+    // sortAppts so [0] is genuinely the soonest of what's left today, not whichever survived the
+    // filter first.
+    const nowMins = hour * 60 + now.getMinutes();
+    const laterToday = sortAppts(todaysAppts.filter(a => { const t = parseApptTime(a.time); return t != null && t > nowMins; }));
     const openTasks = tasks.filter(t => !t.done);
     const highPriority = openTasks.filter(t => t.priority === "High");
     // Only today's check-ins count. Now that the log persists across days, slicing the tail
