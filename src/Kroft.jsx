@@ -218,6 +218,12 @@ const playAlarmBeep = () => {
   } catch {}
 };
 const todayISO = () => new Date().toISOString().slice(0, 10);
+// Formats a Date's own LOCAL y/m/d as "YYYY-MM-DD". Unlike toISOString() (always UTC), this
+// stays on whatever calendar day the Date's local getters say it is — needed for any Date that
+// was deliberately built from local y/m/d components (a specific calendar day, not "now"), since
+// converting that back through UTC can silently roll it a day — a full month, when the day is 1 —
+// in any timezone ahead of UTC.
+const ymdLocal = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
 const fmtDate = iso => { if (!iso) return ""; const d = new Date(iso + "T00:00:00"); return isNaN(d) ? iso : d.toLocaleDateString("en-US", { month:"short", day:"numeric", year:"numeric" }); };
 // Advances an ISO date string forward by one occurrence of the given repeat cadence. Used to
 // roll a recurring appointment to its next date once its current one has passed — daily/weekly
@@ -230,7 +236,7 @@ const advanceRepeatDate = (iso, repeat) => {
   else if (repeat === "weekly") d.setDate(d.getDate() + 7);
   else if (repeat === "monthly") d.setMonth(d.getMonth() + 1);
   else return iso;
-  return d.toISOString().slice(0, 10);
+  return ymdLocal(d);
 };
 const monthLabel = iso => { if (!iso) return ""; const d = new Date(iso + "T00:00:00"); return isNaN(d) ? "" : d.toLocaleDateString("en-US", { month:"long", year:"numeric" }); };
 // Appointment times are free text (the field's own placeholder is "Time e.g. 4:00 PM"), not a
@@ -3460,7 +3466,7 @@ function KroftApp({ onFullReset } = {}) {
     const now = new Date();
     const months = Array.from({ length:6 }, (_, i) => {
       const d = new Date(now.getFullYear(), now.getMonth() - (5 - i), 1);
-      return { ym: d.toISOString().slice(0,7), label: d.toLocaleDateString("en-US", { month:"short" }) };
+      return { ym: ymdLocal(d).slice(0,7), label: d.toLocaleDateString("en-US", { month:"short" }) };
     });
     return months.map(({ ym, label }) => {
       const inc = income.filter(r => (r.date||"").slice(0,7) === ym).reduce((s,r) => s+r.amount, 0);
@@ -3669,7 +3675,7 @@ function KroftApp({ onFullReset } = {}) {
     const cells = [];
     for (let i = 0; i < startOffset; i++) {
       const d = new Date(y, m - 1, 1 - (startOffset - i));
-      cells.push({ date: d.toISOString().slice(0,10), day: d.getDate(), inMonth: false });
+      cells.push({ date: ymdLocal(d), day: d.getDate(), inMonth: false });
     }
     for (let d = 1; d <= daysInMonth; d++) {
       cells.push({ date: `${calendarMonth}-${String(d).padStart(2,"0")}`, day: d, inMonth: true });
@@ -3677,7 +3683,7 @@ function KroftApp({ onFullReset } = {}) {
     while (cells.length % 7 !== 0) {
       const last = new Date(cells[cells.length-1].date + "T00:00:00");
       last.setDate(last.getDate() + 1);
-      cells.push({ date: last.toISOString().slice(0,10), day: last.getDate(), inMonth: false });
+      cells.push({ date: ymdLocal(last), day: last.getDate(), inMonth: false });
     }
     const weeks = [];
     for (let i = 0; i < cells.length; i += 7) weeks.push(cells.slice(i, i+7));
@@ -8296,9 +8302,9 @@ ${voiceMode
             {calendarView==="grid" && (
               <Card style={{ marginBottom:14 }}>
                 <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
-                  <button onClick={() => { const [y,m] = calendarMonth.split("-").map(Number); const d = new Date(y, m-2, 1); setCalendarMonth(d.toISOString().slice(0,7)); }} style={{ background:"none", border:"none", color:C.muted, cursor:"pointer", fontSize:16, padding:4 }}>‹</button>
+                  <button onClick={() => { const [y,m] = calendarMonth.split("-").map(Number); const d = new Date(y, m-2, 1); setCalendarMonth(ymdLocal(d).slice(0,7)); }} style={{ background:"none", border:"none", color:C.muted, cursor:"pointer", fontSize:16, padding:4 }}>‹</button>
                   <Mono style={{ color:C.white, fontWeight:700, fontSize:12, letterSpacing:.5 }}>{monthLabel(calendarMonth+"-01")}</Mono>
-                  <button onClick={() => { const [y,m] = calendarMonth.split("-").map(Number); const d = new Date(y, m, 1); setCalendarMonth(d.toISOString().slice(0,7)); }} style={{ background:"none", border:"none", color:C.muted, cursor:"pointer", fontSize:16, padding:4 }}>›</button>
+                  <button onClick={() => { const [y,m] = calendarMonth.split("-").map(Number); const d = new Date(y, m, 1); setCalendarMonth(ymdLocal(d).slice(0,7)); }} style={{ background:"none", border:"none", color:C.muted, cursor:"pointer", fontSize:16, padding:4 }}>›</button>
                 </div>
                 <div style={{ display:"grid", gridTemplateColumns:"repeat(7,1fr)", gap:4, marginBottom:6 }}>
                   {["S","M","T","W","T","F","S"].map((d,i) => <Mono key={i} style={{ textAlign:"center", color:C.muted, fontSize:9 }}>{d}</Mono>)}
