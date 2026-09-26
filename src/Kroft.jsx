@@ -7257,23 +7257,66 @@ ${voiceMode
                 </Card>
               ) : (
                 <div style={{ display:"flex", flexDirection:"column", gap:9 }}>
-                  {filtered.map(e => (
-                    <Card key={`${e.kind}-${e.id}`} style={{ minWidth:0 }}>
-                      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:10 }}>
-                        <div style={{ minWidth:0, flex:1 }}>
-                          <Mono style={{ color:C.soft, fontSize:9, letterSpacing:.5, display:"block", marginBottom:3 }}>{fmtDate(e.date)}</Mono>
-                          <div style={{ fontSize:13, fontWeight:600, color:C.white, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{e.label}</div>
-                          <div style={{ marginTop:4, display:"flex", gap:5, flexWrap:"wrap" }}>
-                            <Tag>{e.cat}</Tag>
-                            {e.repeat && e.repeat !== "none" && <Tag tone="accent">Repeats {e.repeat}</Tag>}
+                  {filtered.map(e => {
+                    // Entry History is the only place left to browse past entries (the Finance
+                    // tab's own inline Income/Expenses lists were removed as redundant with this
+                    // screen), so it needs the same edit/delete this list used to be the only way
+                    // to reach — otherwise removing that list would have quietly taken those
+                    // actions away entirely rather than just consolidating where they live.
+                    const set = e.kind==="income" ? setIncome : setExpenses;
+                    const cats = e.kind==="income" ? incomeCats : expenseCats;
+                    const setCats = e.kind==="income" ? setIncomeCats : setExpenseCats;
+                    const sign = e.kind==="income" ? "+" : "-";
+                    if (editingEntry && editingEntry.kind===e.kind && editingEntry.id===e.id) {
+                      return (
+                        <div key={`${e.kind}-${e.id}`} style={{ background:C.surface, border:`1px solid ${C.soft}`, borderRadius:12, padding:"10px 11px" }}>
+                          <div style={{ display:"flex", flexDirection:"column", gap:7 }}>
+                            <Inp placeholder="Description" value={editingEntry.label} onChange={ev => setEditingEntry(v=>({...v,label:ev.target.value}))} style={{ padding:"8px 10px", fontSize:12 }} />
+                            <div style={{ display:"flex", gap:7 }}>
+                              <Inp placeholder="Amount" type="number" inputMode="decimal" min="0" step="0.01" value={editingEntry.amount} onChange={ev => setEditingEntry(v=>({...v,amount:ev.target.value}))} style={{ padding:"8px 10px", fontSize:12, flex:1 }} />
+                              <input type="date" value={editingEntry.date} max={todayISO()} onChange={ev => setEditingEntry(v=>({...v,date:ev.target.value}))} style={{ flex:1, background:C.card, border:`1px solid ${C.cardB}`, borderRadius:8, padding:"8px 9px", color:C.text, fontSize:11, fontFamily:"'Space Grotesk',sans-serif", outline:"none", colorScheme:theme }} />
+                            </div>
+                            <CategorySelect value={editingEntry.cat} onChange={c => setEditingEntry(v=>({...v,cat:c}))} cats={cats} onAddCategory={c => setCats(p=>p.includes(c)?p:[...p,c])} style={{ padding:"8px 9px", fontSize:11 }} />
+                            <div style={{ display:"flex", gap:7 }}>
+                              <Btn sm v="outline" onClick={() => setEditingEntry(null)} style={{ flex:1 }}>Cancel</Btn>
+                              <Btn sm onClick={() => {
+                                if (!editingEntry.label) return;
+                                const amt = parseAmount(editingEntry.amount);
+                                if (amt === null) { toast("Enter an amount greater than zero."); return; }
+                                set(p=>p.map(x=>x.id===e.id?{...x,label:editingEntry.label,amount:amt,date:editingEntry.date||todayISO(),cat:editingEntry.cat}:x));
+                                setEditingEntry(null); toast("Entry updated.");
+                              }} style={{ flex:1 }}>Save</Btn>
+                            </div>
                           </div>
                         </div>
-                        <Mono style={{ color:e.kind==="income"?C.positive:C.negative, fontSize:13, fontWeight:700, flexShrink:0 }}>
-                          {e.kind==="income"?"+":"-"}{fmtCur(e.amount, e.cur || user.currency)}
-                        </Mono>
+                      );
+                    }
+                    return (
+                      <div key={`${e.kind}-${e.id}`} className="row" {...longPress(() => setActionSheet(holdActions({
+                          title: e.label,
+                          subtitle: `${sign}${fmtCur(e.amount,user.currency)} · ${e.cat} · ${fmtDate(e.date)}`,
+                          onEdit: () => setEditingEntry({ kind:e.kind, id:e.id, label:e.label, amount:String(e.amount), date:e.date||todayISO(), cat:e.cat }),
+                          list: e.kind==="income" ? income : expenses, setList: set, id: e.id,
+                          deletedLabel: "Entry deleted.",
+                          confirmText: "Removing this entry changes your totals and monthly report.",
+                        })))} style={{ background:C.card, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"10px 11px", WebkitTouchCallout:"none", WebkitUserSelect:"none", userSelect:"none" }}>
+                        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:10 }}>
+                          <div style={{ minWidth:0, flex:1, cursor:"pointer" }} onClick={() => setEditingEntry({ kind:e.kind, id:e.id, label:e.label, amount:String(e.amount), date:e.date||todayISO(), cat:e.cat })}>
+                            <Mono style={{ color:C.soft, fontSize:9, letterSpacing:.5, display:"block", marginBottom:3 }}>{fmtDate(e.date)}</Mono>
+                            <div style={{ fontSize:13, fontWeight:600, color:C.white, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{e.label}</div>
+                            <div style={{ marginTop:4, display:"flex", gap:5, flexWrap:"wrap" }}>
+                              <Tag>{e.cat}</Tag>
+                              {e.repeat && e.repeat !== "none" && <Tag tone="accent">Repeats {e.repeat}</Tag>}
+                              {e.fromRecurring && <Tag>Auto</Tag>}
+                            </div>
+                          </div>
+                          <Mono style={{ color:e.kind==="income"?C.positive:C.negative, fontSize:13, fontWeight:700, flexShrink:0 }}>
+                            {sign}{fmtCur(e.amount, e.cur || user.currency)}
+                          </Mono>
+                        </div>
                       </div>
-                    </Card>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -7704,10 +7747,11 @@ ${voiceMode
               );
             })()}
 
-            {/* Grouped into named sections (Summary / Planning / Transactions / Reports) instead
-                of one undifferentiated stack of cards — Net profit and category breakdown lead
-                since they're the headline numbers, budgeting tools follow, then the raw ledger,
-                then the on-demand report. */}
+            {/* Grouped into named sections (Summary / Planning / Reports) instead of one
+                undifferentiated stack of cards — Net profit and category breakdown lead since
+                they're the headline numbers, budgeting tools follow, then the on-demand report.
+                Browsing/editing individual entries lives in Entry History (the header icon)
+                rather than a ledger repeated here too. */}
             {(income.length>0||expenses.length>0) && (
               <>
                 <div style={{ fontSize:12, fontWeight:600, color:C.muted, marginBottom:11 }}>Summary</div>
@@ -7954,9 +7998,6 @@ ${voiceMode
                 )}
               </Card>
             )}
-            {(income.length>0||expenses.length>0||showAddInc||showAddExp) && (
-              <div style={{ fontSize:12, fontWeight:600, color:C.muted, marginBottom:11, marginTop:8 }}>Transactions</div>
-            )}
             {showAddInc && (
               <AddEntryModal
                 kind="income"
@@ -8016,70 +8057,11 @@ ${voiceMode
             )}
             {(income.length>0||expenses.length>0) && (
               <>
-                <div style={{ display:"flex", flexDirection:"column", gap:12, marginBottom:12 }}>
-                  {[{title:"INCOME",kind:"income",data:income,sign:"+",set:setIncome,cats:incomeCats,setCats:setIncomeCats},{title:"EXPENSES",kind:"expenses",data:expenses,sign:"-",set:setExpenses,cats:expenseCats,setCats:setExpenseCats}].map(({title,kind,data,sign,set,cats,setCats}) => (
-                    <Card key={title} style={{ minWidth:0 }}>
-                      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"baseline", marginBottom:11 }}>
-                        <Mono style={{ color:C.muted, letterSpacing:.8 }}>{title}</Mono>
-                      </div>
-                      {data.length===0 ? <Mono style={{ color:C.soft, display:"block", padding:"8px 0" }}>None yet.</Mono> : [...data].sort((a,b)=>(b.date||"").localeCompare(a.date||"")).map(r => (
-                        editingEntry && editingEntry.kind===kind && editingEntry.id===r.id ? (
-                          <div key={r.id} style={{ background:C.surface, border:`1px solid ${C.soft}`, borderRadius:12, padding:"10px 11px", marginBottom:7 }}>
-                            <div style={{ display:"flex", flexDirection:"column", gap:7 }}>
-                              <Inp placeholder="Description" value={editingEntry.label} onChange={e => setEditingEntry(v=>({...v,label:e.target.value}))} style={{ padding:"8px 10px", fontSize:12 }} />
-                              <div style={{ display:"flex", gap:7 }}>
-                                <Inp placeholder="Amount" type="number" inputMode="decimal" min="0" step="0.01" value={editingEntry.amount} onChange={e => setEditingEntry(v=>({...v,amount:e.target.value}))} style={{ padding:"8px 10px", fontSize:12, flex:1 }} />
-                                <input type="date" value={editingEntry.date} max={todayISO()} onChange={e => setEditingEntry(v=>({...v,date:e.target.value}))} style={{ flex:1, background:C.card, border:`1px solid ${C.cardB}`, borderRadius:8, padding:"8px 9px", color:C.text, fontSize:11, fontFamily:"'Space Grotesk',sans-serif", outline:"none", colorScheme:theme }} />
-                              </div>
-                              <CategorySelect value={editingEntry.cat} onChange={c => setEditingEntry(v=>({...v,cat:c}))} cats={cats} onAddCategory={c => setCats(p=>p.includes(c)?p:[...p,c])} style={{ padding:"8px 9px", fontSize:11 }} />
-                              <div style={{ display:"flex", gap:7 }}>
-                                <Btn sm v="outline" onClick={() => setEditingEntry(null)} style={{ flex:1 }}>Cancel</Btn>
-                                <Btn sm onClick={() => {
-                                  if (!editingEntry.label) return;
-                                  const amt = parseAmount(editingEntry.amount);
-                                  if (amt === null) { toast("Enter an amount greater than zero."); return; }
-                                  set(p=>p.map(x=>x.id===r.id?{...x,label:editingEntry.label,amount:amt,date:editingEntry.date||todayISO(),cat:editingEntry.cat}:x));
-                                  setEditingEntry(null); toast("Entry updated.");
-                                }} style={{ flex:1 }}>Save</Btn>
-                              </div>
-                            </div>
-                          </div>
-                        ) : (
-                        <div key={r.id} className="row" {...longPress(() => setActionSheet(holdActions({
-                            title: r.label,
-                            subtitle: `${sign}${fmtCur(r.amount,user.currency)} · ${r.cat} · ${fmtDate(r.date)}`,
-                            onEdit: () => setEditingEntry({ kind, id:r.id, label:r.label, amount:String(r.amount), date:r.date||todayISO(), cat:r.cat }),
-                            list: data, setList: set, id: r.id,
-                            deletedLabel: "Entry deleted.",
-                            confirmText: "Removing this entry changes your totals and monthly report.",
-                          })))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"10px 11px", marginBottom:7, WebkitTouchCallout:"none", WebkitUserSelect:"none", userSelect:"none" }}>
-                          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:8 }}>
-                            <div style={{ minWidth:0, cursor:"pointer" }} onClick={() => setEditingEntry({ kind, id:r.id, label:r.label, amount:String(r.amount), date:r.date||todayISO(), cat:r.cat })}>
-                              <Mono style={{ color:C.soft, fontSize:9, letterSpacing:.5, display:"block", marginBottom:3 }}>{fmtDate(r.date)}</Mono>
-                              <div style={{ fontSize:12, fontWeight:600, color:C.text, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{r.label}</div>
-                              <div style={{ marginTop:4, display:"flex", gap:5, flexWrap:"wrap" }}>
-                                <Tag>{r.cat}</Tag>
-                                {/* The template that generates postings, and the postings it made,
-                                    are visually distinct — otherwise a repeating entry looks like
-                                    a duplicate the user didn't create. */}
-                                {r.repeat && r.repeat !== "none" && <Tag tone="accent">Repeats {r.repeat}</Tag>}
-                                {r.fromRecurring && <Tag>Auto</Tag>}
-                              </div>
-                            </div>
-                            <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:6, flexShrink:0 }}>
-                              <Mono style={{ color:sign==="+"?C.positive:C.negative, fontSize:13, fontWeight:700 }}>{sign}{fmtCur(r.amount, r.cur || user.currency)}</Mono>
-                            </div>
-                          </div>
-                        </div>
-                        )
-                      ))}
-                      <div style={{ display:"flex", justifyContent:"space-between", marginTop:6 }}>
-                        <Mono style={{ color:C.muted }}>Total</Mono>
-                        <Mono style={{ color:C.white, fontWeight:700 }}>{fmtCur(data.reduce((s,r)=>s+r.amount,0),user.currency)}</Mono>
-                      </div>
-                    </Card>
-                  ))}
-                </div>
+                {/* The inline Income/Expenses lists that used to live here were removed —
+                    Entry History (the icon in the header above) now covers browsing, searching,
+                    editing and deleting every entry, so keeping a second, redundant copy of that
+                    same list here just meant two places that could show slightly different data
+                    if only one of them were touched later. */}
                 <div style={{ fontSize:12, fontWeight:600, color:C.muted, marginBottom:11, marginTop:8 }}>Reports</div>
                 <Card style={{ border:`1px solid ${C.cardB}` }}>
                   <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:monthlyReport?14:0 }}>
