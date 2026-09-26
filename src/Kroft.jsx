@@ -7832,7 +7832,7 @@ ${voiceMode
           const TOOLS = [
             { k:"calendar", l:"Calendar", count:appts.length, sub:"appointments" },
             { k:"notes", l:"Notes", count:notes.length, sub:"notes" },
-            { k:"email", l:"Email", count:emails.filter(e=>!e.read).length, sub:"unread", tone:"accent" },
+            { k:"email", l:"Email", count:emails.filter(e=>!e.read).length, sub:"unread", tone: emails.filter(e=>!e.read).length>0 ? "accent" : undefined },
             { k:"tasks", l:"Tasks", count:tasks.filter(t=>!t.done).length, sub:"active", tone: tasks.filter(t=>!t.done).length>0 ? "warning" : undefined },
             { k:"files", l:"Files", count:files.length, sub:"files" },
             { k:"documents", l:"Documents", count:documents.length, sub:"documents" },
