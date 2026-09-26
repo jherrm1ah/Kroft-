@@ -2595,11 +2595,6 @@ function KroftApp({ onFullReset } = {}) {
   const [expenses, setExpenses] = useState([]);
   const [incomeCats, setIncomeCats] = useState(["Invoice","Sales","Consulting","Freelance","Other"]);
   const [expenseCats, setExpenseCats] = useState(["Operations","Tech","Marketing","Travel","Rent","Other"]);
-  // Filters for the income/expense lists — local UI state only, never persisted, since a filter
-  // left on from a prior session would silently hide entries on the next visit.
-  const [txnQuery, setTxnQuery] = useState("");
-  const [txnFrom, setTxnFrom] = useState("");
-  const [txnTo, setTxnTo] = useState("");
   // Monthly spending limits per category, as { [category]: amount }. Tracking spend without ever
   // warning about it means the app only tells you about a problem after the month is over.
   const [budgets, setBudgets] = useState({});
@@ -6185,17 +6180,6 @@ ${voiceMode
     URL.revokeObjectURL(url);
   };
 
-  // Shared by the income and expenses lists — a description/category text match plus an
-  // inclusive date range, all optional. Applied client-side since these lists are already fully
-  // loaded in memory; nothing here needs a round trip.
-  const matchesTxnFilter = e => {
-    if (txnQuery.trim() && !`${e.label} ${e.cat}`.toLowerCase().includes(txnQuery.trim().toLowerCase())) return false;
-    if (txnFrom && (e.date || "") < txnFrom) return false;
-    if (txnTo && (e.date || "") > txnTo) return false;
-    return true;
-  };
-  const txnFilterActive = !!(txnQuery.trim() || txnFrom || txnTo);
-
   // A field containing a comma, quote or newline has to be quoted, with any internal quote
   // doubled — otherwise a description like `Lunch, client meeting` would silently split into two
   // spreadsheet columns on open.
@@ -7640,27 +7624,13 @@ ${voiceMode
             )}
             {(income.length>0||expenses.length>0) && (
               <>
-                {/* Filters both lists below by description/category text and/or an inclusive date
-                    range. Purely a view filter — deleting or undoing an entry still operates on
-                    the full underlying list (see holdActions), never on this filtered subset. */}
-                <Card level="inset" style={{ marginBottom:12 }}>
-                  <div style={{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center" }}>
-                    <Inp placeholder="Search description or category…" value={txnQuery} onChange={e=>setTxnQuery(e.target.value)} style={{ flex:2, minWidth:160 }} />
-                    <input type="date" value={txnFrom} max={txnTo||undefined} onChange={e=>setTxnFrom(e.target.value)} style={{ flex:1, minWidth:130, background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"10px 12px", color:C.text, fontSize:12, fontFamily:"'Space Grotesk',sans-serif", outline:"none", colorScheme:theme }} />
-                    <input type="date" value={txnTo} min={txnFrom||undefined} max={todayISO()} onChange={e=>setTxnTo(e.target.value)} style={{ flex:1, minWidth:130, background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"10px 12px", color:C.text, fontSize:12, fontFamily:"'Space Grotesk',sans-serif", outline:"none", colorScheme:theme }} />
-                    {txnFilterActive && <Btn sm v="outline" onClick={() => { setTxnQuery(""); setTxnFrom(""); setTxnTo(""); }}>Clear</Btn>}
-                  </div>
-                </Card>
                 <div style={{ display:"flex", flexDirection:"column", gap:12, marginBottom:12 }}>
-                  {[{title:"INCOME",kind:"income",data:income,sign:"+",set:setIncome,cats:incomeCats,setCats:setIncomeCats},{title:"EXPENSES",kind:"expenses",data:expenses,sign:"-",set:setExpenses,cats:expenseCats,setCats:setExpenseCats}].map(({title,kind,data,sign,set,cats,setCats}) => {
-                    const filtered = txnFilterActive ? data.filter(matchesTxnFilter) : data;
-                    return (
+                  {[{title:"INCOME",kind:"income",data:income,sign:"+",set:setIncome,cats:incomeCats,setCats:setIncomeCats},{title:"EXPENSES",kind:"expenses",data:expenses,sign:"-",set:setExpenses,cats:expenseCats,setCats:setExpenseCats}].map(({title,kind,data,sign,set,cats,setCats}) => (
                     <Card key={title} style={{ minWidth:0 }}>
                       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"baseline", marginBottom:11 }}>
                         <Mono style={{ color:C.muted, letterSpacing:.8 }}>{title}</Mono>
-                        {txnFilterActive && <Mono style={{ color:C.muted }}>{filtered.length} of {data.length}</Mono>}
                       </div>
-                      {filtered.length===0 ? <Mono style={{ color:C.soft, display:"block", padding:"8px 0" }}>{txnFilterActive?"No matches.":"None yet."}</Mono> : [...filtered].sort((a,b)=>(b.date||"").localeCompare(a.date||"")).map(r => (
+                      {data.length===0 ? <Mono style={{ color:C.soft, display:"block", padding:"8px 0" }}>None yet.</Mono> : [...data].sort((a,b)=>(b.date||"").localeCompare(a.date||"")).map(r => (
                         editingEntry && editingEntry.kind===kind && editingEntry.id===r.id ? (
                           <div key={r.id} style={{ background:C.surface, border:`1px solid ${C.soft}`, borderRadius:12, padding:"10px 11px", marginBottom:7 }}>
                             <div style={{ display:"flex", flexDirection:"column", gap:7 }}>
@@ -7712,13 +7682,11 @@ ${voiceMode
                         )
                       ))}
                       <div style={{ display:"flex", justifyContent:"space-between", marginTop:6 }}>
-                        <Mono style={{ color:C.muted }}>{txnFilterActive?"Filtered total":"Total"}</Mono>
-                        <Mono style={{ color:C.white, fontWeight:700 }}>{fmtCur(filtered.reduce((s,r)=>s+r.amount,0),user.currency)}</Mono>
+                        <Mono style={{ color:C.muted }}>Total</Mono>
+                        <Mono style={{ color:C.white, fontWeight:700 }}>{fmtCur(data.reduce((s,r)=>s+r.amount,0),user.currency)}</Mono>
                       </div>
-
                     </Card>
-                    );
-                  })}
+                  ))}
                 </div>
                 <div style={{ fontSize:12, fontWeight:600, color:C.muted, marginBottom:11, marginTop:8 }}>Reports</div>
                 <Card style={{ border:`1px solid ${C.cardB}` }}>
