@@ -1042,7 +1042,7 @@ function MoodOrb({ mood, label, active, onClick }) {
   const glow = MOOD_ORB_GLOW[mood];
   return (
     <button onClick={() => { setTap(t => t+1); onClick(); }} aria-label={label} aria-pressed={active}
-      style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:7, background:"none", border:"none", cursor:"pointer", padding:4, WebkitTapHighlightColor:"transparent" }}>
+      style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:4, background:"none", border:"none", cursor:"pointer", padding:2, WebkitTapHighlightColor:"transparent" }}>
       <div key={`${mood}-${tap}`} style={{
         // A fixed pixel size, not a percentage of the button — the button itself is a
         // shrink-to-fit flex column with no declared width, so a percentage-width orb here
@@ -1050,13 +1050,13 @@ function MoodOrb({ mood, label, active, onClick }) {
         // (the label). Since "Stressed"/"Angry" are wider text than "Calm"/"Happy", those two
         // buttons ended up wider, and the orb followed suit — same mood, visibly different
         // orb sizes. A fixed diameter makes every orb identical regardless of its label's width.
-        width:52, height:52, borderRadius:"50%",
+        width:44, height:44, borderRadius:"50%",
         background:`radial-gradient(circle at 32% 26%, rgba(${glow},1) 0%, rgba(${glow},.82) 55%, rgba(${glow},.6) 100%)`,
-        boxShadow: active ? `0 0 0 2.5px rgba(${glow},.85), 0 8px 20px rgba(${glow},.4)` : `0 4px 12px rgba(${glow},.22)`,
+        boxShadow: active ? `0 0 0 2.5px rgba(${glow},.85), 0 6px 14px rgba(${glow},.4)` : `0 3px 9px rgba(${glow},.22)`,
         display:"flex", alignItems:"center", justifyContent:"center",
         animation: active ? "bouncePop .4s cubic-bezier(.34,1.56,.64,1)" : "none",
       }}>
-        <MoodFace mood={mood} size={24} />
+        <MoodFace mood={mood} size={20} />
       </div>
       <span style={{ fontSize:11, fontWeight:700, color: active ? `rgb(${glow})` : C.soft, fontFamily:"'Space Grotesk',sans-serif" }}>{label}</span>
     </button>
@@ -7605,8 +7605,8 @@ ${voiceMode
             )}
             <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:13 }}>
               <Card>
-                <Mono style={{ display:"block", color:C.muted, marginBottom:14, letterSpacing:.8 }}>Mood detection</Mono>
-                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, justifyItems:"center" }}>
+                <Mono style={{ display:"block", color:C.muted, marginBottom:10, letterSpacing:.8 }}>Mood detection</Mono>
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:6, justifyItems:"center" }}>
                   {Object.keys(MOOD_META).map(m => (
                     <MoodOrb key={m} mood={m} label={MOOD_META[m].label} active={mood===m} onClick={() => applyMood(m)} />
                   ))}
