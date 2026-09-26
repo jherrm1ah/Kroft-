@@ -1042,19 +1042,6 @@ const Dot = ({ color=C.white, size=6 }) => (
   <div style={{ width:size, height:size, borderRadius:"50%", background:color, flexShrink:0 }} />
 );
 
-// Rising signal-strength-style bar meter — used by the Energy/Stress check-in buttons instead of
-// an emoji face. `index` is the level's own position in its 4-entry array (0-3), so "how many bars
-// are lit" reads the same way a signal or battery icon does: index 0 lights one short bar, index 3
-// lights all four. Colored by the level's own tone; unlit bars fall back to a neutral dim tone
-// rather than disappearing, so the full 4-bar shape is always visible.
-const LevelMeter = ({ index, color, total=4 }) => (
-  <div style={{ display:"flex", alignItems:"flex-end", gap:2.5, height:15 }} aria-hidden="true">
-    {Array.from({ length: total }).map((_, i) => (
-      <div key={i} style={{ width:4, height:5 + i*3.2, borderRadius:2, background:i<=index?color:C.cardB, transition:"background .2s ease" }} />
-    ))}
-  </div>
-);
-
 // Shared loading spinner — used everywhere the app is waiting on an async/AI action
 // (fingerprint check, Around Me search, Generate Report, AI Suggest) so "working on it"
 // looks and feels the same throughout the app instead of some spots getting a spinner
@@ -1165,10 +1152,6 @@ const NavIcon = ({ id, size=20, color="currentColor" }) => {
     // ---- Wellness feature icons ----
     case "moon": // Sleep
       return <svg viewBox="0 0 24 24" style={s}><path d="M18.5 14.5A7.5 7.5 0 0 1 9.5 5.5a7.5 7.5 0 1 0 9 9z" {...p} /></svg>;
-    case "bolt": // Energy
-      return <svg viewBox="0 0 24 24" style={s}><path d="M13 3 6 13.5h5L11 21l7-10.5h-5z" {...p} /></svg>;
-    case "pulse": // Stress check
-      return <svg viewBox="0 0 24 24" style={s}><circle cx="12" cy="12" r="8.5" {...p} /><path d="M8 12h1.7l1.3-3 2 6 1.3-3H17" {...p} /></svg>;
     case "journal": // Wellness Journal
       return <svg viewBox="0 0 24 24" style={s}><path d="M6.5 4h9.5a1.5 1.5 0 0 1 1.5 1.5v14l-2.5-1.5-2.5 1.5-2.5-1.5-2.5 1.5v-14A1.5 1.5 0 0 1 6.5 4z" {...p} /><path d="M9 8.5h6M9 11.5h6" {...p} /></svg>;
     case "patterns": // Your Patterns
@@ -2058,8 +2041,8 @@ function ProfileSection({ user, onUpdateName, onEditPreferences, onEditBusinessD
         <ProfileRow label="Wellness Data in KROFT Chat" sub={wellnessAiContext ? "KROFT can reference your wellness data" : "Off"} expanded={openRow==="wellnessai"} onToggle={()=>toggle("wellnessai")}
           right={<ProfileSwitch value={wellnessAiContext} onChange={onSetWellnessAiContext} />}>
           <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>{wellnessAiContext
-            ? "KROFT Chat can reference your mood, sleep, energy, stress, journal and pattern data to answer wellness questions — always as observations from your own data, never as a diagnosis. Your Wellness tab keeps working the same either way."
-            : "KROFT Chat will not see or reference any wellness data — mood, sleep, energy, stress, journal entries or Your Patterns stay out of its context entirely. The Wellness tab itself is unaffected."}</Mono>
+            ? "KROFT Chat can reference your mood, sleep, journal and pattern data to answer wellness questions — always as observations from your own data, never as a diagnosis. Your Wellness tab keeps working the same either way."
+            : "KROFT Chat will not see or reference any wellness data — mood, sleep, journal entries or Your Patterns stay out of its context entirely. The Wellness tab itself is unaffected."}</Mono>
         </ProfileRow>
         <ProfileRow label="Backup & Restore" sub="Download a copy of everything" expanded={openRow==="data"} onToggle={()=>toggle("data")}>
           <Mono style={{ display:"block", color:C.soft, lineHeight:1.7, marginBottom:12 }}>
@@ -2412,21 +2395,6 @@ const STORAGE_KEYS = {
   filesData: "kroft:files",
 };
 
-// Config tables for the manual wellness check-ins (Energy/Stress/Quick Reset) — module-level, and
-// shared between the button rows that render them and the handlers that log them, so the label
-// shown to the user and the label used in a toast/pattern sentence can never drift apart.
-const ENERGY_LEVELS = [
-  { key:"low", label:"Low", tone:"negative" },
-  { key:"okay", label:"Okay", tone:"warning" },
-  { key:"good", label:"Good", tone:"accent" },
-  { key:"great", label:"Great", tone:"positive" },
-];
-const STRESS_LEVELS = [
-  { key:"calm", label:"Calm", tone:"positive" },
-  { key:"neutral", label:"Neutral", tone:"accent" },
-  { key:"worried", label:"Worried", tone:"warning" },
-  { key:"overwhelmed", label:"Overwhelmed", tone:"negative" },
-];
 // seconds:0 marks the "close your eyes" session, whose duration the user picks freely rather than
 // the app dictating one.
 const QUICK_RESET_KINDS = [
@@ -2515,9 +2483,9 @@ function KroftApp({ onFullReset } = {}) {
   const [proactiveInsights, setProactiveInsights] = useState(true);
 
   // Wellness data/pattern access for KROFT Chat — gates the WELLNESS section of krofSysPrompt
-  // (see there). Off means the AI never sees mood/sleep/energy/stress/journal/pattern data at
-  // all, even if asked about it directly; the Wellness tab itself still works either way, since
-  // this only controls what leaves the Wellness feature into the AI's context.
+  // (see there). Off means the AI never sees mood/sleep/journal/pattern data at all, even if
+  // asked about it directly; the Wellness tab itself still works either way, since this only
+  // controls what leaves the Wellness feature into the AI's context.
   const [wellnessAiContext, setWellnessAiContext] = useState(true);
 
   // Which of the four KROFT voices (Ben/Atlas/Mira/Nova — see VOICE_PROFILES) KROFT speaks
@@ -2837,8 +2805,6 @@ function KroftApp({ onFullReset } = {}) {
   // deliberately identical either way, so a future native auto-collector can just push into the
   // same array without any of this code changing.
   const [sleepLog, setSleepLog] = useState([]); // {id, date, time, hours, bedtime, wakeTime, quality}
-  const [energyLog, setEnergyLog] = useState([]); // {id, date, time, level: "low"|"okay"|"good"|"great"}
-  const [stressLog, setStressLog] = useState([]); // {id, date, time, level: "calm"|"neutral"|"worried"|"overwhelmed"}
   const [journalEntries, setJournalEntries] = useState([]); // {id, date, time, text}
   const [quickResetLog, setQuickResetLog] = useState([]); // {id, date, time, kind, seconds}
   // The in-progress guided countdown, or null when no Quick Reset session is running. Deliberately
@@ -2851,8 +2817,8 @@ function KroftApp({ onFullReset } = {}) {
   // data.
   const [patternRange, setPatternRange] = useState(30);
   const [patternDetail, setPatternDetail] = useState(null);
-  // Which of the Wellness tab's pull-out rows (Your Patterns/Quick Reset/Energy & Stress/Sleep/
-  // Journal) is expanded — same single-row accordion as ProfileRow/openRow in ProfileSection, so
+  // Which of the Wellness tab's pull-out rows (Your Patterns/Quick Reset/Sleep/Journal) is
+  // expanded — same single-row accordion as ProfileRow/openRow in ProfileSection, so
   // five feature sections collapse into a handful of compact rows instead of five full cards.
   const [openWellnessRow, setOpenWellnessRow] = useState(null);
   const [journalDraft, setJournalDraft] = useState("");
@@ -3029,8 +2995,6 @@ function KroftApp({ onFullReset } = {}) {
       if (Array.isArray(w.moodLog)) setMoodLog(w.moodLog.map(m => m.id ? m : { ...m, id:uid() }));
       if (Array.isArray(w.selfCareHistory)) setSelfCareHistory(w.selfCareHistory);
       if (Array.isArray(w.sleepLog)) setSleepLog(w.sleepLog.map(e => e.id ? e : { ...e, id:uid() }));
-      if (Array.isArray(w.energyLog)) setEnergyLog(w.energyLog.map(e => e.id ? e : { ...e, id:uid() }));
-      if (Array.isArray(w.stressLog)) setStressLog(w.stressLog.map(e => e.id ? e : { ...e, id:uid() }));
       if (Array.isArray(w.journalEntries)) setJournalEntries(w.journalEntries.map(e => e.id ? e : { ...e, id:uid() }));
       if (Array.isArray(w.quickResetLog)) setQuickResetLog(w.quickResetLog.map(e => e.id ? e : { ...e, id:uid() }));
     }
@@ -3166,11 +3130,11 @@ function KroftApp({ onFullReset } = {}) {
     const t = setTimeout(() => { window.storage.set(STORAGE_KEYS.wellnessData, JSON.stringify({
       wellness, wellnessDate, wellnessHistory: wellnessHistory.slice(-90), selfCare, mood, moodLog: moodLog.slice(-120),
       selfCareHistory: selfCareHistory.slice(-90),
-      sleepLog: sleepLog.slice(-120), energyLog: energyLog.slice(-120), stressLog: stressLog.slice(-120),
+      sleepLog: sleepLog.slice(-120),
       journalEntries: journalEntries.slice(-200), quickResetLog: quickResetLog.slice(-180),
     }), false).catch(()=>{}); }, 900);
     return () => clearTimeout(t);
-  }, [dataLoaded, wellness, wellnessDate, wellnessHistory, selfCare, mood, moodLog, selfCareHistory, sleepLog, energyLog, stressLog, journalEntries, quickResetLog]);
+  }, [dataLoaded, wellness, wellnessDate, wellnessHistory, selfCare, mood, moodLog, selfCareHistory, sleepLog, journalEntries, quickResetLog]);
 
   useEffect(() => {
     if (!dataLoaded) return;
@@ -3309,20 +3273,13 @@ function KroftApp({ onFullReset } = {}) {
   // WELLNESS_METRIC_META and any PATTERN_PAIRS it belongs in — this loop and the UI that reads its
   // output never need to change. See krofSysPrompt's WELLNESS section for the AI-facing consumer.
   const moodToScore = m => ({ happy:4, calm:3, stressed:2, angry:1 }[m] ?? null);
-  const energyToScore = l => ({ low:1, okay:2, good:3, great:4 }[l] ?? null);
-  // Inverted so higher always means "better" here, same polarity as every other metric below —
-  // lets every pair share one "higher is more of the good thing" comparison instead of some
-  // metrics needing their difference sign flipped and others not.
-  const stressToScore = l => ({ overwhelmed:1, worried:2, neutral:3, calm:4 }[l] ?? null);
 
   const wellnessDayMaps = useMemo(() => {
-    const maps = { mood:new Map(), energy:new Map(), stress:new Map(), sleep:new Map(), wellness:new Map(), breaks:new Map(), water:new Map(), quickReset:new Map() };
+    const maps = { mood:new Map(), sleep:new Map(), wellness:new Map(), breaks:new Map(), water:new Map(), quickReset:new Map() };
     const moodByDay = {};
     moodLog.forEach(m => { const s = moodToScore(m.mood); if (s==null || !m.date) return; (moodByDay[m.date] ||= []).push(s); });
     Object.entries(moodByDay).forEach(([d,arr]) => maps.mood.set(d, arr.reduce((a,b)=>a+b,0)/arr.length));
 
-    energyLog.forEach(e => { const s = energyToScore(e.level); if (s!=null && e.date) maps.energy.set(e.date, s); });
-    stressLog.forEach(e => { const s = stressToScore(e.level); if (s!=null && e.date) maps.stress.set(e.date, s); });
     sleepLog.forEach(e => { if (typeof e.hours === "number" && !Number.isNaN(e.hours) && e.date) maps.sleep.set(e.date, e.hours); });
 
     const today = todayISO();
@@ -3338,7 +3295,7 @@ function KroftApp({ onFullReset } = {}) {
     Object.entries(qrByDay).forEach(([d,c]) => maps.quickReset.set(d, c));
 
     return maps;
-  }, [moodLog, energyLog, stressLog, sleepLog, wellnessHistory, wellness, selfCareHistory, selfCare, quickResetLog]);
+  }, [moodLog, sleepLog, wellnessHistory, wellness, selfCareHistory, selfCare, quickResetLog]);
 
   // groupDesc.true/false describe "days where [condition]" in plain language, for whichever side
   // of the split turns out to hold the higher average. effect is the smallest difference in this
@@ -3346,8 +3303,6 @@ function KroftApp({ onFullReset } = {}) {
   // noise than a real pattern, so nothing is surfaced.
   const WELLNESS_METRIC_META = {
     mood: { label:"mood", isGood:v=>v>=3, effect:0.5, groupDesc:{ true:"you report a more positive mood", false:"your mood is lower" } },
-    energy: { label:"energy", isGood:v=>v>=3, effect:0.5, groupDesc:{ true:"your energy is higher", false:"your energy is lower" } },
-    stress: { label:"stress level", isGood:v=>v>=3, effect:0.5, groupDesc:{ true:"you report feeling calmer", false:"you report feeling more stressed" } },
     sleep: { label:"sleep", isGood:v=>v>=7, effect:0.75, groupDesc:{ true:"you sleep 7 or more hours", false:"you sleep less than 7 hours" } },
     wellness: { label:"wellness score", isGood:v=>v>=70, effect:6, groupDesc:{ true:"your wellness score is higher", false:"your wellness score is lower" } },
     breaks: { label:"breaks taken", isGood:v=>v>=1, effect:0.5, groupDesc:{ true:"you log at least one break", false:"you don't log a break" } },
@@ -3357,11 +3312,11 @@ function KroftApp({ onFullReset } = {}) {
   // Curated predictor->outcome pairs worth asking about at all — not every combination of signals
   // implies a sensible real-world question, so this is a fixed list rather than every permutation.
   const PATTERN_PAIRS = [
-    ["sleep","energy"], ["sleep","mood"], ["sleep","wellness"], ["sleep","stress"],
-    ["mood","energy"], ["mood","wellness"],
-    ["breaks","wellness"], ["breaks","stress"], ["breaks","energy"],
-    ["water","wellness"], ["water","energy"], ["water","mood"],
-    ["quickReset","wellness"], ["quickReset","stress"], ["quickReset","energy"],
+    ["sleep","mood"], ["sleep","wellness"],
+    ["mood","wellness"],
+    ["breaks","wellness"],
+    ["water","wellness"], ["water","mood"],
+    ["quickReset","wellness"],
   ];
   // A pattern needs at least this many days on EACH side of the split, and this many total paired
   // observations, before it's treated as more than a coincidence. Both thresholds are intentionally
@@ -3616,27 +3571,6 @@ function KroftApp({ onFullReset } = {}) {
       if (voiceReplies) speak(`${firstNameOf(user.name)||"Hey"}, I'm sensing stress. ${tip}`, { context:"sensitive" }); toast(tip);
     } else if (m==="happy") { setWellness(s => Math.min(100, s+7)); toast("Great energy. Wellness score up."); }
     else toast(`Mood: ${m}`);
-  };
-
-  // One check-in per day per signal (Energy/Stress) — a second tap the same day replaces the
-  // first rather than appending a duplicate, so the Pattern Engine's "one row per day" grouping
-  // (see wellnessPatterns below) isn't skewed by someone tapping around to see the options.
-  const applyEnergy = level => {
-    haptic(8);
-    const today = todayISO();
-    setEnergyLog(p => [...p.filter(e => e.date !== today), { id:uid(), date:today, time:timeStr(), level }]);
-    toast(`Energy: ${ENERGY_LEVELS.find(l => l.key===level)?.label || level}`);
-  };
-
-  const applyStress = level => {
-    haptic(level==="overwhelmed" ? [10,30,10] : 8);
-    const today = todayISO();
-    setStressLog(p => [...p.filter(e => e.date !== today), { id:uid(), date:today, time:timeStr(), level }]);
-    if (level==="overwhelmed") {
-      const tip = rand(["Take 5 slow breaths.","Step away for a few minutes.","A short walk resets your focus.","Try a Quick Reset breathing session."]);
-      if (voiceReplies) speak(`${firstNameOf(user.name)||"Hey"}, that sounds like a lot right now. ${tip}`, { context:"sensitive" });
-      toast(tip);
-    } else toast(`Stress check-in saved: ${STRESS_LEVELS.find(l => l.key===level)?.label || level}`);
   };
 
   // Sleep is a manual entry today (see the sleepLog state comment) — one entry per night, keyed by
@@ -4899,12 +4833,10 @@ function KroftApp({ onFullReset } = {}) {
     // entirely by wellnessAiContext (see its own state comment and the Privacy Controls toggle
     // it powers) — off means the model gets a single line saying so and nothing else from here.
     const wellnessSection = !wellnessAiContext
-      ? "Wellness data sharing with KROFT Chat is turned off in this user's Privacy settings. Do not reference mood, sleep, energy, stress, journal, or wellness pattern data even if asked — say wellness data sharing is off and suggest they check Wellness > Privacy Controls."
+      ? "Wellness data sharing with KROFT Chat is turned off in this user's Privacy settings. Do not reference mood, sleep, journal, or wellness pattern data even if asked — say wellness data sharing is off and suggest they check Wellness > Privacy Controls."
       : (() => {
           const lines = [`Current wellness score: ${wellness}/100.`];
           if (mood) lines.push(`Current mood: ${mood}.`);
-          if (energyLog.length) lines.push(`Recent energy check-ins: ${list(energyLog.slice(-7).reverse(), 7, e => `${e.date} ${e.level}`)}.`);
-          if (stressLog.length) lines.push(`Recent stress check-ins: ${list(stressLog.slice(-7).reverse(), 7, e => `${e.date} ${e.level}`)}.`);
           if (sleepLog.length) lines.push(`Recent sleep logs: ${list(sleepLog.slice(-7).reverse(), 7, e => `${e.date} ${e.hours}h${e.quality?` (${e.quality} quality)`:""}`)}.`);
           if (quickResetLog.length) lines.push(`Quick Reset sessions: ${quickResetLog.length} completed total, ${quickResetLog.filter(q => q.date===today).length} today.`);
           if (selfCare.breaks || selfCare.water) lines.push(`Today's self-care: ${selfCare.breaks} break(s), ${selfCare.water} glass(es) of water logged.`);
@@ -9395,10 +9327,10 @@ ${voiceMode
               <div style={{ height:1, background:C.div, marginBottom:14 }} />
               </>
             )}
-            {/* The five new Wellness features (Your Patterns, Quick Reset, Energy & Stress, Sleep,
-                Journal) live as pull-out rows in one Card — the same collapsed-row/expand-in-place
-                pattern as ProfileRow in the Profile tab (see its own comment) — rather than five
-                separate full-height cards. Collapsed, each row's sub-line already says the honest
+            {/* These Wellness features (Your Patterns, Quick Reset, Sleep, Journal) live as
+                pull-out rows in one Card — the same collapsed-row/expand-in-place pattern as
+                ProfileRow in the Profile tab (see its own comment) — rather than separate
+                full-height cards. Collapsed, each row's sub-line already says the honest
                 current state (a real count or "not logged yet"), so the page reads as a compact
                 list until you actually want to act on one of them. */}
             <Card style={{ marginBottom:14, borderRadius:22, padding:"4px 16px" }}>
@@ -9444,55 +9376,6 @@ ${voiceMode
                       <Mono style={{ color:C.muted, fontSize:10 }}>{k.seconds < 60 ? `${k.seconds}s` : `${Math.round(k.seconds/60)} min`}</Mono>
                     </button>
                   ))}
-                </div>
-              </ProfileRow>
-              <ProfileRow
-                label="Energy & Stress"
-                sub={(() => {
-                  const today = todayISO();
-                  const e = energyLog.find(x => x.date===today), s = stressLog.find(x => x.date===today);
-                  if (!e && !s) return "Not checked in today";
-                  return [e && `Energy: ${ENERGY_LEVELS.find(l=>l.key===e.level)?.label}`, s && `Stress: ${STRESS_LEVELS.find(l=>l.key===s.level)?.label}`].filter(Boolean).join(" · ");
-                })()}
-                expanded={openWellnessRow==="energy"}
-                onToggle={() => setOpenWellnessRow(v => v==="energy" ? null : "energy")}>
-                <div style={{ paddingBottom:4 }}>
-                  <Mono style={{ display:"block", color:C.muted, letterSpacing:.8, marginBottom:10 }}>How's your energy today?</Mono>
-                  <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:7, marginBottom:16 }}>
-                    {ENERGY_LEVELS.map((l, i) => {
-                      const today = todayISO();
-                      const active = energyLog.find(e => e.date===today)?.level === l.key;
-                      const lColor = C[l.tone];
-                      return (
-                        // Keying on the active transition (not just l.key) so the pop-in
-                        // animation replays every tap, matching the mood buttons on Overview.
-                        <button key={active ? `${l.key}-on` : l.key} onClick={() => applyEnergy(l.key)}
-                          style={{ background:active?lColor+"22":C.surface, border:`1.5px solid ${active?lColor:C.cardB}`, borderRadius:12, padding:"10px 4px", cursor:"pointer", textAlign:"center", boxShadow:active?`0 0 12px ${lColor}40`:"none", animation:active?"bouncePop .4s cubic-bezier(.34,1.56,.64,1)":"none" }}>
-                          <div style={{ display:"flex", justifyContent:"center", marginBottom:5 }}>
-                            <LevelMeter index={i} color={lColor} />
-                          </div>
-                          <Mono style={{ color:active?lColor:C.soft, fontSize:10, fontWeight:700 }}>{l.label}</Mono>
-                        </button>
-                      );
-                    })}
-                  </div>
-                  <Mono style={{ display:"block", color:C.muted, letterSpacing:.8, marginBottom:10 }}>How stressed are you right now?</Mono>
-                  <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:7 }}>
-                    {STRESS_LEVELS.map((l, i) => {
-                      const today = todayISO();
-                      const active = stressLog.find(e => e.date===today)?.level === l.key;
-                      const lColor = C[l.tone];
-                      return (
-                        <button key={active ? `${l.key}-on` : l.key} onClick={() => applyStress(l.key)}
-                          style={{ background:active?lColor+"22":C.surface, border:`1.5px solid ${active?lColor:C.cardB}`, borderRadius:12, padding:"10px 4px", cursor:"pointer", textAlign:"center", boxShadow:active?`0 0 12px ${lColor}40`:"none", animation:active?"bouncePop .4s cubic-bezier(.34,1.56,.64,1)":"none" }}>
-                          <div style={{ display:"flex", justifyContent:"center", marginBottom:5 }}>
-                            <LevelMeter index={i} color={lColor} />
-                          </div>
-                          <Mono style={{ color:active?lColor:C.soft, fontSize:10, fontWeight:700 }}>{l.label}</Mono>
-                        </button>
-                      );
-                    })}
-                  </div>
                 </div>
               </ProfileRow>
               <ProfileRow
