@@ -8239,7 +8239,16 @@ ${voiceMode
                             <div style={{ fontSize:12, color:C.soft, textDecoration:item.done?"line-through":"none", opacity:item.done?.6:1 }}>{item.text}</div>
                           </div>
                         ))}
-                        {openNote!==n.id && n.checklist.length>3 && <Mono style={{ color:C.muted, display:"block", marginTop:2 }}>+{n.checklist.length-3} more</Mono>}
+                        {/* Lives inside this checklist's own stopPropagation wrapper (so checking
+                            off an item doesn't also collapse the note), which silently swallowed
+                            a tap aimed at this text specifically — a real button with its own
+                            handler opens the note directly instead of relying on the click
+                            reaching the card's row-level toggle. */}
+                        {openNote!==n.id && n.checklist.length>3 && (
+                          <button onClick={() => setOpenNote(n.id)} style={{ background:"none", border:"none", padding:0, cursor:"pointer", textAlign:"left", marginTop:2 }}>
+                            <Mono style={{ color:C.muted, textDecoration:"underline" }}>+{n.checklist.length-3} more</Mono>
+                          </button>
+                        )}
                       </div>
                     ) : (
                       <div style={{ fontSize:12, color:C.soft, lineHeight:1.6, whiteSpace:openNote===n.id?"pre-wrap":"nowrap", overflow:openNote===n.id?"visible":"hidden", textOverflow:"ellipsis" }}>{n.body}</div>
