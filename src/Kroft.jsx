@@ -327,6 +327,17 @@ const MOOD_ORB_GLOW = {
   stressed: "121,148,222",
   angry:    "224,104,97",
 };
+// Same idea as MOOD_ORB_GLOW — a distinct, vivid identity per Wellness tab row icon (Your
+// Patterns/Quick Reset/Sleep/Journal/Mood log) rather than every row reading identically in plain
+// gray. Deliberately its own palette, not reused from MOOD_ORB_GLOW's mood colors, so a badge here
+// never accidentally reads as "this feature = that mood."
+const WELLNESS_ROW_GLOW = {
+  patterns: "156,120,214",
+  reset:    "222,150,68",
+  sleep:    "84,132,214",
+  journal:  "70,168,150",
+  mood:     "226,104,150",
+};
 
 // Turns written text into something that reads aloud cleanly. AI replies come back with
 // markdown, and a speech engine reads it literally — "star star Net profit star star",
@@ -1367,6 +1378,8 @@ const NavIcon = ({ id, size=20, color="currentColor" }) => {
       return <svg viewBox="0 0 24 24" style={s}><circle cx="6" cy="17" r="2" {...p} /><circle cx="12" cy="7" r="2" {...p} /><circle cx="18" cy="14" r="2" {...p} /><path d="M7.7 15.7 10.4 8.8M13.6 8.3l2.9 4.2" {...p} /></svg>;
     case "timer": // Quick Reset
       return <svg viewBox="0 0 24 24" style={s}><circle cx="12" cy="13" r="8" {...p} /><path d="M12 13V9M9.5 3.5h5" {...p} /></svg>;
+    case "smile": // Mood log
+      return <svg viewBox="0 0 24 24" style={s}><circle cx="12" cy="12" r="8.5" {...p} /><path d="M9 10.5v.01M15 10.5v.01" {...p} /><path d="M8.5 14.5c1 1.3 2.4 2 3.5 2s2.5-.7 3.5-2" {...p} /></svg>;
     default:
       return null;
   }
@@ -2114,7 +2127,7 @@ function ProfileScreenHeader({ title, onBack }) {
   );
 }
 
-function ProfileRow({ label, sub, expanded, onToggle, children, right }) {
+function ProfileRow({ label, sub, expanded, onToggle, children, right, icon, glow }) {
   return (
     <div style={{ borderBottom:`1px solid ${C.div}` }}>
       {/* className="row" gets the app's shared hover highlight (pointer devices only — see the
@@ -2122,11 +2135,21 @@ function ProfileRow({ label, sub, expanded, onToggle, children, right }) {
           read as a soft rounded pill inset from the card edge, instead of a hard-edged rectangle
           flush against it. */}
       <div className="row" role="button" tabIndex={0} aria-expanded={expanded} onClick={onToggle} onKeyDown={e => { if (e.key==="Enter"||e.key===" ") { e.preventDefault(); onToggle(); } }} style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"13px 8px", margin:"0 -8px", borderRadius:12, cursor:"pointer", transition:"background .15s ease" }}>
-        <div>
-          <div style={{ fontSize:13, fontWeight:600, color:C.white }}>{label}</div>
-          {sub && <Mono style={{ display:"block", color:C.muted, marginTop:2 }}>{sub}</Mono>}
+        <div style={{ display:"flex", alignItems:"center", gap:11, minWidth:0 }}>
+          {/* Optional colored icon badge — same 30px circle/tint language as the Overview's
+              Breaks/Water tiles, only passed by the Wellness tab's rows so Profile's own rows
+              (which don't pass icon/glow) render exactly as before. */}
+          {icon && (
+            <div style={{ width:30, height:30, borderRadius:"50%", background:`rgba(${glow},.16)`, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+              <NavIcon id={icon} size={14} color={`rgb(${glow})`} />
+            </div>
+          )}
+          <div style={{ minWidth:0 }}>
+            <div style={{ fontSize:13, fontWeight:600, color:C.white }}>{label}</div>
+            {sub && <Mono style={{ display:"block", color:C.muted, marginTop:2 }}>{sub}</Mono>}
+          </div>
         </div>
-        <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+        <div style={{ display:"flex", alignItems:"center", gap:10, flexShrink:0 }}>
           {right}
           <Mono style={{ color:C.muted, fontSize:14, transform:expanded?"rotate(90deg)":"none", transition:"transform .16s", display:"inline-block" }}>›</Mono>
         </div>
@@ -9747,6 +9770,7 @@ ${voiceMode
             <Card style={{ marginBottom:14, borderRadius:22, padding:"4px 16px" }}>
               <ProfileRow
                 label="Your Patterns"
+                icon="patterns" glow={WELLNESS_ROW_GLOW.patterns}
                 sub={wellnessPatterns.length > 0 ? `${wellnessPatterns.length} pattern${wellnessPatterns.length!==1?"s":""} found` : "Keep logging to find patterns"}
                 expanded={openWellnessRow==="patterns"}
                 onToggle={() => setOpenWellnessRow(v => v==="patterns" ? null : "patterns")}>
@@ -9776,6 +9800,7 @@ ${voiceMode
               </ProfileRow>
               <ProfileRow
                 label="Quick Reset"
+                icon="timer" glow={WELLNESS_ROW_GLOW.reset}
                 sub={quickResetLog.length > 0 ? `${quickResetLog.length} session${quickResetLog.length!==1?"s":""} completed` : "5 guided sessions"}
                 expanded={openWellnessRow==="reset"}
                 onToggle={() => setOpenWellnessRow(v => v==="reset" ? null : "reset")}>
@@ -9791,6 +9816,7 @@ ${voiceMode
               </ProfileRow>
               <ProfileRow
                 label="Sleep"
+                icon="moon" glow={WELLNESS_ROW_GLOW.sleep}
                 sub={sleepLog.length > 0 ? `Last: ${sleepLog[sleepLog.length-1].hours}h on ${fmtDate(sleepLog[sleepLog.length-1].date)}` : "Not logged yet"}
                 expanded={openWellnessRow==="sleep"}
                 onToggle={() => setOpenWellnessRow(v => v==="sleep" ? null : "sleep")}>
@@ -9827,6 +9853,7 @@ ${voiceMode
               </ProfileRow>
               <ProfileRow
                 label="Wellness Journal"
+                icon="journal" glow={WELLNESS_ROW_GLOW.journal}
                 sub={journalEntries.length > 0 ? `${journalEntries.length} entr${journalEntries.length!==1?"ies":"y"} saved` : "No entries yet"}
                 expanded={openWellnessRow==="journal"}
                 onToggle={() => setOpenWellnessRow(v => v==="journal" ? null : "journal")}>
@@ -9866,6 +9893,7 @@ ${voiceMode
               </ProfileRow>
               <ProfileRow
                 label="Mood log"
+                icon="smile" glow={WELLNESS_ROW_GLOW.mood}
                 sub={moodLog.length===0 ? "No mood entries yet" : wellnessStreak > 0 ? `${wellnessStreak} day streak` : `${moodLog.length} entr${moodLog.length!==1?"ies":"y"}`}
                 expanded={openWellnessRow==="mood"}
                 onToggle={() => setOpenWellnessRow(v => v==="mood" ? null : "mood")}>
