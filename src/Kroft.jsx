@@ -1314,6 +1314,44 @@ function ActionSheet({ title, subtitle, actions, onClose }) {
 // one exception: while actually listening, the glow breathes with the real mic input level
 // (levelRef, already fed by the recognizer elsewhere) — motion that means something, instead of
 // generic movement. Every other state (idle/thinking/speaking) stays at the calm static glow.
+// The voice-persona picker + speaking-speed control, shared between the Profile screen's
+// inline "Voice & Language" panel and the full-screen Voice Settings dialog opened from live
+// Voice Mode — one definition so both places can never drift apart on what a saved choice means.
+function VoiceStyleSpeedControls({ voicePref, onSetVoicePref, voiceSpeed, onSetVoiceSpeed }) {
+  return (
+    <>
+      <Mono style={{ display:"block", color:C.white, marginBottom:2 }}>KROFT Voice</Mono>
+      <Mono style={{ display:"block", color:C.muted, marginBottom:10 }}>Choose how KROFT sounds.</Mono>
+      {Object.values(VOICE_PROFILES).map(v => {
+        const selected = resolveVoiceId(voicePref)===v.id;
+        return (
+          <div key={v.id} role="button" tabIndex={0} onClick={() => onSetVoicePref(v.id)} onKeyDown={e => { if (e.key==="Enter"||e.key===" ") { e.preventDefault(); onSetVoicePref(v.id); } }}
+            style={{ display:"flex", alignItems:"center", gap:11, padding:"12px 14px", borderRadius:18, marginBottom:8, cursor:"pointer", background:selected?C.white:C.surface, border:`1px solid ${selected?C.white:C.cardB}` }}>
+            <div style={{ flex:1, minWidth:0 }}>
+              <div style={{ display:"flex", alignItems:"center", gap:7, flexWrap:"wrap" }}>
+                <span style={{ fontWeight:700, fontSize:13, color:selected?C.black:C.text }}>{v.name}</span>
+                {v.isDefault && <span style={{ fontSize:9, fontWeight:700, letterSpacing:.6, color:selected?C.black:C.muted, opacity:.65 }}>DEFAULT</span>}
+              </div>
+              <div style={{ fontSize:11, color:selected?C.black:C.muted, opacity:selected?.75:1 }}>{v.traits}</div>
+            </div>
+            <button onClick={e => { e.stopPropagation(); speak(v.previewLine, { voiceId:v.id }); }} aria-label={`Preview ${v.name}`} title="Play preview"
+              style={{ width:32, height:32, borderRadius:"50%", flexShrink:0, border:`1px solid ${selected?C.black:C.cardB}`, background:"transparent", display:"flex", alignItems:"center", justifyContent:"center", cursor:"pointer", color:selected?C.black:C.text, fontSize:12 }}>▶</button>
+          </div>
+        );
+      })}
+      <Mono style={{ display:"block", color:C.white, marginTop:6, marginBottom:8 }}>Speaking speed</Mono>
+      <div style={{ display:"flex", gap:8, marginBottom:10 }}>
+        {[{ m:0.85, l:"Slower" }, { m:1.0, l:"Normal" }, { m:1.15, l:"Faster" }].map(s => (
+          <button key={s.l} onClick={() => onSetVoiceSpeed(s.m)} style={{ flex:1, padding:"9px 6px", borderRadius:10, cursor:"pointer", textAlign:"center", background:(voiceSpeed||1)===s.m?C.white:C.surface, border:`1px solid ${(voiceSpeed||1)===s.m?C.white:C.cardB}`, color:(voiceSpeed||1)===s.m?C.black:C.text, fontSize:12, fontWeight:700, fontFamily:"'Space Grotesk',sans-serif" }}>
+            {s.l}
+          </button>
+        ))}
+      </div>
+      <Mono style={{ display:"block", color:C.muted, lineHeight:1.6 }}>Tap a voice to hear it and select it, or use ▶ to preview without switching. Volume follows your device's own volume control. The exact voice available for each option depends on your device and browser.</Mono>
+    </>
+  );
+}
+
 function VoiceOrb({ state, levelRef, size = 300 }) {
   const ref = useRef(null);
   const stateRef = useRef(state);
@@ -1336,7 +1374,7 @@ function VoiceOrb({ state, levelRef, size = 300 }) {
     return () => cancelAnimationFrame(raf);
   }, [size, levelRef]);
 
-  return <div ref={ref} style={{ width:size, height:size, borderRadius:"50%", background:"#050505", flexShrink:0 }} />;
+  return <div ref={ref} style={{ width:size, height:size, borderRadius:"50%", background:"#1c1c1c", flexShrink:0 }} />;
 }
 
 // Full-screen one-on-one voice conversation. Entered deliberately rather than running
@@ -1396,12 +1434,14 @@ function ReminderAlarmScreen({ reminder, onDismiss, onSnooze }) {
   );
 }
 
-function VoiceMode({ state, transcript, reply, error, onStart, onStop, onClose, supported, levelRef, primed, subscribed, turnsLeft }) {
+function VoiceMode({ state, transcript, reply, error, onStart, onStop, onClose, onOpenSettings, subtitles, supported, levelRef, primed, subscribed, turnsLeft }) {
   // Keeps the tail of a long streaming reply in view without the person having to scroll.
   const replyEndRef = useRef(null);
   useEffect(() => { replyEndRef.current?.scrollIntoView?.({ block:"end" }); }, [reply]);
   const label = { idle:"Tap to speak", listening:"Listening", thinking:"Thinking", speaking:"Speaking" }[state] || "";
-  const size = Math.min(320, (typeof window !== "undefined" ? window.innerWidth : 360) - 60);
+  // Sized down from the original 320px — the full-bleed orb read as an oversized, overly heavy
+  // focal point on most phone screens.
+  const size = Math.min(230, (typeof window !== "undefined" ? window.innerWidth : 360) - 100);
   const ref = useModalA11y(onClose);
   return (
     <div ref={ref} role="dialog" aria-modal="true" aria-label="Voice conversation" tabIndex={-1} style={{ position:"fixed", inset:0, zIndex:1200, background:C.bg, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"space-between", padding:"22px 20px calc(28px + env(safe-area-inset-bottom))" }}>
@@ -1415,6 +1455,7 @@ function VoiceMode({ state, transcript, reply, error, onStart, onStop, onClose, 
             {turnsLeft === 0 ? "resets tomorrow" : `${turnsLeft} voice turns left`}
           </Mono>
         )}
+        <button onClick={onOpenSettings} aria-label="Voice settings" style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:"50%", width:40, height:40, color:C.text, fontSize:16, cursor:"pointer" }}>⚙</button>
       </div>
 
       <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:22, flex:1, justifyContent:"center", width:"100%" }}>
@@ -1432,8 +1473,8 @@ function VoiceMode({ state, transcript, reply, error, onStart, onStop, onClose, 
 
         <div style={{ minHeight:96, maxHeight:170, overflowY:"auto", width:"100%", maxWidth:460, textAlign:"center", padding:"0 4px" }}>
           {error && <div style={{ fontSize:14, color:C.negative, lineHeight:1.6 }}>{error}</div>}
-          {!error && transcript && <div style={{ fontSize:17, color:C.text, lineHeight:1.5, fontWeight:500 }}>{transcript}</div>}
-          {!error && !transcript && reply && <div ref={replyEndRef} style={{ fontSize:15, color:C.soft, lineHeight:1.7, textAlign:"left" }}>{reply}</div>}
+          {!error && subtitles && transcript && <div style={{ fontSize:17, color:C.text, lineHeight:1.5, fontWeight:500 }}>{transcript}</div>}
+          {!error && subtitles && !transcript && reply && <div ref={replyEndRef} style={{ fontSize:15, color:C.soft, lineHeight:1.7, textAlign:"left" }}>{reply}</div>}
           {!error && !transcript && !reply && state === "idle" && (
             <div style={{ fontSize:14, color:C.muted, lineHeight:1.7 }}>
               {!supported
@@ -1454,6 +1495,66 @@ function VoiceMode({ state, transcript, reply, error, onStart, onStop, onClose, 
           ? <button onClick={onStart} disabled={!supported} style={{ flex:1, minHeight:52, borderRadius:16, border:"none", background:supported?C.text:C.surface, color:supported?C.card:C.muted, fontSize:15, fontWeight:700, fontFamily:"'Space Grotesk',sans-serif", cursor:supported?"pointer":"not-allowed" }}>{primed ? "Start talking" : "Allow microphone"}</button>
           : <button onClick={onStop} style={{ flex:1, minHeight:52, borderRadius:16, border:`1px solid ${C.border}`, background:"transparent", color:C.text, fontSize:15, fontWeight:700, fontFamily:"'Space Grotesk',sans-serif", cursor:"pointer" }}>{state==="speaking" ? "Interrupt" : state==="thinking" ? "Cancel" : "Stop"}</button>}
       </div>
+    </div>
+  );
+}
+
+// Reachable mid-conversation from the gear icon in VoiceMode's header, so a change here (a
+// different persona, a faster pace, subtitles off) takes effect on the very next turn instead of
+// requiring the person to back out to Profile first. Every control writes straight through its
+// setter — there's no separate draft/Save step to get out of sync with what's actually playing.
+function VoiceSettingsScreen({ voicePref, onSetVoicePref, voiceSpeed, onSetVoiceSpeed, subtitles, onSetSubtitles, backgroundMode, onSetBackgroundMode, onClose }) {
+  const ref = useModalA11y(onClose);
+  return (
+    <div ref={ref} role="dialog" aria-modal="true" aria-label="Voice settings" tabIndex={-1}
+      style={{ position:"fixed", inset:0, zIndex:1250, background:C.bg, display:"flex", flexDirection:"column" }}>
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"22px 20px 10px" }}>
+        <button onClick={onClose} aria-label="Back to voice conversation" style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:"50%", width:40, height:40, color:C.text, fontSize:17, cursor:"pointer" }}>←</button>
+        <div style={{ fontSize:16, fontWeight:700, color:C.text }}>Voice Settings</div>
+        <div style={{ width:40 }} />
+      </div>
+      <div style={{ flex:1, overflowY:"auto", padding:"6px 20px 20px" }}>
+        <Mono style={{ display:"block", color:C.muted, letterSpacing:.6, marginBottom:8 }}>CONVERSATION</Mono>
+        <Card style={{ padding:"4px 16px", marginBottom:20 }}>
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"14px 0", borderBottom:`1px solid ${C.cardB}`, gap:12 }}>
+            <div style={{ minWidth:0 }}>
+              <div style={{ fontSize:13, fontWeight:600, color:C.text }}>Background voice mode</div>
+              <Mono style={{ color:C.muted, display:"block", marginTop:2 }}>Keep talking to KROFT while you use the rest of the app.</Mono>
+            </div>
+            <ProfileSwitch value={backgroundMode} onChange={onSetBackgroundMode} />
+          </div>
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"14px 0", gap:12 }}>
+            <div style={{ minWidth:0 }}>
+              <div style={{ fontSize:13, fontWeight:600, color:C.text }}>Subtitles</div>
+              <Mono style={{ color:C.muted, display:"block", marginTop:2 }}>Show what's said as text during the conversation.</Mono>
+            </div>
+            <ProfileSwitch value={subtitles} onChange={onSetSubtitles} />
+          </div>
+        </Card>
+        <Mono style={{ display:"block", color:C.muted, letterSpacing:.6, marginBottom:8 }}>VOICE STYLE &amp; SPEED</Mono>
+        <Card style={{ padding:"14px 16px", marginBottom:20 }}>
+          <VoiceStyleSpeedControls voicePref={voicePref} onSetVoicePref={onSetVoicePref} voiceSpeed={voiceSpeed} onSetVoiceSpeed={onSetVoiceSpeed} />
+        </Card>
+      </div>
+      <div style={{ padding:"0 20px calc(20px + env(safe-area-inset-bottom))" }}>
+        <Btn full onClick={onClose}>Save</Btn>
+      </div>
+    </div>
+  );
+}
+
+// The floating pill shown instead of the full VoiceMode screen once Background voice mode has
+// minimized an active conversation — the recognizer/speech loop keeps running untouched (it only
+// ever checks voiceOpen, never this), so tapping back in resumes exactly where it left off.
+function MinimizedVoiceBar({ state, levelRef, onExpand, onStop }) {
+  const label = { idle:"Voice mode", listening:"Listening…", thinking:"Thinking…", speaking:"Speaking…" }[state] || "Voice mode";
+  return (
+    <div style={{ position:"fixed", right:16, bottom:"calc(96px + env(safe-area-inset-bottom))", zIndex:260, display:"flex", alignItems:"center", gap:10, padding:"8px 10px 8px 8px", borderRadius:99, background:C.card, border:`1px solid ${C.cardB}`, boxShadow:C.shadowRaised }}>
+      <button onClick={onExpand} aria-label="Reopen voice conversation" style={{ display:"flex", alignItems:"center", gap:10, background:"none", border:"none", cursor:"pointer", padding:0 }}>
+        <VoiceOrb state={state} levelRef={levelRef} size={36} />
+        <Mono style={{ color:C.text }}>{label}</Mono>
+      </button>
+      <button onClick={onStop} aria-label="End voice conversation" style={{ width:26, height:26, borderRadius:"50%", border:`1px solid ${C.cardB}`, background:C.surface, color:C.text, fontSize:12, cursor:"pointer", flexShrink:0 }}>✕</button>
     </div>
   );
 }
@@ -1914,34 +2015,7 @@ function ProfileSection({ user, onUpdateName, onEditPreferences, onEditBusinessD
         <ProfileRow label="Voice & Language" sub={`English (US) · ${VOICE_PROFILES[resolveVoiceId(voicePref)].name}`} expanded={openRow==="voice"} onToggle={()=>toggle("voice")}
           right={<ProfileSwitch value={voiceReplies} onChange={onSetVoiceReplies} />}>
           <Mono style={{ display:"block", color:C.soft, lineHeight:1.7, marginBottom:14 }}>{voiceReplies ? "KROFT speaks replies and reminders aloud." : "KROFT will stay silent unless you tap Read Aloud — voice is never required to use KROFT."}</Mono>
-          <Mono style={{ display:"block", color:C.white, marginBottom:2 }}>KROFT Voice</Mono>
-          <Mono style={{ display:"block", color:C.muted, marginBottom:10 }}>Choose how KROFT sounds.</Mono>
-          {Object.values(VOICE_PROFILES).map(v => {
-            const selected = resolveVoiceId(voicePref)===v.id;
-            return (
-              <div key={v.id} role="button" tabIndex={0} onClick={() => onSetVoicePref(v.id)} onKeyDown={e => { if (e.key==="Enter"||e.key===" ") { e.preventDefault(); onSetVoicePref(v.id); } }}
-                style={{ display:"flex", alignItems:"center", gap:11, padding:"12px 14px", borderRadius:18, marginBottom:8, cursor:"pointer", background:selected?C.white:C.surface, border:`1px solid ${selected?C.white:C.cardB}` }}>
-                <div style={{ flex:1, minWidth:0 }}>
-                  <div style={{ display:"flex", alignItems:"center", gap:7, flexWrap:"wrap" }}>
-                    <span style={{ fontWeight:700, fontSize:13, color:selected?C.black:C.text }}>{v.name}</span>
-                    {v.isDefault && <span style={{ fontSize:9, fontWeight:700, letterSpacing:.6, color:selected?C.black:C.muted, opacity:.65 }}>DEFAULT</span>}
-                  </div>
-                  <div style={{ fontSize:11, color:selected?C.black:C.muted, opacity:selected?.75:1 }}>{v.traits}</div>
-                </div>
-                <button onClick={e => { e.stopPropagation(); speak(v.previewLine, { voiceId:v.id }); }} aria-label={`Preview ${v.name}`} title="Play preview"
-                  style={{ width:32, height:32, borderRadius:"50%", flexShrink:0, border:`1px solid ${selected?C.black:C.cardB}`, background:"transparent", display:"flex", alignItems:"center", justifyContent:"center", cursor:"pointer", color:selected?C.black:C.text, fontSize:12 }}>▶</button>
-              </div>
-            );
-          })}
-          <Mono style={{ display:"block", color:C.white, marginTop:6, marginBottom:8 }}>Speaking speed</Mono>
-          <div style={{ display:"flex", gap:8, marginBottom:10 }}>
-            {[{ m:0.85, l:"Slower" }, { m:1.0, l:"Normal" }, { m:1.15, l:"Faster" }].map(s => (
-              <button key={s.l} onClick={() => onSetVoiceSpeed(s.m)} style={{ flex:1, padding:"9px 6px", borderRadius:10, cursor:"pointer", textAlign:"center", background:(voiceSpeed||1)===s.m?C.white:C.surface, border:`1px solid ${(voiceSpeed||1)===s.m?C.white:C.cardB}`, color:(voiceSpeed||1)===s.m?C.black:C.text, fontSize:12, fontWeight:700, fontFamily:"'Space Grotesk',sans-serif" }}>
-                {s.l}
-              </button>
-            ))}
-          </div>
-          <Mono style={{ display:"block", color:C.muted, lineHeight:1.6 }}>Tap a voice to hear it and select it, or use ▶ to preview without switching. Volume follows your device's own volume control. The exact voice available for each option depends on your device and browser.</Mono>
+          <VoiceStyleSpeedControls voicePref={voicePref} onSetVoicePref={onSetVoicePref} voiceSpeed={voiceSpeed} onSetVoiceSpeed={onSetVoiceSpeed} />
         </ProfileRow>
         <ProfileRow label="Appearance" sub={theme==="dark" ? "Dark mode" : "Light mode"} expanded={openRow==="appearance"} onToggle={()=>toggle("appearance")}>
           <Mono style={{ display:"block", color:C.soft, lineHeight:1.7, marginBottom:12 }}>Switch between dark and light. Both use only black, white and off-white — no grey.</Mono>
@@ -2526,6 +2600,13 @@ function KroftApp({ onFullReset } = {}) {
   // Slower/Normal/Faster) — the accessibility "speech speed setting" the voice spec calls for.
   const [voiceSpeed, setVoiceSpeed] = useState(1.0);
   useEffect(() => { setPreferredVoiceSpeed(voiceSpeed); }, [voiceSpeed]);
+  // Voice Mode-specific preferences. Subtitles gates the live transcript/reply captions shown
+  // during a conversation (off = audio-only, for anyone who finds the captions distracting).
+  // Background voice mode lets closing the full-screen conversation minimize it to a small
+  // floating bar instead of ending the call, so the person can keep talking to KROFT while
+  // using the rest of the app — see voiceMinimized below.
+  const [voiceSubtitles, setVoiceSubtitles] = useState(true);
+  const [voiceBackgroundMode, setVoiceBackgroundMode] = useState(false);
 
   // A brand-new visitor sees the Welcome screen (image) first. With Supabase configured, the
   // load effect below jumps straight to the dashboard when a real session already exists (a
@@ -2979,6 +3060,8 @@ function KroftApp({ onFullReset } = {}) {
       // to its nearest new persona, so a returning user's saved choice never silently resets.
       if (typeof p.voicePref === "string") setVoicePref(resolveVoiceId(p.voicePref));
       if (typeof p.voiceSpeed === "number") setVoiceSpeed(p.voiceSpeed);
+      if (typeof p.voiceSubtitles === "boolean") setVoiceSubtitles(p.voiceSubtitles);
+      if (typeof p.voiceBackgroundMode === "boolean") setVoiceBackgroundMode(p.voiceBackgroundMode);
       if (p.notifPrefs) setNotifPrefs(v => ({ ...v, ...p.notifPrefs }));
       if (p.dailyBriefSentDate) setDailyBriefSentDate(p.dailyBriefSentDate);
       if (typeof p.voiceTurnsCount === "number") setVoiceTurnsCount(p.voiceTurnsCount);
@@ -3088,13 +3171,13 @@ function KroftApp({ onFullReset } = {}) {
   // subscribed is deliberately excluded — see hydrateAllGroups's comment on why it's never
   // restored from this same blob; persisting it here would just re-create the value this app
   // must never trust from client storage in the first place.
-  const saveProfileNow = () => window.storage.set(STORAGE_KEYS.profile, JSON.stringify({ user, theme, voiceReplies, proactiveInsights, wellnessAiContext, voicePref, voiceSpeed, incomeCats, expenseCats, notifPrefs, dailyBriefSentDate, voiceTurnsCount, voiceTurnsDate, taxSetAsidePct }), false);
+  const saveProfileNow = () => window.storage.set(STORAGE_KEYS.profile, JSON.stringify({ user, theme, voiceReplies, proactiveInsights, wellnessAiContext, voicePref, voiceSpeed, voiceSubtitles, voiceBackgroundMode, incomeCats, expenseCats, notifPrefs, dailyBriefSentDate, voiceTurnsCount, voiceTurnsDate, taxSetAsidePct }), false);
 
   useEffect(() => {
     if (!dataLoaded) return;
     const t = setTimeout(() => { saveProfileNow().catch(()=>{}); }, 900);
     return () => clearTimeout(t);
-  }, [dataLoaded, user, theme, voiceReplies, proactiveInsights, wellnessAiContext, voicePref, voiceSpeed, incomeCats, expenseCats, notifPrefs, dailyBriefSentDate, voiceTurnsCount, voiceTurnsDate, taxSetAsidePct]);
+  }, [dataLoaded, user, theme, voiceReplies, proactiveInsights, wellnessAiContext, voicePref, voiceSpeed, voiceSubtitles, voiceBackgroundMode, incomeCats, expenseCats, notifPrefs, dailyBriefSentDate, voiceTurnsCount, voiceTurnsDate, taxSetAsidePct]);
 
   useEffect(() => {
     if (!dataLoaded) return;
@@ -4365,6 +4448,11 @@ function KroftApp({ onFullReset } = {}) {
   // it as the next question) and barge-in (being able to cut a long answer off), so both are
   // handled explicitly rather than left to the browser.
   const [voiceOpen, setVoiceOpen] = useState(false);
+  // True once Background voice mode has minimized an in-progress conversation to the small
+  // floating bar — the conversation itself (recognizer, speech) keeps running untouched, since
+  // every loop below gates on voiceOpen, never on this.
+  const [voiceMinimized, setVoiceMinimized] = useState(false);
+  const [showVoiceSettings, setShowVoiceSettings] = useState(false);
   const [voiceState, setVoiceState] = useState("idle"); // idle | listening | thinking | speaking
   const [voiceTranscript, setVoiceTranscript] = useState("");
   const [voiceReply, setVoiceReply] = useState("");
@@ -4675,7 +4763,14 @@ function KroftApp({ onFullReset } = {}) {
     setVoiceState("idle");
   };
 
-  const closeVoice = () => { voiceStop(); setVoiceOpen(false); setVoiceTranscript(""); setVoiceReply(""); setVoiceError(""); };
+  // With Background voice mode on and a turn actually in progress, the X minimizes to the
+  // floating bar instead of hanging up — nothing about the conversation is stopped or reset.
+  // Idle has nothing worth preserving, so it always ends the call outright either way.
+  const closeVoice = () => {
+    if (voiceBackgroundMode && voiceState !== "idle") { setVoiceMinimized(true); return; }
+    endVoiceFully();
+  };
+  const endVoiceFully = () => { voiceStop(); setVoiceOpen(false); setVoiceMinimized(false); setVoiceTranscript(""); setVoiceReply(""); setVoiceError(""); };
 
   // A call that rings without being answered eventually stops, the way a real one does, rather
   // than sitting on screen forever.
@@ -7099,7 +7194,7 @@ ${voiceMode
       )}
       {incomingCall && <IncomingCallScreen call={incomingCall} onAnswer={answerCall} onDecline={declineCall} />}
       {ringingReminder && <ReminderAlarmScreen reminder={ringingReminder} onDismiss={dismissReminderAlarm} onSnooze={snoozeReminderAlarm} />}
-      {voiceOpen && (
+      {voiceOpen && !voiceMinimized && (
         <VoiceMode
           state={voiceState}
           transcript={voiceTranscript}
@@ -7111,8 +7206,26 @@ ${voiceMode
           onStart={voiceListen}
           onStop={voiceStop}
           onClose={closeVoice}
+          onOpenSettings={() => setShowVoiceSettings(true)}
+          subtitles={voiceSubtitles}
           subscribed={subscribed}
           turnsLeft={voiceTurnsLeft()}
+        />
+      )}
+      {voiceOpen && voiceMinimized && (
+        <MinimizedVoiceBar state={voiceState} levelRef={voiceLevelRef} onExpand={() => setVoiceMinimized(false)} onStop={endVoiceFully} />
+      )}
+      {showVoiceSettings && (
+        <VoiceSettingsScreen
+          voicePref={voicePref}
+          onSetVoicePref={setVoicePref}
+          voiceSpeed={voiceSpeed}
+          onSetVoiceSpeed={setVoiceSpeed}
+          subtitles={voiceSubtitles}
+          onSetSubtitles={setVoiceSubtitles}
+          backgroundMode={voiceBackgroundMode}
+          onSetBackgroundMode={setVoiceBackgroundMode}
+          onClose={() => setShowVoiceSettings(false)}
         />
       )}
       {actionSheet && <ActionSheet {...actionSheet} onClose={() => setActionSheet(null)} />}
