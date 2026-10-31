@@ -7073,12 +7073,6 @@ ${voiceMode
     }
   `;
 
-  const AvatarEl = () => (
-    <div onClick={() => setTab("profile")} style={{ width:32, height:32, borderRadius:"50%", overflow:"hidden", background:user.photo?`url(${user.photo}) center/cover no-repeat`:C.surface, border:`1.5px solid ${C.border}`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:12, fontWeight:800, color:C.white, cursor:"pointer", flexShrink:0, transition:"border-color .18s, box-shadow .18s" }} onMouseEnter={e => { e.currentTarget.style.borderColor=C.accent; e.currentTarget.style.boxShadow=`0 0 0 3px ${C.accentBg}`; }} onMouseLeave={e => { e.currentTarget.style.borderColor=C.border; e.currentTarget.style.boxShadow="none"; }}>
-      {!user.photo && initials}
-    </div>
-  );
-
   // Keep the splash up past its normal 6s if data hasn't finished loading yet — extending a
   // fast, expected case by a beat is far better than flashing empty/default state (a fresh
   // signup screen, zeroed finances) for a returning user whose real data just hasn't arrived.
@@ -7852,7 +7846,6 @@ ${voiceMode
             <NavIcon id="nova" size={13} color={tab==="nova"?"#fff":C.white} />
             Ask Kroft
           </button>
-          <AvatarEl />
         </div>
       </header>
       )}
