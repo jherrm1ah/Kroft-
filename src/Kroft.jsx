@@ -1261,29 +1261,33 @@ const GoogleG = ({ size = 20 }) => (
 // either way), so only email needs a separate "Log in" path for returning users.
 function WelcomeScreen({ onPhone, onGoogle, onEmail, onLogIn, googleLoading }) {
   const pill = { width:"100%", height:56, borderRadius:999, display:"flex", alignItems:"center", justifyContent:"center", gap:12, fontSize:"clamp(14px, 4.4vw, 17px)", whiteSpace:"nowrap", fontWeight:600, fontFamily:"'Space Grotesk',sans-serif", cursor:"pointer", letterSpacing:-.1 };
-  const outlinePill = { ...pill, background:"#fff", color:"#0d0d0d", border:"1.5px solid #d4d4d4" };
+  // KROFT's own light palette (see LIGHT): warm cream background, near-black ink, warm beige
+  // borders, indigo accent for the one link. Matches the splash before it and the account
+  // creation screens after it, so the brand reads as one surface from launch to dashboard.
+  const ink = LIGHT.text, paper = LIGHT.card;
+  const outlinePill = { ...pill, background:paper, color:ink, border:`1.5px solid ${LIGHT.border}` };
   return (
-    <div style={{ position:"fixed", inset:0, zIndex:900, overflowY:"auto", background:"#fcfcfc", display:"flex", flexDirection:"column" }}>
+    <div style={{ position:"fixed", inset:0, zIndex:900, overflowY:"auto", background:LIGHT.bg, display:"flex", flexDirection:"column" }}>
       {/* Brand centered in all the space above the buttons. */}
       <div style={{ flex:1, minHeight:220, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:22, padding:"24px", animation:"fadeUp .5s ease" }}>
-        <KroftMark size={72} color="#0d0d0d" />
-        <h1 style={{ fontSize:42, fontWeight:700, color:"#0d0d0d", letterSpacing:-1.4, margin:0 }}>Kroft</h1>
+        <KroftMark size={72} color={ink} />
+        <h1 style={{ fontSize:42, fontWeight:700, color:ink, letterSpacing:-1.4, margin:0 }}>Kroft</h1>
       </div>
       <div style={{ width:"100%", maxWidth:480, margin:"0 auto", boxSizing:"border-box", padding:"0 clamp(16px, 6vw, 28px) calc(18px + env(safe-area-inset-bottom))", display:"flex", flexDirection:"column", gap:12 }}>
-        <button onClick={onPhone} style={{ ...pill, background:"#0d0d0d", color:"#fff", border:"none" }}>
-          <svg viewBox="0 0 24 24" width={20} height={20} aria-hidden="true"><path fill="#fff" d="M6.6 3h2.7c.4 0 .8.3.9.7l1 3.6c.1.4 0 .8-.3 1L9.2 9.8a13 13 0 0 0 5 5l1.5-1.7c.3-.3.7-.4 1-.3l3.6 1c.4.1.7.5.7.9v2.7c0 1-.8 1.8-1.8 1.8C10.4 19.2 3.8 12.6 3.8 4.8 3.8 3.8 4.6 3 5.6 3z" /></svg>
+        <button onClick={onPhone} style={{ ...pill, background:ink, color:paper, border:"none" }}>
+          <svg viewBox="0 0 24 24" width={20} height={20} aria-hidden="true"><path fill={paper} d="M6.6 3h2.7c.4 0 .8.3.9.7l1 3.6c.1.4 0 .8-.3 1L9.2 9.8a13 13 0 0 0 5 5l1.5-1.7c.3-.3.7-.4 1-.3l3.6 1c.4.1.7.5.7.9v2.7c0 1-.8 1.8-1.8 1.8C10.4 19.2 3.8 12.6 3.8 4.8 3.8 3.8 4.6 3 5.6 3z" /></svg>
           Continue with phone number
         </button>
         <button onClick={onGoogle} disabled={googleLoading} style={{ ...outlinePill, cursor:googleLoading?"wait":"pointer" }}>
-          {googleLoading ? <Spinner size={20} color="#0d0d0d" thickness={2} /> : <GoogleG size={22} />}
+          {googleLoading ? <Spinner size={20} color={ink} thickness={2} /> : <GoogleG size={22} />}
           Continue with Google
         </button>
         <button onClick={onEmail} style={outlinePill}>
-          <svg viewBox="0 0 24 24" width={22} height={22} aria-hidden="true"><rect x="2" y="5" width="20" height="14" rx="2" fill="#0d0d0d" /><path d="M3.2 6.4 12 13l8.8-6.6" stroke="#fff" strokeWidth="1.7" fill="none" strokeLinejoin="round" /></svg>
+          <svg viewBox="0 0 24 24" width={22} height={22} aria-hidden="true"><rect x="2" y="5" width="20" height="14" rx="2" fill={ink} /><path d="M3.2 6.4 12 13l8.8-6.6" stroke={paper} strokeWidth="1.7" fill="none" strokeLinejoin="round" /></svg>
           Sign up with email
         </button>
-        <button onClick={onLogIn} style={{ marginTop:4, padding:"8px", background:"none", border:"none", cursor:"pointer", fontFamily:"'Space Grotesk',sans-serif", fontSize:14.5, color:"#5d5d5d" }}>
-          Already have an account? <span style={{ color:"#0d0d0d", fontWeight:700, textDecoration:"underline" }}>Log in</span>
+        <button onClick={onLogIn} style={{ marginTop:4, padding:"8px", background:"none", border:"none", cursor:"pointer", fontFamily:"'Space Grotesk',sans-serif", fontSize:14.5, color:LIGHT.muted }}>
+          Already have an account? <span style={{ color:LIGHT.accent, fontWeight:700, textDecoration:"underline" }}>Log in</span>
         </button>
       </div>
     </div>
