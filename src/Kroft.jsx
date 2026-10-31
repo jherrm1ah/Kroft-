@@ -1429,8 +1429,6 @@ const NavIcon = ({ id, size=20, color="currentColor" }) => {
     case "receipt":
       return <svg viewBox="0 0 24 24" style={s}><path d="M6.5 3.5h11v17l-2.2-1.5-2.2 1.5-2.2-1.5-2.2 1.5-2.2-1.5z" {...p} /><path d="M9 8h6M9 11.5h6M9 15h3.5" {...p} /></svg>;
     // ---- Profile settings icons ----
-    case "book":
-      return <svg viewBox="0 0 24 24" style={s}><path d="M12 6.5c-1.8-1.3-4.3-2-7.5-2v13c3.2 0 5.7.7 7.5 2 1.8-1.3 4.3-2 7.5-2v-13c-3.2 0-5.7.7-7.5 2z" {...p} /><path d="M12 6.5v13" {...p} /></svg>;
     case "apps":
       return <svg viewBox="0 0 24 24" style={s}><circle cx="7.5" cy="7.5" r="3" {...p} /><circle cx="16.5" cy="7.5" r="3" {...p} /><circle cx="7.5" cy="16.5" r="3" {...p} /><circle cx="16.5" cy="16.5" r="3" {...p} /></svg>;
     case "briefcase":
@@ -1455,10 +1453,6 @@ const NavIcon = ({ id, size=20, color="currentColor" }) => {
       return <svg viewBox="0 0 24 24" style={s}><rect x="7.5" y="7.5" width="9" height="12" rx="4.5" {...p} /><path d="M9.5 7.5a2.5 2.5 0 0 1 5 0M12 11v8.5M4 12.5h3.5M16.5 12.5H20M5 18l2.7-1.5M19 18l-2.7-1.5M5 7.5l2.7 1.5M19 7.5l-2.7 1.5" {...p} /></svg>;
     case "megaphone":
       return <svg viewBox="0 0 24 24" style={s}><path d="M4 10v4a1.5 1.5 0 0 0 1.5 1.5H8l7.5 4V4.5L8 8.5H5.5A1.5 1.5 0 0 0 4 10z" {...p} /><path d="M8 15.5 9.5 20M18.5 9.5a3 3 0 0 1 0 5" {...p} /></svg>;
-    case "help":
-      return <svg viewBox="0 0 24 24" style={s}><circle cx="12" cy="12" r="8.5" {...p} /><path d="M9.6 9.5a2.5 2.5 0 0 1 4.8.9c0 1.7-2.4 2.1-2.4 3.6M12 17v.01" {...p} /></svg>;
-    case "info":
-      return <svg viewBox="0 0 24 24" style={s}><circle cx="12" cy="12" r="8.5" {...p} /><path d="M12 11v5.5M12 7.8v.01" {...p} /></svg>;
     case "logout":
       return <svg viewBox="0 0 24 24" style={s}><path d="M10 4.5H6.5a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2H10" {...p} /><path d="M14.5 8 18.5 12l-4 4M18.5 12H9.5" {...p} /></svg>;
     case "smile": // Mood log
@@ -2327,15 +2321,6 @@ function ProfileSection({ nav, onNav, user, onUpdateName, onEditPreferences, onE
   // Every setting, keyed so the screens below can group them. Each is the same expandable row it
   // always was; only which screen it lives on changed.
   const rows = {
-    prefs: (
-      <ProfileRow label="Personal Preferences" sub="Business, currency" expanded={openRow==="prefs"} onToggle={()=>toggle("prefs")}>
-        <Mono style={{ display:"block", color:C.soft, lineHeight:1.7, marginBottom:10 }}>Business: {user.businessName || "Not set"} · Currency: {user.currency}</Mono>
-        {/* Your name is edited right at the top of Profile now, not here — see the pencil
-            icon next to it. This used to say "Name, business, currency" and route to the
-            account-linking screen, which edits none of the three. */}
-        <Btn sm onClick={onEditBusinessDetails}>Edit details</Btn>
-      </ProfileRow>
-    ),
     memory: (
       <ProfileRow label="AI Memory" sub="What KROFT remembers about you" expanded={openRow==="memory"} onToggle={()=>toggle("memory")}>
         <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>{isSupabaseConfigured ? "KROFT remembers your recent conversation (the last 60 messages) across visits, plus your finances, appointments, and mood, to answer with real context. It's kept in your own account and never shared with other KROFT users." : "KROFT remembers your recent conversation (the last 60 messages) on this device, plus your finances, appointments, and mood, to answer with real context. Nothing leaves this device in local-only mode."}</Mono>
@@ -2359,11 +2344,6 @@ function ProfileSection({ nav, onNav, user, onUpdateName, onEditPreferences, onE
             Light
           </button>
         </div>
-      </ProfileRow>
-    ),
-    personality: (
-      <ProfileRow label="Assistant Personality" sub="Direct, warm, concise" expanded={openRow==="personality"} onToggle={()=>toggle("personality")}>
-        <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>KROFT responds in a clear, grounded tone by default — no filler, no forced enthusiasm.</Mono>
       </ProfileRow>
     ),
     notifs: (
@@ -2461,11 +2441,6 @@ function ProfileSection({ nav, onNav, user, onUpdateName, onEditPreferences, onE
       <ProfileRow label="Face ID" sub={user.webauthnCredentialId ? "Enabled for this device" : "Not set up"} expanded={openRow==="faceid"} onToggle={()=>toggle("faceid")}
         right={<ProfileSwitch value={!!user.webauthnCredentialId} onChange={v => v ? onSetupBiometric() : onRemoveBiometric()} />}>
         <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>Biometric sign-in uses your device's real WebAuthn platform authenticator (Face ID, Touch ID, or Windows Hello) — turning this on will prompt an actual biometric check on this device, not just a toggle.</Mono>
-      </ProfileRow>
-    ),
-    devices: (
-      <ProfileRow label="Devices" sub="1 active session" expanded={openRow==="devices"} onToggle={()=>toggle("devices")}>
-        <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>This device — signed in now.</Mono>
       </ProfileRow>
     ),
     privacy: (
@@ -2597,11 +2572,6 @@ function ProfileSection({ nav, onNav, user, onUpdateName, onEditPreferences, onE
         )}
       </ProfileRow>
     ),
-    help: (
-      <ProfileRow label="Help Center" sub="Guides and answers" expanded={openRow==="help"} onToggle={()=>toggle("help")}>
-        <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>Help articles will appear here once connected to Orynthra's support content.</Mono>
-      </ProfileRow>
-    ),
     report: (
       <ProfileRow label="Contact Support" sub="Something not working right" expanded={openRow==="report"} onToggle={()=>toggle("report")}>
         <textarea
@@ -2646,11 +2616,6 @@ function ProfileSection({ nav, onNav, user, onUpdateName, onEditPreferences, onE
         {feedbackSent && <Mono style={{ display:"block", color:C.soft, marginTop:8 }}>Opening your email app to send this to feedback@virttechnologies.com.</Mono>}
       </ProfileRow>
     ),
-    about: (
-      <ProfileRow label="About Kroft" sub="Version, legal, credits" expanded={openRow==="about"} onToggle={()=>toggle("about")}>
-        <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>KROFT by Orynthra. Your personal AI assistant.</Mono>
-      </ProfileRow>
-    ),
   };
 
   // Plan summary shown above the plan's rows.
@@ -2690,8 +2655,6 @@ function ProfileSection({ nav, onNav, user, onUpdateName, onEditPreferences, onE
   // The screen each Profile row opens. One with a single setting opens it already expanded —
   // tapping into a screen only to tap again to reveal its one row is a wasted step.
   const SCREENS = {
-    personalization: { title:"Personalization", rows:["personality", "prefs"] },
-    memory:          { title:"Memory", rows:["memory"] },
     connected:       { title:"Connected apps", rows:["cal", "mail", "apps"] },
     plan:            { title:subscribed ? "KROFT Plus" : "Upgrade plan", top:planSummary, rows:["plus", "billing", "paymethods", "managesub"] },
     usage:           { title:"Usage and limits", rows:["usage"] },
@@ -2699,13 +2662,11 @@ function ProfileSection({ nav, onNav, user, onUpdateName, onEditPreferences, onE
     notifications:   { title:"Notifications", rows:["notifs"] },
     voice:           { title:"Voice", rows:["voice"] },
     automations:     { title:"Automations", rows:["auto"] },
-    security:        { title:"Security and login", rows:["faceid", "devices"] },
-    privacy:         { title:"Privacy center", rows:["privacy", "wellnessai"] },
+    security:        { title:"Security and login", rows:["faceid"] },
+    privacy:         { title:"Privacy center", rows:["privacy", "memory", "wellnessai"] },
     data:            { title:"History and data", rows:["data"] },
     report:          { title:"Report a problem", rows:["report"] },
     feedback:        { title:"Send feedback", rows:["feature"] },
-    help:            { title:"Help", rows:["help"] },
-    about:           { title:"About", rows:["about"] },
   };
   const goTo = key => onNav({ screen:key, openRow:SCREENS[key].rows.length === 1 ? SCREENS[key].rows[0] : null });
 
@@ -2725,13 +2686,8 @@ function ProfileSection({ nav, onNav, user, onUpdateName, onEditPreferences, onE
   // ── MAIN HUB ──
   const connectedCount = Object.values(user.connected).filter(Boolean).length;
   const GROUPS = [
-    { title:"My KROFT", items:[
-      { key:"personalization", icon:"smile", label:"Personalization" },
-      { key:"memory", icon:"book", label:"Memory" },
-      { key:"connected", icon:"apps", label:"Connected apps", value:connectedCount ? `${connectedCount} connected` : "" },
-    ] },
     { title:"Account", items:[
-      { icon:"briefcase", label:"Business", value:user.businessName || "Personal", onClick:onEditBusinessDetails },
+      { icon:"briefcase", label:"Business", value:`${user.businessName || "Personal"} · ${user.currency}`, onClick:onEditBusinessDetails },
       subscribed
         ? { key:"plan", icon:"sparkle", label:"KROFT Plus", value:"Active" }
         : { key:"plan", icon:"sparkle", label:"Upgrade plan", tone:"accent", value:subscriptionStatus === "past_due" ? "Renewal failed" : "" },
@@ -2740,6 +2696,7 @@ function ProfileSection({ nav, onNav, user, onUpdateName, onEditPreferences, onE
       user.phone && { icon:"phone", label:"Phone", detail:user.phone },
     ].filter(Boolean) },
     { items:[
+      { key:"connected", icon:"apps", label:"Connected apps", value:connectedCount ? `${connectedCount} connected` : "" },
       { key:"general", icon:"gear", label:"General", value:theme === "dark" ? "Dark" : "Light" },
       { key:"notifications", icon:"reminders", label:"Notifications", value:{ granted:"On", denied:"Blocked", unsupported:"Unavailable" }[notifPermission] || "Off" },
       { key:"voice", icon:"waveform", label:"Voice", value:voiceReplies ? VOICE_PROFILES[resolveVoiceId(voicePref)].name : "Off" },
@@ -2749,8 +2706,6 @@ function ProfileSection({ nav, onNav, user, onUpdateName, onEditPreferences, onE
       { key:"data", icon:"database", label:"History and data", value:isSupabaseConfigured ? "Synced" : "This device" },
       { key:"report", icon:"bug", label:"Report a problem" },
       { key:"feedback", icon:"megaphone", label:"Send feedback" },
-      { key:"help", icon:"help", label:"Help" },
-      { key:"about", icon:"info", label:"About" },
     ] },
   ];
 
