@@ -217,13 +217,12 @@ const playAlarmBeep = () => {
     });
   } catch {}
 };
-const todayISO = () => new Date().toISOString().slice(0, 10);
 // Formats a Date's own LOCAL y/m/d as "YYYY-MM-DD". Unlike toISOString() (always UTC), this
-// stays on whatever calendar day the Date's local getters say it is — needed for any Date that
-// was deliberately built from local y/m/d components (a specific calendar day, not "now"), since
-// converting that back through UTC can silently roll it a day — a full month, when the day is 1 —
-// in any timezone ahead of UTC.
+// stays on whatever calendar day the Date's local getters say it is — the day the person is
+// actually living in. Converting through UTC instead rolls the date a day early or late for part
+// of every day anywhere off UTC (every evening in the Americas it already reads as tomorrow).
 const ymdLocal = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+const todayISO = () => ymdLocal(new Date());
 const fmtDate = iso => { if (!iso) return ""; const d = new Date(iso + "T00:00:00"); return isNaN(d) ? iso : d.toLocaleDateString("en-US", { month:"short", day:"numeric", year:"numeric" }); };
 // Advances an ISO date string forward by one occurrence of the given repeat cadence. Used to
 // roll a recurring appointment to its next date once its current one has passed — daily/weekly
@@ -3561,7 +3560,7 @@ function KroftApp({ onFullReset } = {}) {
   const upcomingCashFlow = useMemo(() => {
     const today = todayISO();
     const horizon = new Date(); horizon.setDate(horizon.getDate() + 30);
-    const horizonISO = horizon.toISOString().slice(0, 10);
+    const horizonISO = ymdLocal(horizon);
     const collect = (list, sign) => {
       const out = [];
       list.forEach(e => {
@@ -3598,9 +3597,9 @@ function KroftApp({ onFullReset } = {}) {
     const days = new Set(moodLog.map(m => m.date).filter(Boolean));
     const today = todayISO();
     let streak = 0;
-    // todayISO() is UTC-based (new Date().toISOString().slice(0,10)), so every step here stays
-    // in UTC too (setUTCDate, not setDate) — mixing local-time decrements with a UTC-serialized
-    // comparison would silently shift the date by a day near midnight in some timezones.
+    // Steps the "YYYY-MM-DD" label back one calendar day at a time. Parsing it as UTC midnight and
+    // stepping with setUTCDate keeps the arithmetic purely on the label — local-time stepping
+    // would be thrown off by DST transitions, which aren't 24 hours long.
     const cursor = new Date(today + "T00:00:00Z");
     if (!days.has(today)) cursor.setUTCDate(cursor.getUTCDate() - 1);
     while (days.has(cursor.toISOString().slice(0, 10))) {
@@ -6271,6 +6270,11 @@ ${voiceMode
     const rollover = () => {
       const today = todayISO();
       if (wellnessDate === today) return;
+      // A stored day AHEAD of today isn't a new day — it's the same day labelled differently
+      // (dates used to be saved in UTC, which runs ahead of local time west of Greenwich, and a
+      // phone's clock can be moved back). Relabel it instead of decaying the score and wiping
+      // today's break/water counts as if midnight had passed.
+      if (wellnessDate > today) { setWellnessDate(today); return; }
       // Reads the outgoing day's score from the updater's own `prev`, not the closure-captured
       // `wellness` variable — self-care taps ("Took a break"/"Had water") change wellness without
       // changing wellnessDate, so this closure can otherwise be holding a stale value by the time
@@ -6525,8 +6529,8 @@ ${voiceMode
 
   // Monthly finance report — aggregates this month's entries and asks the AI for real advice
   const generateMonthlyReport = async () => {
-    const now = new Date();
-    const ym = now.toISOString().slice(0, 7); // "2026-08"
+    const today = todayISO();
+    const ym = today.slice(0, 7); // "2026-08"
     const monthInc = income.filter(r => (r.date||"").slice(0,7) === ym);
     const monthExp = expenses.filter(r => (r.date||"").slice(0,7) === ym);
     const incTotal = monthInc.reduce((s,r)=>s+r.amount,0);
@@ -6537,12 +6541,12 @@ ${voiceMode
     monthExp.forEach(r => { byCat[r.cat] = (byCat[r.cat]||0) + r.amount; });
     const topCats = Object.entries(byCat).sort((a,b)=>b[1]-a[1]).slice(0,3);
     setGeneratingReport(true);
-    const context = `Month: ${monthLabel(now.toISOString().slice(0,10))}. Income entries: ${monthInc.length} totaling ${fmtCur(incTotal,user.currency)}. Expense entries: ${monthExp.length} totaling ${fmtCur(expTotal,user.currency)}. Net: ${fmtCur(net,user.currency)}. Top expense categories: ${topCats.length>0?topCats.map(([c,v])=>`${c} (${fmtCur(v,user.currency)})`).join(", "):"none"}. Business: ${user.businessName||"not set"} (${user.businessType||""}).`;
+    const context = `Month: ${monthLabel(today)}. Income entries: ${monthInc.length} totaling ${fmtCur(incTotal,user.currency)}. Expense entries: ${monthExp.length} totaling ${fmtCur(expTotal,user.currency)}. Net: ${fmtCur(net,user.currency)}. Top expense categories: ${topCats.length>0?topCats.map(([c,v])=>`${c} (${fmtCur(v,user.currency)})`).join(", "):"none"}. Business: ${user.businessName||"not set"} (${user.businessType||""}).`;
     try {
       const res = await aiFetch("/api/chat", { method:"POST", headers:{"Content-Type":"application/json","X-Kroft-Usage-Type":"report"}, body:JSON.stringify({ model:"gemini-3.6-flash", max_tokens:400, system:"You are KROFT, a bookkeeping assistant. Given a user's monthly income/expense summary, write a short end-of-month summary: 2-3 sentences on what the numbers show, then 2-3 practical observations about their own spending patterns. Describe what happened in their data — do not recommend financial products, investments, tax positions, borrowing, or anything requiring a licensed advisor. Frame observations as prompts to consider, not instructions. No preamble, no headers, plain text only.", messages:[{ role:"user", content:context }] }) });
       const data = await res.json();
       const advice = (res.ok && data.content?.map(b=>b.text||"").join("").trim()) || "Couldn't generate advice right now — try again shortly.";
-      setMonthlyReport({ month:monthLabel(now.toISOString().slice(0,10)), incTotal, expTotal, net, topCats, advice, generatedAt:Date.now() });
+      setMonthlyReport({ month:monthLabel(today), incTotal, expTotal, net, topCats, advice, generatedAt:Date.now() });
     } catch { toast("Couldn't generate the report — check your connection and try again."); }
     setGeneratingReport(false);
   };
@@ -6556,7 +6560,8 @@ ${voiceMode
   // no streaks, no guilt, no urgency, matching the same non-manipulative bar as everything else
   // that reaches back out to the user.
   const generateWeeklyRecap = async () => {
-    const weekAgoISO = new Date(Date.now() - 7*86400000).toISOString().slice(0,10);
+    const weekAgo = new Date(); weekAgo.setDate(weekAgo.getDate() - 7);
+    const weekAgoISO = ymdLocal(weekAgo);
     const today = todayISO();
     const inWindow = iso => iso && iso >= weekAgoISO && iso <= today;
     const weekInc = income.filter(r => inWindow(r.date));
