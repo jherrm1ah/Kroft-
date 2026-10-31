@@ -1255,38 +1255,37 @@ const GoogleG = ({ size = 20 }) => (
   </svg>
 );
 
-// First screen for anyone not signed in. Always light, matching the rest of account creation.
+// First screen for anyone not signed in: full screen, brand centered, sign-in buttons pinned to
+// the bottom. Always light, matching the rest of account creation.
 // Phone and Google both sign in OR create an account (the code/redirect proves who you are
 // either way), so only email needs a separate "Log in" path for returning users.
 function WelcomeScreen({ onPhone, onGoogle, onEmail, onLogIn, googleLoading }) {
-  const pill = { width:"100%", height:52, borderRadius:999, display:"flex", alignItems:"center", justifyContent:"center", gap:12, fontSize:"clamp(13.5px, 4.1vw, 16px)", whiteSpace:"nowrap", fontWeight:600, fontFamily:"'Space Grotesk',sans-serif", cursor:"pointer", border:"none", letterSpacing:-.1 };
-  const lightPill = { ...pill, background:"#f7f8fa", color:"#14161a", boxShadow:"0 6px 16px rgba(40,48,60,.10), 0 1px 0 rgba(255,255,255,.9) inset" };
+  const pill = { width:"100%", height:56, borderRadius:999, display:"flex", alignItems:"center", justifyContent:"center", gap:12, fontSize:"clamp(14px, 4.4vw, 17px)", whiteSpace:"nowrap", fontWeight:600, fontFamily:"'Space Grotesk',sans-serif", cursor:"pointer", letterSpacing:-.1 };
+  const outlinePill = { ...pill, background:"#fff", color:"#0d0d0d", border:"1.5px solid #d4d4d4" };
   return (
-    <div style={{ position:"fixed", inset:0, zIndex:900, overflowY:"auto", background:"linear-gradient(180deg,#e8ebef 0%,#c7ccd3 100%)", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:"28px clamp(14px, 7vw, 30px)" }}>
-      <div style={{ width:"100%", maxWidth:340, background:"linear-gradient(180deg,#f2f3f6 0%,#e6e8ec 100%)", borderRadius:36, padding:"34px clamp(14px, 5vw, 20px) 26px", boxShadow:"0 30px 60px rgba(40,48,60,.22), 0 1px 0 rgba(255,255,255,.8) inset", animation:"stepIn .5s ease" }}>
-        <div style={{ padding:"0 8px" }}>
-          <KroftMark size={50} />
-          <h1 style={{ fontSize:27, fontWeight:700, color:"#14161a", letterSpacing:-.6, margin:"30px 0 8px" }}>Meet Kroft</h1>
-          <p style={{ fontSize:15.5, lineHeight:1.5, color:"#5f6670", margin:"0 0 30px" }}>Your personal AI, built to help you get more out of every day.</p>
-        </div>
-        <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
-          <button onClick={onPhone} style={{ ...pill, background:"#14161a", color:"#fff", boxShadow:"0 10px 22px rgba(20,22,26,.28)" }}>
-            <svg viewBox="0 0 24 24" width={19} height={19} aria-hidden="true"><path fill="#fff" d="M6.6 3h2.7c.4 0 .8.3.9.7l1 3.6c.1.4 0 .8-.3 1L9.2 9.8a13 13 0 0 0 5 5l1.5-1.7c.3-.3.7-.4 1-.3l3.6 1c.4.1.7.5.7.9v2.7c0 1-.8 1.8-1.8 1.8C10.4 19.2 3.8 12.6 3.8 4.8 3.8 3.8 4.6 3 5.6 3z" /></svg>
-            Continue with phone number
-          </button>
-          <button onClick={onGoogle} disabled={googleLoading} style={{ ...lightPill, cursor:googleLoading?"wait":"pointer" }}>
-            {googleLoading ? <Spinner size={18} color="#14161a" thickness={2} /> : <GoogleG size={20} />}
-            Continue with Google
-          </button>
-          <button onClick={onEmail} style={lightPill}>
-            <svg viewBox="0 0 24 24" width={21} height={21} aria-hidden="true"><rect x="2" y="5" width="20" height="14" rx="2" fill="#14161a" /><path d="M3.2 6.4 12 13l8.8-6.6" stroke="#f7f8fa" strokeWidth="1.7" fill="none" strokeLinejoin="round" /></svg>
-            Sign up with email
-          </button>
-        </div>
+    <div style={{ position:"fixed", inset:0, zIndex:900, overflowY:"auto", background:"#fcfcfc", display:"flex", flexDirection:"column" }}>
+      {/* Brand centered in all the space above the buttons. */}
+      <div style={{ flex:1, minHeight:220, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:22, padding:"24px", animation:"fadeUp .5s ease" }}>
+        <KroftMark size={72} color="#0d0d0d" />
+        <h1 style={{ fontSize:42, fontWeight:700, color:"#0d0d0d", letterSpacing:-1.4, margin:0 }}>Kroft</h1>
       </div>
-      <button onClick={onLogIn} style={{ marginTop:22, background:"none", border:"none", cursor:"pointer", fontFamily:"'Space Grotesk',sans-serif", fontSize:14, color:"#4a5059" }}>
-        Already have an account? <span style={{ color:"#14161a", fontWeight:700, textDecoration:"underline" }}>Log in</span>
-      </button>
+      <div style={{ width:"100%", maxWidth:480, margin:"0 auto", boxSizing:"border-box", padding:"0 clamp(16px, 6vw, 28px) calc(18px + env(safe-area-inset-bottom))", display:"flex", flexDirection:"column", gap:12 }}>
+        <button onClick={onPhone} style={{ ...pill, background:"#0d0d0d", color:"#fff", border:"none" }}>
+          <svg viewBox="0 0 24 24" width={20} height={20} aria-hidden="true"><path fill="#fff" d="M6.6 3h2.7c.4 0 .8.3.9.7l1 3.6c.1.4 0 .8-.3 1L9.2 9.8a13 13 0 0 0 5 5l1.5-1.7c.3-.3.7-.4 1-.3l3.6 1c.4.1.7.5.7.9v2.7c0 1-.8 1.8-1.8 1.8C10.4 19.2 3.8 12.6 3.8 4.8 3.8 3.8 4.6 3 5.6 3z" /></svg>
+          Continue with phone number
+        </button>
+        <button onClick={onGoogle} disabled={googleLoading} style={{ ...outlinePill, cursor:googleLoading?"wait":"pointer" }}>
+          {googleLoading ? <Spinner size={20} color="#0d0d0d" thickness={2} /> : <GoogleG size={22} />}
+          Continue with Google
+        </button>
+        <button onClick={onEmail} style={outlinePill}>
+          <svg viewBox="0 0 24 24" width={22} height={22} aria-hidden="true"><rect x="2" y="5" width="20" height="14" rx="2" fill="#0d0d0d" /><path d="M3.2 6.4 12 13l8.8-6.6" stroke="#fff" strokeWidth="1.7" fill="none" strokeLinejoin="round" /></svg>
+          Sign up with email
+        </button>
+        <button onClick={onLogIn} style={{ marginTop:4, padding:"8px", background:"none", border:"none", cursor:"pointer", fontFamily:"'Space Grotesk',sans-serif", fontSize:14.5, color:"#5d5d5d" }}>
+          Already have an account? <span style={{ color:"#0d0d0d", fontWeight:700, textDecoration:"underline" }}>Log in</span>
+        </button>
+      </div>
     </div>
   );
 }
