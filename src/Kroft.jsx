@@ -1393,6 +1393,12 @@ const NavIcon = ({ id, size=20, color="currentColor" }) => {
       return <svg viewBox="0 0 24 24" style={s}><circle cx="6" cy="17" r="2" {...p} /><circle cx="12" cy="7" r="2" {...p} /><circle cx="18" cy="14" r="2" {...p} /><path d="M7.7 15.7 10.4 8.8M13.6 8.3l2.9 4.2" {...p} /></svg>;
     case "timer": // Quick Reset
       return <svg viewBox="0 0 24 24" style={s}><circle cx="12" cy="13" r="8" {...p} /><path d="M12 13V9M9.5 3.5h5" {...p} /></svg>;
+    case "camera":
+      return <svg viewBox="0 0 24 24" style={s}><path d="M4 8.5A1.5 1.5 0 0 1 5.5 7h2.2l1.5-2h5.6l1.5 2h2.2A1.5 1.5 0 0 1 20 8.5v9a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 17.5z" {...p} /><circle cx="12" cy="13" r="3.4" {...p} /></svg>;
+    case "paperclip":
+      return <svg viewBox="0 0 24 24" style={s}><path d="M15.5 7.5 9 14a2 2 0 0 0 2.8 2.8l7-7a4 4 0 0 0-5.6-5.6l-7.2 7.2a6 6 0 0 0 8.5 8.5L19 15.4" {...p} /></svg>;
+    case "receipt":
+      return <svg viewBox="0 0 24 24" style={s}><path d="M6.5 3.5h11v17l-2.2-1.5-2.2 1.5-2.2-1.5-2.2 1.5-2.2-1.5z" {...p} /><path d="M9 8h6M9 11.5h6M9 15h3.5" {...p} /></svg>;
     case "smile": // Mood log
       return <svg viewBox="0 0 24 24" style={s}><circle cx="12" cy="12" r="8.5" {...p} /><path d="M9 10.5v.01M15 10.5v.01" {...p} /><path d="M8.5 14.5c1 1.3 2.4 2 3.5 2s2.5-.7 3.5-2" {...p} /></svg>;
     default:
@@ -3185,6 +3191,8 @@ function KroftApp({ onFullReset } = {}) {
   const [showAttachMenu, setShowAttachMenu] = useState(false);
   const aiPhotoInputRef = useRef(null);
   const aiFileInputRef = useRef(null);
+  const aiCameraInputRef = useRef(null);
+  const aiReceiptInputRef = useRef(null);
   // Drives the floating "scroll to bottom" button — shown only once someone has actually
   // scrolled up to re-read earlier messages, not on every render.
   const [chatNearBottom, setChatNearBottom] = useState(true);
@@ -10229,6 +10237,18 @@ ${voiceMode
               }}>
                 <input ref={aiPhotoInputRef} type="file" accept="image/*" multiple style={{ display:"none" }} onChange={e => handleAiAttach(e, "image")} />
                 <input ref={aiFileInputRef} type="file" multiple style={{ display:"none" }} onChange={e => handleAiAttach(e, "file")} />
+                {/* capture="environment" opens the rear camera directly on phones; desktop
+                    browsers ignore it and fall back to a normal file picker. */}
+                <input ref={aiCameraInputRef} type="file" accept="image/*" capture="environment" style={{ display:"none" }} onChange={e => handleAiAttach(e, "image")} />
+                {/* Same camera capture, plus a ready-made prompt — the photo reaches the model as
+                    a real image (see runKroftCompletion), so it can read the receipt and log it
+                    through the existing add_expense action. Only prefilled when a photo was
+                    actually taken, and never over something already typed. */}
+                <input ref={aiReceiptInputRef} type="file" accept="image/*" capture="environment" style={{ display:"none" }} onChange={e => {
+                  const took = e.target.files?.length > 0;
+                  handleAiAttach(e, "image");
+                  if (took) setAiInput(v => v.trim() ? v : "Log this receipt as an expense.");
+                }} />
                 {aiAttachments.length > 0 && (
                   <div style={{ display:"flex", flexWrap:"wrap", gap:6, marginBottom:8, padding:"0 4px" }}>
                     {aiAttachments.map(a => (
@@ -10296,22 +10316,31 @@ ${voiceMode
                       a real attach menu instead of duplicating that action. */}
                   <div style={{ position:"relative" }}>
                     <button onClick={() => setShowAttachMenu(v => !v)} aria-label="Attach a photo or file" aria-expanded={showAttachMenu} title="Attach"
-                      style={{ background:showAttachMenu?C.white:C.card, border:`1px solid ${showAttachMenu?C.white:C.cardB}`, borderRadius:"50%", width:34, height:34, flexShrink:0, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", transform:showAttachMenu?"rotate(45deg)":"none", transition:"transform .15s" }}>
+                      style={{ position:"relative", zIndex:5, background:showAttachMenu?C.white:C.card, border:`1px solid ${showAttachMenu?C.white:C.cardB}`, borderRadius:"50%", width:34, height:34, flexShrink:0, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", transform:showAttachMenu?"rotate(45deg)":"none", transition:"transform .15s" }}>
                       <NavIcon id="plus" size={16} color={showAttachMenu?C.black:C.text} />
                     </button>
                     {showAttachMenu && (
-                      <div style={{ position:"absolute", bottom:"calc(100% + 8px)", left:0, background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:14, padding:6, display:"flex", flexDirection:"column", gap:2, boxShadow:C.shadowRaised, zIndex:5, minWidth:150 }}>
-                        {[
-                          { id:"image", label:"Photo", onClick:() => aiPhotoInputRef.current?.click() },
-                          { id:"file", label:"File", onClick:() => aiFileInputRef.current?.click() },
-                        ].map(o => (
-                          <button key={o.id} onClick={() => { o.onClick(); setShowAttachMenu(false); }}
-                            style={{ display:"flex", alignItems:"center", gap:10, padding:"9px 11px", borderRadius:9, background:"none", border:"none", cursor:"pointer", color:C.text, fontSize:13, fontFamily:"'Space Grotesk',sans-serif", textAlign:"left" }}>
-                            <NavIcon id={o.id} size={15} color={C.soft} />
-                            {o.label}
-                          </button>
-                        ))}
-                      </div>
+                      <>
+                        {/* Invisible full-screen catcher so tapping anywhere outside the menu
+                            closes it, like any native popover. */}
+                        <div onClick={() => setShowAttachMenu(false)} aria-hidden="true" style={{ position:"fixed", inset:0, zIndex:4 }} />
+                        <div role="menu" aria-label="Attach" style={{ position:"absolute", bottom:"calc(100% + 10px)", left:-4, background:C.card, border:`1px solid ${C.cardB}`, borderRadius:24, padding:10, display:"flex", flexDirection:"column", gap:4, boxShadow:C.shadowRaised, zIndex:5, minWidth:230, animation:"fadeUp .18s ease" }}>
+                          {[
+                            { id:"camera", label:"Camera", ref:aiCameraInputRef },
+                            { id:"image", label:"Photos", ref:aiPhotoInputRef },
+                            { id:"paperclip", label:"Files", ref:aiFileInputRef },
+                            { id:"receipt", label:"Scan receipt", ref:aiReceiptInputRef },
+                          ].map(o => (
+                            <button key={o.id} role="menuitem" className="row" onClick={() => { o.ref.current?.click(); setShowAttachMenu(false); }}
+                              style={{ display:"flex", alignItems:"center", gap:14, padding:"6px 8px", borderRadius:16, background:"none", border:"none", cursor:"pointer", color:C.text, fontSize:15.5, fontWeight:500, fontFamily:"'Space Grotesk',sans-serif", textAlign:"left" }}>
+                              <span style={{ width:44, height:44, borderRadius:"50%", background:C.fill, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+                                <NavIcon id={o.id} size={20} color={C.text} />
+                              </span>
+                              {o.label}
+                            </button>
+                          ))}
+                        </div>
+                      </>
                     )}
                   </div>
                   <div style={{ display:"flex", alignItems:"center", gap:8 }}>
