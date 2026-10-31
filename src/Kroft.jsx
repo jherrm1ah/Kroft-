@@ -2557,7 +2557,7 @@ function ProfileSection({ user, onUpdateName, onEditPreferences, onEditBusinessD
       <ProfileScreenHeader title="Support" onBack={goBack} />
       <Card style={{ padding:"2px 16px" }}>
         <ProfileRow label="Help Center" sub="Guides and answers" expanded={openRow==="help"} onToggle={()=>toggle("help")}>
-          <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>Help articles will appear here once connected to Virt Technologies' support content.</Mono>
+          <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>Help articles will appear here once connected to Orynthra's support content.</Mono>
         </ProfileRow>
         <ProfileRow label="Contact Support" sub="Something not working right" expanded={openRow==="report"} onToggle={()=>toggle("report")}>
           <textarea
@@ -2600,7 +2600,7 @@ function ProfileSection({ user, onUpdateName, onEditPreferences, onEditBusinessD
           {feedbackSent && <Mono style={{ display:"block", color:C.soft, marginTop:8 }}>Opening your email app to send this to feedback@virttechnologies.com.</Mono>}
         </ProfileRow>
         <ProfileRow label="About Kroft" sub="Version, legal, credits" expanded={openRow==="about"} onToggle={()=>toggle("about")}>
-          <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>KROFT by Virt Technologies. Your personal AI assistant.</Mono>
+          <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>KROFT by Orynthra. Your personal AI assistant.</Mono>
         </ProfileRow>
       </Card>
     </div>
@@ -2641,7 +2641,7 @@ function ProfileSection({ user, onUpdateName, onEditPreferences, onEditBusinessD
             </button>
           </div>
         )}
-        {!editingName && <Mono style={{ color:C.muted, marginBottom:12 }}>Powered by Virt Technologies</Mono>}
+        {!editingName && <Mono style={{ color:C.muted, marginBottom:12 }}>Powered by Orynthra</Mono>}
         <div style={{ display:"flex", gap:7, flexWrap:"wrap", justifyContent:"center" }}>
           <Tag tone="positive">Online</Tag>
           {/* "Synced" claimed cloud sync even in local-only mode, where nothing syncs anywhere
@@ -3868,7 +3868,7 @@ function KroftApp({ onFullReset } = {}) {
       // Only seed the welcome message for a genuinely empty conversation — otherwise this
       // fires on every login (and every prefs round-trip) and silently discards whatever
       // history was just restored from persistent storage.
-      setAiMessages(p => p.length > 0 ? p : [{ role:"assistant", content:`Hey ${firstNameOf(user.name)||"there"} — I'm KROFT, your personal AI assistant by Virt Technologies. Ask me anything — finances, schedule, general knowledge, advice, or just chat. I'm here for all of it.` }]);
+      setAiMessages(p => p.length > 0 ? p : [{ role:"assistant", content:`Hey ${firstNameOf(user.name)||"there"} — I'm KROFT, your personal AI assistant by Orynthra. Ask me anything — finances, schedule, general knowledge, advice, or just chat. I'm here for all of it.` }]);
       toast(`Welcome to KROFT, ${firstNameOf(user.name)||"there"}.`);
     }
   }, [step]);
@@ -5418,7 +5418,7 @@ function KroftApp({ onFullReset } = {}) {
           return lines.join("\n");
         })();
 
-    return `You are KROFT, a personal AI assistant by Virt Technologies. You can answer any question on any topic, and you also have live access to this user's own data (below). Use it whenever the question touches their money, schedule, work or people — quote real figures and real titles rather than speaking generally. If the data below doesn't cover something, say so plainly instead of guessing. Always reply in the same language the user just wrote or spoke in, not English by default — this app's voice input already recognizes speech in the device's own configured language, not only English.
+    return `You are KROFT, a personal AI assistant by Orynthra. You can answer any question on any topic, and you also have live access to this user's own data (below). Use it whenever the question touches their money, schedule, work or people — quote real figures and real titles rather than speaking generally. If the data below doesn't cover something, say so plainly instead of guessing. Always reply in the same language the user just wrote or spoke in, not English by default — this app's voice input already recognizes speech in the device's own configured language, not only English.
 
 CURRENT MOMENT
 Date: ${now.toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric",year:"numeric"})} (${today})
@@ -7176,7 +7176,7 @@ ${voiceMode
               <RobotIcon size={42} />
             </div>
             <h1 style={{ fontSize:30, fontWeight:800, color:C.white, letterSpacing:-1.5, marginBottom:4 }}>Welcome back</h1>
-            <Mono style={{ color:C.muted }}>Sign in to KROFT by Virt Technologies</Mono>
+            <Mono style={{ color:C.muted }}>Sign in to KROFT by Orynthra</Mono>
           </div>
           {forgotOpen ? (
             <div style={{ marginBottom:16 }}>
@@ -7845,7 +7845,7 @@ ${voiceMode
           <div style={{ width:30, height:30, borderRadius:8, background:C.white, display:"flex", alignItems:"center", justifyContent:"center", fontSize:13, fontWeight:900, color:C.black, flexShrink:0, boxShadow:`0 0 14px ${C.accent}40` }}>K</div>
           <div style={{ minWidth:0, overflow:"hidden" }}>
             <div style={{ fontSize:13, fontWeight:700, color:C.white, letterSpacing:-.4, whiteSpace:"nowrap" }}>KROFT</div>
-            <Mono style={{ fontSize:8, color:C.muted, letterSpacing:.8, whiteSpace:"nowrap", display:"block", overflow:"hidden", textOverflow:"ellipsis" }}>by Virt Technologies</Mono>
+            <Mono style={{ fontSize:8, color:C.muted, letterSpacing:.8, whiteSpace:"nowrap", display:"block", overflow:"hidden", textOverflow:"ellipsis" }}>by Orynthra</Mono>
           </div>
         </div>
         <div style={{ display:"flex", alignItems:"center", gap:8, flexShrink:0 }}>
