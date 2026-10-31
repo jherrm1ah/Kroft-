@@ -3109,6 +3109,9 @@ function KroftApp({ onFullReset } = {}) {
   // bubble's only long-press action is Copy, so a compact popup right where you pressed (like
   // ChatGPT's own message menu) reads better than a full-width sheet for a single option.
   const [copyPopup, setCopyPopup] = useState(null);
+  // Which long user messages (by id) are expanded past the truncated preview — see
+  // USER_MSG_TRUNCATE_LEN's own comment below for why only user bubbles ever truncate.
+  const [expandedUserMsgs, setExpandedUserMsgs] = useState(() => new Set());
 
   const [mood, setMood] = useState("calm");
   const [moodLog, setMoodLog] = useState([]);
@@ -10066,7 +10069,16 @@ ${voiceMode
                     <div style={{ margin:"0 auto 16px" }}><RobotIcon size={52} /></div>
                     <div style={{ fontSize:22, fontWeight:800, color:C.text, letterSpacing:-.5 }}>What can I help with, {firstNameOf(user.name)||"there"}?</div>
                   </div>
-                ) : aiMessages.map((m,i) => (
+                ) : aiMessages.map((m,i) => {
+                  // Long user-typed/pasted messages collapse to a short preview with a "Show
+                  // more" toggle so one huge paste doesn't dominate the thread — KROFT's own
+                  // replies never truncate; they're the thing you're actually here to read.
+                  const USER_MSG_TRUNCATE_LEN = 320;
+                  const isLongUserMsg = m.role==="user" && m.content && (m.content.length > USER_MSG_TRUNCATE_LEN || (m.content.match(/\n/g)||[]).length > 6);
+                  const msgKey = m.id ?? i;
+                  const isExpanded = expandedUserMsgs.has(msgKey);
+                  const displayContent = isLongUserMsg && !isExpanded ? m.content.slice(0, USER_MSG_TRUNCATE_LEN).trimEnd() + "…" : m.content;
+                  return (
                   <div key={m.id || i} style={{ display:"flex", flexDirection:"column", alignItems:m.role==="user"?"flex-end":"flex-start", animation:"fadeUp .3s ease" }}>
                     <div {...(m.role==="user" ? longPress((x,y) => setCopyPopup({ x, y, content:m.content })) : {})}
                       style={{ background:m.role==="user"?C.white:C.surface, border:`1px solid ${m.role==="user"?C.soft:C.cardB}`, borderRadius:m.role==="user"?"14px 14px 3px 14px":"14px 14px 14px 3px", padding:"10px 14px", maxWidth:"80%",
@@ -10085,11 +10097,17 @@ ${voiceMode
                         </div>
                       )}
                       <div style={{ fontSize:13, lineHeight:1.75, color:m.failed?C.negative:(m.role==="user"?C.black:C.text), whiteSpace:"pre-wrap" }}>
-                        {m.content}
+                        {displayContent}
                         {/* Blinking caret while tokens are still arriving, so a paused stream
                             reads as "still writing" rather than as a finished short answer. */}
                         {m.streaming && <span style={{ display:"inline-block", width:7, height:14, marginLeft:2, verticalAlign:"text-bottom", background:C.muted, animation:"pulse 1s ease-in-out infinite" }} />}
                       </div>
+                      {isLongUserMsg && (
+                        <button onClick={() => setExpandedUserMsgs(p => { const next = new Set(p); if (isExpanded) next.delete(msgKey); else next.add(msgKey); return next; })}
+                          style={{ background:"none", border:"none", padding:0, marginTop:4, cursor:"pointer", color:C.accent, fontSize:12.5, fontWeight:700, fontFamily:"'Space Grotesk',sans-serif" }}>
+                          {isExpanded ? "Show less" : "Show more"}
+                        </button>
+                      )}
                       {m.contactAction && !m.contactActionResolved && !m.streaming && (
                         <div style={{ display:"flex", gap:8, marginTop:10, flexWrap:"wrap" }}>
                           <Btn sm onClick={() => {
@@ -10148,7 +10166,8 @@ ${voiceMode
                       </div>
                     )}
                   </div>
-                ))}
+                  );
+                })}
                 {aiLoading && !aiMessages.some(m => m.streaming && m.content) && (
                   <div style={{ display:"flex", alignItems:"center", gap:9 }}>
                     <Mono style={{ color:C.muted }}>KROFT</Mono>
