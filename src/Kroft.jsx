@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useMemo, Component, lazy, Suspense } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo, Component, Fragment, lazy, Suspense } from "react";
 import { supabase, isSupabaseConfigured, supabaseUrl, supabaseAnonKey } from "./supabaseClient.js";
 import { fmtCur, APP_FONT } from "./charts/format.js";
 
@@ -1428,6 +1428,39 @@ const NavIcon = ({ id, size=20, color="currentColor" }) => {
       return <svg viewBox="0 0 24 24" style={s}><path d="M15.5 7.5 9 14a2 2 0 0 0 2.8 2.8l7-7a4 4 0 0 0-5.6-5.6l-7.2 7.2a6 6 0 0 0 8.5 8.5L19 15.4" {...p} /></svg>;
     case "receipt":
       return <svg viewBox="0 0 24 24" style={s}><path d="M6.5 3.5h11v17l-2.2-1.5-2.2 1.5-2.2-1.5-2.2 1.5-2.2-1.5z" {...p} /><path d="M9 8h6M9 11.5h6M9 15h3.5" {...p} /></svg>;
+    // ---- Profile settings icons ----
+    case "book":
+      return <svg viewBox="0 0 24 24" style={s}><path d="M12 6.5c-1.8-1.3-4.3-2-7.5-2v13c3.2 0 5.7.7 7.5 2 1.8-1.3 4.3-2 7.5-2v-13c-3.2 0-5.7.7-7.5 2z" {...p} /><path d="M12 6.5v13" {...p} /></svg>;
+    case "apps":
+      return <svg viewBox="0 0 24 24" style={s}><circle cx="7.5" cy="7.5" r="3" {...p} /><circle cx="16.5" cy="7.5" r="3" {...p} /><circle cx="7.5" cy="16.5" r="3" {...p} /><circle cx="16.5" cy="16.5" r="3" {...p} /></svg>;
+    case "briefcase":
+      return <svg viewBox="0 0 24 24" style={s}><rect x="3.5" y="7.5" width="17" height="12" rx="2.5" {...p} /><path d="M9 7.5V6a1.5 1.5 0 0 1 1.5-1.5h3A1.5 1.5 0 0 1 15 6v1.5" {...p} /></svg>;
+    case "sparkle":
+      return <svg viewBox="0 0 24 24" style={s}><path d="M12 3.5c.6 4.4 2.6 7 8.5 8.5-5.9 1.5-7.9 4.1-8.5 8.5-.6-4.4-2.6-7-8.5-8.5 5.9-1.5 7.9-4.1 8.5-8.5z" {...p} /></svg>;
+    case "chart":
+      return <svg viewBox="0 0 24 24" style={s}><rect x="4" y="11" width="4.5" height="9" rx="1" {...p} /><rect x="9.75" y="4" width="4.5" height="16" rx="1" {...p} /><rect x="15.5" y="8" width="4.5" height="12" rx="1" {...p} /></svg>;
+    case "phone":
+      return <svg viewBox="0 0 24 24" style={s}><path d="M6.6 3.5h2.6l1.3 4-1.9 1.4a12 12 0 0 0 6.5 6.5l1.4-1.9 4 1.3v2.6a2 2 0 0 1-2 2A16 16 0 0 1 4.6 5.5a2 2 0 0 1 2-2z" {...p} /></svg>;
+    case "gear":
+      return <svg viewBox="0 0 24 24" style={s}><circle cx="12" cy="12" r="3" {...p} /><path d="M12 3.5l1.6 2.2 2.7-.5.9 2.6 2.5 1.2-.8 2.6 1.6 2.2-2.2 1.6.1 2.7-2.7.4-1.4 2.3-2.4-1.3-2.4 1.3-1.4-2.3-2.7-.4.1-2.7-2.2-1.6 1.6-2.2-.8-2.6 2.5-1.2.9-2.6 2.7.5z" {...p} /></svg>;
+    case "bolt":
+      return <svg viewBox="0 0 24 24" style={s}><path d="M13 3.5 5.5 13.5H12l-1 7 7.5-10H12z" {...p} /></svg>;
+    case "shieldUser":
+      return <svg viewBox="0 0 24 24" style={s}><path d="M12 3.5 5 6v5.5c0 4.3 2.9 7.6 7 9 4.1-1.4 7-4.7 7-9V6z" {...p} /><circle cx="12" cy="10.5" r="2.4" {...p} /><path d="M8.3 16.5c.8-1.6 2.1-2.4 3.7-2.4s2.9.8 3.7 2.4" {...p} /></svg>;
+    case "shieldCheck":
+      return <svg viewBox="0 0 24 24" style={s}><path d="M12 3.5 5 6v5.5c0 4.3 2.9 7.6 7 9 4.1-1.4 7-4.7 7-9V6z" {...p} /><path d="m9 12 2.2 2.2L15.5 10" {...p} /></svg>;
+    case "database":
+      return <svg viewBox="0 0 24 24" style={s}><ellipse cx="12" cy="6" rx="7" ry="2.5" {...p} /><path d="M5 6v12c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5V6M5 12c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5" {...p} /></svg>;
+    case "bug":
+      return <svg viewBox="0 0 24 24" style={s}><rect x="7.5" y="7.5" width="9" height="12" rx="4.5" {...p} /><path d="M9.5 7.5a2.5 2.5 0 0 1 5 0M12 11v8.5M4 12.5h3.5M16.5 12.5H20M5 18l2.7-1.5M19 18l-2.7-1.5M5 7.5l2.7 1.5M19 7.5l-2.7 1.5" {...p} /></svg>;
+    case "megaphone":
+      return <svg viewBox="0 0 24 24" style={s}><path d="M4 10v4a1.5 1.5 0 0 0 1.5 1.5H8l7.5 4V4.5L8 8.5H5.5A1.5 1.5 0 0 0 4 10z" {...p} /><path d="M8 15.5 9.5 20M18.5 9.5a3 3 0 0 1 0 5" {...p} /></svg>;
+    case "help":
+      return <svg viewBox="0 0 24 24" style={s}><circle cx="12" cy="12" r="8.5" {...p} /><path d="M9.6 9.5a2.5 2.5 0 0 1 4.8.9c0 1.7-2.4 2.1-2.4 3.6M12 17v.01" {...p} /></svg>;
+    case "info":
+      return <svg viewBox="0 0 24 24" style={s}><circle cx="12" cy="12" r="8.5" {...p} /><path d="M12 11v5.5M12 7.8v.01" {...p} /></svg>;
+    case "logout":
+      return <svg viewBox="0 0 24 24" style={s}><path d="M10 4.5H6.5a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2H10" {...p} /><path d="M14.5 8 18.5 12l-4 4M18.5 12H9.5" {...p} /></svg>;
     case "smile": // Mood log
       return <svg viewBox="0 0 24 24" style={s}><circle cx="12" cy="12" r="8.5" {...p} /><path d="M9 10.5v.01M15 10.5v.01" {...p} /><path d="M8.5 14.5c1 1.3 2.4 2 3.5 2s2.5-.7 3.5-2" {...p} /></svg>;
     default:
@@ -2150,17 +2183,55 @@ function Briefing({ user, income, expenses, emails, appts, onClose }) {
 // ── PROFILE PAGE ───────────────────────────────────────────────────────────────
 // A single row in a profile section. Tapping expands an inline detail area so every
 // item does something real — no dead placeholder rows.
-// A compact top-level category row on the Profile hub — title, subtitle, chevron, nothing more.
-// Tapping navigates to a dedicated screen rather than expanding inline.
-function ProfileCategoryRow({ label, sub, onClick, isLast }) {
+// One row on the Profile hub: icon, label, and an optional current value on the right or detail
+// line underneath. Without onClick it's a read-only row (e.g. the account's email address).
+function SettingsRow({ icon, label, value, detail, onClick, tone, isLast }) {
+  const color = tone === "accent" ? C.accent : tone === "danger" ? C.negative : C.text;
+  const interactive = !!onClick;
   return (
-    <div role="button" tabIndex={0} onClick={onClick} onKeyDown={e => { if (e.key==="Enter"||e.key===" ") { e.preventDefault(); onClick(); } }} aria-label={label}
-      style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"15px 2px", cursor:"pointer", borderBottom:isLast?"none":`1px solid ${C.div}` }}>
-      <div>
-        <div style={{ fontSize:14, fontWeight:700, color:C.white }}>{label}</div>
-        {sub && <Mono style={{ display:"block", color:C.muted, marginTop:2 }}>{sub}</Mono>}
+    <div {...(interactive ? { role:"button", tabIndex:0, onClick, onKeyDown:e => { if (e.key==="Enter"||e.key===" ") { e.preventDefault(); onClick(); } } } : {})}
+      className={interactive ? "row" : undefined}
+      style={{ display:"flex", alignItems:"center", gap:14, padding:"15px 18px", minHeight:56, boxSizing:"border-box", cursor:interactive?"pointer":"default", borderBottom:isLast?"none":`1px solid ${C.div}`, transition:"background .15s ease" }}>
+      <NavIcon id={icon} size={22} color={color} />
+      <div style={{ flex:1, minWidth:0 }}>
+        <div style={{ fontSize:16, fontWeight:500, color, letterSpacing:-.1 }}>{label}</div>
+        {detail && <div style={{ fontSize:14, color:C.muted, marginTop:2, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{detail}</div>}
       </div>
-      <Mono style={{ color:C.muted, fontSize:16 }}>›</Mono>
+      {value && <div style={{ fontSize:15, color:C.muted, flexShrink:0, maxWidth:"45%", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{value}</div>}
+    </div>
+  );
+}
+
+// A titled group of SettingsRows in one rounded card.
+function SettingsGroup({ title, children }) {
+  return (
+    <div style={{ marginBottom:26 }}>
+      {title && <div style={{ fontSize:15, color:C.muted, margin:"0 0 9px 18px" }}>{title}</div>}
+      <div style={{ background:C.card, border:`1px solid ${C.cardB}`, borderRadius:24, overflow:"hidden" }}>{children}</div>
+    </div>
+  );
+}
+
+// Confirmation before signing out. Logging out of a synced account ends the session on this
+// device, so it asks first rather than acting on a single stray tap.
+function LogoutDialog({ onConfirm, onCancel }) {
+  const [busy, setBusy] = useState(false);
+  const ref = useModalA11y(onCancel);
+  return (
+    <div onClick={busy ? undefined : onCancel} style={{ position:"fixed", inset:0, zIndex:1300, background:"rgba(0,0,0,.45)", display:"flex", alignItems:"center", justifyContent:"center", padding:20, animation:"fadeIn .18s ease" }}>
+      <div ref={ref} role="alertdialog" aria-modal="true" aria-labelledby="logout-title" aria-describedby="logout-desc" onClick={e => e.stopPropagation()}
+        style={{ width:"100%", maxWidth:400, background:C.card, borderRadius:32, padding:"30px 22px 12px", boxShadow:"0 24px 60px rgba(0,0,0,.3)", animation:"pop .22s ease" }}>
+        <h2 id="logout-title" style={{ fontSize:24, fontWeight:600, color:C.text, margin:"0 8px 10px", letterSpacing:-.4 }}>Log out?</h2>
+        <p id="logout-desc" style={{ fontSize:16, lineHeight:1.5, color:C.muted, margin:"0 8px 24px" }}>You'll need to sign back in to keep using KROFT.</p>
+        <button disabled={busy} onClick={async () => { setBusy(true); await onConfirm(); }}
+          style={{ width:"100%", height:52, borderRadius:999, border:"none", background:C.white, color:C.black, fontSize:16, fontWeight:700, fontFamily:APP_FONT, cursor:busy?"wait":"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
+          {busy ? <Spinner size={18} color={C.black} thickness={2} /> : "Log out"}
+        </button>
+        <button disabled={busy} onClick={onCancel}
+          style={{ width:"100%", height:52, marginTop:4, borderRadius:999, border:"none", background:"none", color:C.text, fontSize:16, fontWeight:700, fontFamily:APP_FONT, cursor:"pointer" }}>
+          Cancel
+        </button>
+      </div>
     </div>
   );
 }
@@ -2168,11 +2239,11 @@ function ProfileCategoryRow({ label, sub, onClick, isLast }) {
 // Header bar for a Profile drill-down screen: back button + screen title.
 function ProfileScreenHeader({ title, onBack }) {
   return (
-    <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:20 }}>
-      <button onClick={onBack} aria-label="Back" style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:10, width:34, height:34, display:"flex", alignItems:"center", justifyContent:"center", cursor:"pointer", color:C.white, fontSize:16, flexShrink:0 }}>
-        ‹
+    <div style={{ display:"flex", alignItems:"center", gap:14, marginBottom:20 }}>
+      <button onClick={onBack} aria-label="Back" style={{ background:C.card, border:`1px solid ${C.cardB}`, borderRadius:"50%", width:44, height:44, display:"flex", alignItems:"center", justifyContent:"center", cursor:"pointer", flexShrink:0, boxShadow:C.shadowBase }}>
+        <svg viewBox="0 0 24 24" width={20} height={20} aria-hidden="true"><path d="M19 12H5M11 5l-7 7 7 7" stroke={C.text} strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round" /></svg>
       </button>
-      <h2 style={{ fontSize:19, fontWeight:800, color:C.white, letterSpacing:-.6 }}>{title}</h2>
+      <h2 style={{ fontSize:20, fontWeight:700, color:C.white, letterSpacing:-.5 }}>{title}</h2>
     </div>
   );
 }
@@ -2219,15 +2290,16 @@ function ProfileSwitch({ value, onChange }) {
   );
 }
 
-function ProfileSection({ user, onUpdateName, onEditPreferences, onEditBusinessDetails, onSignOut, theme, onToggleTheme, toast, subscribed, subscriptionStatus, autoRenews, billingLoading, onUpgrade, onManageBilling, usageStats, voiceReplies, onSetVoiceReplies, proactiveInsights, onSetProactiveInsights, wellnessAiContext, onSetWellnessAiContext, voicePref, onSetVoicePref, voiceSpeed, onSetVoiceSpeed, onSetupBiometric, onRemoveBiometric, onExportData, onImportData, notifPermission, notifPrefs, onEnableNotifications, onSetNotifPref, onTestNotification, voiceTurnsCount, voiceLimit }) {
-  // null = main hub. Otherwise one of: "ai" | "productivity" | "privacy" | "subscription" | "support"
-  const [screen, setScreen] = useState(null);
-  const [openRow, setOpenRow] = useState(null);
+function ProfileSection({ nav, onNav, user, onUpdateName, onEditPreferences, onEditBusinessDetails, onSignOut, theme, onToggleTheme, toast, subscribed, subscriptionStatus, autoRenews, billingLoading, onUpgrade, onManageBilling, usageStats, voiceReplies, onSetVoiceReplies, proactiveInsights, onSetProactiveInsights, wellnessAiContext, onSetWellnessAiContext, voicePref, onSetVoicePref, voiceSpeed, onSetVoiceSpeed, onSetupBiometric, onRemoveBiometric, onExportData, onImportData, notifPermission, notifPrefs, onEnableNotifications, onSetNotifPref, onTestNotification, voiceTurnsCount, voiceLimit }) {
+  // nav.screen is null for the main hub, otherwise a key of SCREENS below. Held in KroftApp (see
+  // profileNav there) so it survives the remount a theme change triggers.
+  const { screen, openRow } = nav;
+  const setOpenRow = row => onNav(n => ({ ...n, openRow:row }));
   const fileInputRef = useRef(null);
+  const [confirmLogout, setConfirmLogout] = useState(false);
   const toggle = k => setOpenRow(openRow===k ? null : k);
   const initials = user.name ? user.name.split(" ").map(n=>n[0]).join("").toUpperCase().slice(0,2) : "?";
-  const goTo = key => { setOpenRow(null); setScreen(key); };
-  const goBack = () => { setOpenRow(null); setScreen(null); };
+  const goBack = () => onNav({ screen:null, openRow:null });
 
   // What KROFT calls this user everywhere (greetings, voice replies, the daily briefing) — set
   // once at signup with no way to change it afterward until now. Local draft + explicit
@@ -2252,377 +2324,444 @@ function ProfileSection({ user, onUpdateName, onEditPreferences, onEditBusinessD
   const [feedbackMsg, setFeedbackMsg] = useState("");
   const [feedbackSent, setFeedbackSent] = useState(false);
 
-  // ── DRILL-DOWN: AI & PERSONALIZATION ──
-  if (screen === "ai") return (
-    <div style={{ animation:"fadeUp .25s ease" }}>
-      <ProfileScreenHeader title="AI & Personalization" onBack={goBack} />
-      <Card style={{ padding:"2px 16px" }}>
-        <ProfileRow label="Personal Preferences" sub="Business, currency" expanded={openRow==="prefs"} onToggle={()=>toggle("prefs")}>
-          <Mono style={{ display:"block", color:C.soft, lineHeight:1.7, marginBottom:10 }}>Business: {user.businessName || "Not set"} · Currency: {user.currency}</Mono>
-          {/* Your name is edited right at the top of Profile now, not here — see the pencil
-              icon next to it. This used to say "Name, business, currency" and route to the
-              account-linking screen, which edits none of the three. */}
-          <Btn sm onClick={onEditBusinessDetails}>Edit details</Btn>
-        </ProfileRow>
-        <ProfileRow label="AI Memory" sub="What KROFT remembers about you" expanded={openRow==="memory"} onToggle={()=>toggle("memory")}>
-          <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>{isSupabaseConfigured ? "KROFT remembers your recent conversation (the last 60 messages) across visits, plus your finances, appointments, and mood, to answer with real context. It's kept in your own account and never shared with other KROFT users." : "KROFT remembers your recent conversation (the last 60 messages) on this device, plus your finances, appointments, and mood, to answer with real context. Nothing leaves this device in local-only mode."}</Mono>
-        </ProfileRow>
-        <ProfileRow label="Voice & Language" sub={`English (US) · ${VOICE_PROFILES[resolveVoiceId(voicePref)].name}`} expanded={openRow==="voice"} onToggle={()=>toggle("voice")}
-          right={<ProfileSwitch value={voiceReplies} onChange={onSetVoiceReplies} />}>
-          <Mono style={{ display:"block", color:C.soft, lineHeight:1.7, marginBottom:14 }}>{voiceReplies ? "KROFT speaks replies and reminders aloud." : "KROFT will stay silent unless you tap Read Aloud — voice is never required to use KROFT."}</Mono>
-          <VoiceStyleSpeedControls voicePref={voicePref} onSetVoicePref={onSetVoicePref} voiceSpeed={voiceSpeed} onSetVoiceSpeed={onSetVoiceSpeed} />
-        </ProfileRow>
-        <ProfileRow label="Appearance" sub={theme==="dark" ? "Dark mode" : "Light mode"} expanded={openRow==="appearance"} onToggle={()=>toggle("appearance")}>
-          <Mono style={{ display:"block", color:C.soft, lineHeight:1.7, marginBottom:12 }}>Switch between dark and light. Both use only black, white and off-white — no grey.</Mono>
-          <div style={{ display:"flex", gap:8 }}>
-            <button onClick={() => onToggleTheme("dark")} style={{ flex:1, padding:"11px 6px", borderRadius:10, cursor:"pointer", textAlign:"center", background:theme==="dark"?C.white:C.surface, border:`1px solid ${theme==="dark"?C.white:C.cardB}`, color:theme==="dark"?C.black:C.text, fontSize:12, fontWeight:700, fontFamily:APP_FONT }}>
-              Dark
-            </button>
-            <button onClick={() => onToggleTheme("light")} style={{ flex:1, padding:"11px 6px", borderRadius:10, cursor:"pointer", textAlign:"center", background:theme==="light"?C.white:C.surface, border:`1px solid ${theme==="light"?C.white:C.cardB}`, color:theme==="light"?C.black:C.text, fontSize:12, fontWeight:700, fontFamily:APP_FONT }}>
-              Light
-            </button>
-          </div>
-        </ProfileRow>
-        <ProfileRow label="Assistant Personality" sub="Direct, warm, concise" expanded={openRow==="personality"} onToggle={()=>toggle("personality")}>
-          <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>KROFT responds in a clear, grounded tone by default — no filler, no forced enthusiasm.</Mono>
-        </ProfileRow>
-        <ProfileRow label="Notifications"
-          sub={notifPermission === "granted" ? "On for this device" : notifPermission === "denied" ? "Blocked in browser settings" : notifPermission === "unsupported" ? "Not supported here" : "Not enabled"}
-          expanded={openRow==="notifs"} onToggle={()=>toggle("notifs")}>
-
-          {notifPermission === "unsupported" && (
-            <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>
-              This browser doesn't support notifications.
-            </Mono>
-          )}
-
-          {notifPermission === "denied" && (
-            <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>
-              Notifications are blocked for this site. Your browser only asks once, so you'll need to
-              re-allow them in site settings — usually the icon beside the address bar.
-            </Mono>
-          )}
-
-          {notifPermission === "default" && (
-            <>
-              {/* Explained before the prompt, for the same reason as the microphone: browsers ask
-                  once, and a denial is effectively permanent. */}
-              <Mono style={{ display:"block", color:C.soft, lineHeight:1.7, marginBottom:12 }}>
-                Get told about an appointment ten minutes before it starts, a reminder when it's due,
-                and a category going over budget. Nothing else.
-              </Mono>
-              <Btn sm onClick={onEnableNotifications}>Turn on notifications</Btn>
-            </>
-          )}
-
-          {notifPermission === "granted" && (
-            <>
-              {[
-                { k:"appointments", label:"Appointments", sub:"10 minutes before" },
-                { k:"reminders",    label:"Reminders",    sub:"When one is due" },
-                { k:"budgets",      label:"Budget alerts", sub:"At 80% and over" },
-              ].map(row => (
-                <div key={row.k} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10, gap:12 }}>
-                  <div style={{ minWidth:0 }}>
-                    <Mono style={{ color:C.soft, display:"block" }}>{row.label}</Mono>
-                    <Mono style={{ color:C.muted, display:"block" }}>{row.sub}</Mono>
-                  </div>
-                  <ProfileSwitch value={!!notifPrefs[row.k]} onChange={v => onSetNotifPref(row.k, v)} />
-                </div>
-              ))}
-              {/* The one notification a free account can't get at all — shown either way so
-                  free users see what upgrading buys them, rather than the feature simply not
-                  existing on their screen. */}
-              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:4, gap:12 }}>
-                <div style={{ minWidth:0 }}>
-                  <div style={{ display:"flex", alignItems:"center", gap:6 }}>
-                    <Mono style={{ color:C.soft }}>Daily brief</Mono>
-                    {!subscribed && <Tag tone="accent">Plus</Tag>}
-                  </div>
-                  <Mono style={{ color:C.muted, display:"block" }}>{subscribed ? "One AI summary, around 8am" : "Upgrade to get an unprompted morning summary"}</Mono>
-                </div>
-                {subscribed
-                  ? <ProfileSwitch value={!!notifPrefs.dailyBrief} onChange={v => onSetNotifPref("dailyBrief", v)} />
-                  : <Btn sm v="outline" disabled={billingLoading} onClick={onUpgrade}>{billingLoading ? <Spinner size={14} color={C.soft} thickness={2} /> : "Upgrade"}</Btn>}
-              </div>
-              <Btn sm v="outline" onClick={onTestNotification} style={{ marginTop:4 }}>Send a test</Btn>
-              {/* Stated plainly rather than letting people assume background delivery works. */}
-              <Mono style={{ display:"block", color:C.muted, lineHeight:1.7, marginTop:11 }}>
-                These arrive while KROFT is open in a tab, including in the background. They won't
-                arrive once the browser is fully closed.
-              </Mono>
-            </>
-          )}
-        </ProfileRow>
-      </Card>
-    </div>
-  );
-
-  // ── DRILL-DOWN: PRODUCTIVITY ──
-  if (screen === "productivity") return (
-    <div style={{ animation:"fadeUp .25s ease" }}>
-      <ProfileScreenHeader title="Productivity" onBack={goBack} />
-      <Card style={{ padding:"2px 16px" }}>
-        <ProfileRow label="Calendar Connections" sub={[user.connected.calendar&&"Google Calendar",user.connected.outlookCalendar&&"Outlook Calendar"].filter(Boolean).join(" + ")||"Not linked"} expanded={openRow==="cal"} onToggle={()=>toggle("cal")}>
-          <Btn sm v="outline" onClick={onEditPreferences}>Manage connections</Btn>
-        </ProfileRow>
-        <ProfileRow label="Email Accounts" sub={[user.connected.gmail&&"Gmail",user.connected.outlookMail&&"Outlook"].filter(Boolean).join(" + ")||"Not linked"} expanded={openRow==="mail"} onToggle={()=>toggle("mail")}>
-          <Btn sm v="outline" onClick={onEditPreferences}>Manage connections</Btn>
-        </ProfileRow>
-        <ProfileRow label="Linked Apps" sub={`${Object.values(user.connected).filter(Boolean).length} connected`} expanded={openRow==="apps"} onToggle={()=>toggle("apps")}>
-          <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>Gmail, Google Calendar, Outlook Mail and Outlook Calendar can each be linked from Preferences. Uber works automatically — no linking needed.</Mono>
-        </ProfileRow>
-        <ProfileRow label="Smart Automations" sub="Reminders, briefings, insights" expanded={openRow==="auto"} onToggle={()=>toggle("auto")}
-          right={<ProfileSwitch value={proactiveInsights} onChange={onSetProactiveInsights} />}>
-          <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>{proactiveInsights ? "KROFT proactively surfaces reminders and daily insights." : "KROFT will only respond when asked."}</Mono>
-        </ProfileRow>
-      </Card>
-    </div>
-  );
-
-  // ── DRILL-DOWN: PRIVACY & SECURITY ──
-  if (screen === "privacy") return (
-    <div style={{ animation:"fadeUp .25s ease" }}>
-      <ProfileScreenHeader title="Privacy & Security" onBack={goBack} />
-      <Card style={{ padding:"2px 16px" }}>
-        <ProfileRow label="Face ID" sub={user.webauthnCredentialId ? "Enabled for this device" : "Not set up"} expanded={openRow==="faceid"} onToggle={()=>toggle("faceid")}
-          right={<ProfileSwitch value={!!user.webauthnCredentialId} onChange={v => v ? onSetupBiometric() : onRemoveBiometric()} />}>
-          <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>Biometric sign-in uses your device's real WebAuthn platform authenticator (Face ID, Touch ID, or Windows Hello) — turning this on will prompt an actual biometric check on this device, not just a toggle.</Mono>
-        </ProfileRow>
-        <ProfileRow label="Devices" sub="1 active session" expanded={openRow==="devices"} onToggle={()=>toggle("devices")}>
-          <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>This device — signed in now.</Mono>
-        </ProfileRow>
-        <ProfileRow label="Privacy Controls" sub="Data sharing, visibility" expanded={openRow==="privacy"} onToggle={()=>toggle("privacy")}>
-          <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>Your data stays scoped to your own account and is never shared with other KROFT users.</Mono>
-        </ProfileRow>
-        <ProfileRow label="Wellness Data in KROFT Chat" sub={wellnessAiContext ? "KROFT can reference your wellness data" : "Off"} expanded={openRow==="wellnessai"} onToggle={()=>toggle("wellnessai")}
-          right={<ProfileSwitch value={wellnessAiContext} onChange={onSetWellnessAiContext} />}>
-          <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>{wellnessAiContext
-            ? "KROFT Chat can reference your mood, sleep, journal and pattern data to answer wellness questions — always as observations from your own data, never as a diagnosis. Your Wellness tab keeps working the same either way."
-            : "KROFT Chat will not see or reference any wellness data — mood, sleep, journal entries or Your Patterns stay out of its context entirely. The Wellness tab itself is unaffected."}</Mono>
-        </ProfileRow>
-        <ProfileRow label="Backup & Restore" sub="Download a copy of everything" expanded={openRow==="data"} onToggle={()=>toggle("data")}>
-          <Mono style={{ display:"block", color:C.soft, lineHeight:1.7, marginBottom:12 }}>
-            {isSupabaseConfigured
-              ? "Signed in with a real account, your data already syncs to your own account in the cloud — this backup is just an extra copy, useful for switching devices or keeping an offline copy. Your password is never included in the file."
-              : "KROFT keeps your data on this device only — nothing is uploaded. That also means clearing your browser data erases it permanently, so download a backup you can keep somewhere safe. Your password is never included in the file."}
-          </Mono>
-          <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
-            <Btn sm onClick={onExportData}>Download backup</Btn>
-            <Btn sm v="outline" onClick={() => fileInputRef.current?.click()}>Restore from file</Btn>
-          </div>
-          <input ref={fileInputRef} type="file" accept="application/json,.json" style={{ display:"none" }}
-            onChange={e => { const f = e.target.files?.[0]; if (f) onImportData(f); e.target.value = ""; }} />
-          <Mono style={{ display:"block", color:C.muted, lineHeight:1.7, marginTop:11 }}>
-            Restoring replaces everything currently {isSupabaseConfigured ? "in your account" : "on this device"}.
-          </Mono>
-        </ProfileRow>
-      </Card>
-    </div>
-  );
-
-  // ── DRILL-DOWN: SUBSCRIPTION ──
-  if (screen === "subscription") return (
-    <div style={{ animation:"fadeUp .25s ease" }}>
-      <ProfileScreenHeader title="Subscription" onBack={goBack} />
-
-      <Card style={{ marginBottom:16, border:`1px solid ${C.border}` }}>
-        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
-          <div style={{ fontSize:16, fontWeight:800, color:C.white }}>{subscribed ? "KROFT Plus" : "Free Plan"}</div>
-          <Tag tone={subscribed?"positive":undefined}>{subscribed ? "Active" : "Current"}</Tag>
+  // Every setting, keyed so the screens below can group them. Each is the same expandable row it
+  // always was; only which screen it lives on changed.
+  const rows = {
+    prefs: (
+      <ProfileRow label="Personal Preferences" sub="Business, currency" expanded={openRow==="prefs"} onToggle={()=>toggle("prefs")}>
+        <Mono style={{ display:"block", color:C.soft, lineHeight:1.7, marginBottom:10 }}>Business: {user.businessName || "Not set"} · Currency: {user.currency}</Mono>
+        {/* Your name is edited right at the top of Profile now, not here — see the pencil
+            icon next to it. This used to say "Name, business, currency" and route to the
+            account-linking screen, which edits none of the three. */}
+        <Btn sm onClick={onEditBusinessDetails}>Edit details</Btn>
+      </ProfileRow>
+    ),
+    memory: (
+      <ProfileRow label="AI Memory" sub="What KROFT remembers about you" expanded={openRow==="memory"} onToggle={()=>toggle("memory")}>
+        <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>{isSupabaseConfigured ? "KROFT remembers your recent conversation (the last 60 messages) across visits, plus your finances, appointments, and mood, to answer with real context. It's kept in your own account and never shared with other KROFT users." : "KROFT remembers your recent conversation (the last 60 messages) on this device, plus your finances, appointments, and mood, to answer with real context. Nothing leaves this device in local-only mode."}</Mono>
+      </ProfileRow>
+    ),
+    voice: (
+      <ProfileRow label="Voice & Language" sub={`English (US) · ${VOICE_PROFILES[resolveVoiceId(voicePref)].name}`} expanded={openRow==="voice"} onToggle={()=>toggle("voice")}
+        right={<ProfileSwitch value={voiceReplies} onChange={onSetVoiceReplies} />}>
+        <Mono style={{ display:"block", color:C.soft, lineHeight:1.7, marginBottom:14 }}>{voiceReplies ? "KROFT speaks replies and reminders aloud." : "KROFT will stay silent unless you tap Read Aloud — voice is never required to use KROFT."}</Mono>
+        <VoiceStyleSpeedControls voicePref={voicePref} onSetVoicePref={onSetVoicePref} voiceSpeed={voiceSpeed} onSetVoiceSpeed={onSetVoiceSpeed} />
+      </ProfileRow>
+    ),
+    appearance: (
+      <ProfileRow label="Appearance" sub={theme==="dark" ? "Dark mode" : "Light mode"} expanded={openRow==="appearance"} onToggle={()=>toggle("appearance")}>
+        <Mono style={{ display:"block", color:C.soft, lineHeight:1.7, marginBottom:12 }}>Switch between dark and light. Both use only black, white and off-white — no grey.</Mono>
+        <div style={{ display:"flex", gap:8 }}>
+          <button onClick={() => onToggleTheme("dark")} style={{ flex:1, padding:"11px 6px", borderRadius:10, cursor:"pointer", textAlign:"center", background:theme==="dark"?C.white:C.surface, border:`1px solid ${theme==="dark"?C.white:C.cardB}`, color:theme==="dark"?C.black:C.text, fontSize:12, fontWeight:700, fontFamily:APP_FONT }}>
+            Dark
+          </button>
+          <button onClick={() => onToggleTheme("light")} style={{ flex:1, padding:"11px 6px", borderRadius:10, cursor:"pointer", textAlign:"center", background:theme==="light"?C.white:C.surface, border:`1px solid ${theme==="light"?C.white:C.cardB}`, color:theme==="light"?C.black:C.text, fontSize:12, fontWeight:700, fontFamily:APP_FONT }}>
+            Light
+          </button>
         </div>
-        {/* Chat, AI drafts/suggestions and monthly reports are unlimited on every plan — nothing
-            to meter. Voice is the one AI pool still worth a real allowance: an open-ended spoken
-            conversation is a materially different resource than a one-shot text call. */}
-        {!subscribed && (() => {
-          const pct = Math.min(100, (voiceTurnsCount/voiceLimit)*100);
-          const barColor = pct>=90?C.negative:pct>=70?C.warning:C.accent;
-          return (
-            <div style={{ marginBottom:11 }}>
-              <div style={{ display:"flex", justifyContent:"space-between", marginBottom:4 }}>
-                <Mono style={{ color:C.soft }}>Voice mode</Mono>
-                <Mono style={{ color:C.muted }}>{voiceTurnsCount}/{voiceLimit} today</Mono>
+      </ProfileRow>
+    ),
+    personality: (
+      <ProfileRow label="Assistant Personality" sub="Direct, warm, concise" expanded={openRow==="personality"} onToggle={()=>toggle("personality")}>
+        <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>KROFT responds in a clear, grounded tone by default — no filler, no forced enthusiasm.</Mono>
+      </ProfileRow>
+    ),
+    notifs: (
+      <ProfileRow label="Notifications"
+        sub={notifPermission === "granted" ? "On for this device" : notifPermission === "denied" ? "Blocked in browser settings" : notifPermission === "unsupported" ? "Not supported here" : "Not enabled"}
+        expanded={openRow==="notifs"} onToggle={()=>toggle("notifs")}>
+
+        {notifPermission === "unsupported" && (
+          <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>
+            This browser doesn't support notifications.
+          </Mono>
+        )}
+
+        {notifPermission === "denied" && (
+          <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>
+            Notifications are blocked for this site. Your browser only asks once, so you'll need to
+            re-allow them in site settings — usually the icon beside the address bar.
+          </Mono>
+        )}
+
+        {notifPermission === "default" && (
+          <>
+            {/* Explained before the prompt, for the same reason as the microphone: browsers ask
+                once, and a denial is effectively permanent. */}
+            <Mono style={{ display:"block", color:C.soft, lineHeight:1.7, marginBottom:12 }}>
+              Get told about an appointment ten minutes before it starts, a reminder when it's due,
+              and a category going over budget. Nothing else.
+            </Mono>
+            <Btn sm onClick={onEnableNotifications}>Turn on notifications</Btn>
+          </>
+        )}
+
+        {notifPermission === "granted" && (
+          <>
+            {[
+              { k:"appointments", label:"Appointments", sub:"10 minutes before" },
+              { k:"reminders",    label:"Reminders",    sub:"When one is due" },
+              { k:"budgets",      label:"Budget alerts", sub:"At 80% and over" },
+            ].map(row => (
+              <div key={row.k} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10, gap:12 }}>
+                <div style={{ minWidth:0 }}>
+                  <Mono style={{ color:C.soft, display:"block" }}>{row.label}</Mono>
+                  <Mono style={{ color:C.muted, display:"block" }}>{row.sub}</Mono>
+                </div>
+                <ProfileSwitch value={!!notifPrefs[row.k]} onChange={v => onSetNotifPref(row.k, v)} />
               </div>
-              <div style={{ background:C.surface, borderRadius:99, height:6, overflow:"hidden" }}>
-                <div style={{ height:"100%", width:`${pct}%`, background:barColor, borderRadius:99, transition:"width .3s ease" }} />
+            ))}
+            {/* The one notification a free account can't get at all — shown either way so
+                free users see what upgrading buys them, rather than the feature simply not
+                existing on their screen. */}
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:4, gap:12 }}>
+              <div style={{ minWidth:0 }}>
+                <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                  <Mono style={{ color:C.soft }}>Daily brief</Mono>
+                  {!subscribed && <Tag tone="accent">Plus</Tag>}
+                </div>
+                <Mono style={{ color:C.muted, display:"block" }}>{subscribed ? "One AI summary, around 8am" : "Upgrade to get an unprompted morning summary"}</Mono>
+              </div>
+              {subscribed
+                ? <ProfileSwitch value={!!notifPrefs.dailyBrief} onChange={v => onSetNotifPref("dailyBrief", v)} />
+                : <Btn sm v="outline" disabled={billingLoading} onClick={onUpgrade}>{billingLoading ? <Spinner size={14} color={C.soft} thickness={2} /> : "Upgrade"}</Btn>}
+            </div>
+            <Btn sm v="outline" onClick={onTestNotification} style={{ marginTop:4 }}>Send a test</Btn>
+            {/* Stated plainly rather than letting people assume background delivery works. */}
+            <Mono style={{ display:"block", color:C.muted, lineHeight:1.7, marginTop:11 }}>
+              These arrive while KROFT is open in a tab, including in the background. They won't
+              arrive once the browser is fully closed.
+            </Mono>
+          </>
+        )}
+      </ProfileRow>
+    ),
+    cal: (
+      <ProfileRow label="Calendar Connections" sub={[user.connected.calendar&&"Google Calendar",user.connected.outlookCalendar&&"Outlook Calendar"].filter(Boolean).join(" + ")||"Not linked"} expanded={openRow==="cal"} onToggle={()=>toggle("cal")}>
+        <Btn sm v="outline" onClick={onEditPreferences}>Manage connections</Btn>
+      </ProfileRow>
+    ),
+    mail: (
+      <ProfileRow label="Email Accounts" sub={[user.connected.gmail&&"Gmail",user.connected.outlookMail&&"Outlook"].filter(Boolean).join(" + ")||"Not linked"} expanded={openRow==="mail"} onToggle={()=>toggle("mail")}>
+        <Btn sm v="outline" onClick={onEditPreferences}>Manage connections</Btn>
+      </ProfileRow>
+    ),
+    apps: (
+      <ProfileRow label="Linked Apps" sub={`${Object.values(user.connected).filter(Boolean).length} connected`} expanded={openRow==="apps"} onToggle={()=>toggle("apps")}>
+        <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>Gmail, Google Calendar, Outlook Mail and Outlook Calendar can each be linked from Preferences. Uber works automatically — no linking needed.</Mono>
+      </ProfileRow>
+    ),
+    auto: (
+      <ProfileRow label="Smart Automations" sub="Reminders, briefings, insights" expanded={openRow==="auto"} onToggle={()=>toggle("auto")}
+        right={<ProfileSwitch value={proactiveInsights} onChange={onSetProactiveInsights} />}>
+        <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>{proactiveInsights ? "KROFT proactively surfaces reminders and daily insights." : "KROFT will only respond when asked."}</Mono>
+      </ProfileRow>
+    ),
+    faceid: (
+      <ProfileRow label="Face ID" sub={user.webauthnCredentialId ? "Enabled for this device" : "Not set up"} expanded={openRow==="faceid"} onToggle={()=>toggle("faceid")}
+        right={<ProfileSwitch value={!!user.webauthnCredentialId} onChange={v => v ? onSetupBiometric() : onRemoveBiometric()} />}>
+        <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>Biometric sign-in uses your device's real WebAuthn platform authenticator (Face ID, Touch ID, or Windows Hello) — turning this on will prompt an actual biometric check on this device, not just a toggle.</Mono>
+      </ProfileRow>
+    ),
+    devices: (
+      <ProfileRow label="Devices" sub="1 active session" expanded={openRow==="devices"} onToggle={()=>toggle("devices")}>
+        <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>This device — signed in now.</Mono>
+      </ProfileRow>
+    ),
+    privacy: (
+      <ProfileRow label="Privacy Controls" sub="Data sharing, visibility" expanded={openRow==="privacy"} onToggle={()=>toggle("privacy")}>
+        <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>Your data stays scoped to your own account and is never shared with other KROFT users.</Mono>
+      </ProfileRow>
+    ),
+    wellnessai: (
+      <ProfileRow label="Wellness Data in KROFT Chat" sub={wellnessAiContext ? "KROFT can reference your wellness data" : "Off"} expanded={openRow==="wellnessai"} onToggle={()=>toggle("wellnessai")}
+        right={<ProfileSwitch value={wellnessAiContext} onChange={onSetWellnessAiContext} />}>
+        <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>{wellnessAiContext
+          ? "KROFT Chat can reference your mood, sleep, journal and pattern data to answer wellness questions — always as observations from your own data, never as a diagnosis. Your Wellness tab keeps working the same either way."
+          : "KROFT Chat will not see or reference any wellness data — mood, sleep, journal entries or Your Patterns stay out of its context entirely. The Wellness tab itself is unaffected."}</Mono>
+      </ProfileRow>
+    ),
+    data: (
+      <ProfileRow label="Backup & Restore" sub="Download a copy of everything" expanded={openRow==="data"} onToggle={()=>toggle("data")}>
+        <Mono style={{ display:"block", color:C.soft, lineHeight:1.7, marginBottom:12 }}>
+          {isSupabaseConfigured
+            ? "Signed in with a real account, your data already syncs to your own account in the cloud — this backup is just an extra copy, useful for switching devices or keeping an offline copy. Your password is never included in the file."
+            : "KROFT keeps your data on this device only — nothing is uploaded. That also means clearing your browser data erases it permanently, so download a backup you can keep somewhere safe. Your password is never included in the file."}
+        </Mono>
+        <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+          <Btn sm onClick={onExportData}>Download backup</Btn>
+          <Btn sm v="outline" onClick={() => fileInputRef.current?.click()}>Restore from file</Btn>
+        </div>
+        <input ref={fileInputRef} type="file" accept="application/json,.json" style={{ display:"none" }}
+          onChange={e => { const f = e.target.files?.[0]; if (f) onImportData(f); e.target.value = ""; }} />
+        <Mono style={{ display:"block", color:C.muted, lineHeight:1.7, marginTop:11 }}>
+          Restoring replaces everything currently {isSupabaseConfigured ? "in your account" : "on this device"}.
+        </Mono>
+      </ProfileRow>
+    ),
+    plus: (
+      <ProfileRow label="What's in Plus" sub={subscribed ? "Active" : "Free plan"} expanded={openRow==="plus"} onToggle={()=>toggle("plus")}>
+        {/* The free tier isn't a stripped-down trial — finances, budgets, contacts, notes,
+            recurring transactions, notifications, AI chat, drafts/suggestions and monthly
+            reports are complete and stay free permanently. Plus is specifically about voice
+            (a materially more expensive resource — open-ended spoken conversation) and a
+            handful of real conveniences, not gating basic text usage. */}
+        <div style={{ display:"flex", flexDirection:"column", gap:10, marginBottom:12 }}>
+          {[
+            { t:"Unlimited voice mode", d:`Talk to KROFT as much as you want, hands-free — free plan gets ${voiceLimit} voice turns a day.` },
+            { t:"Budget rollover", d:"Unused budget carries into next month instead of resetting to zero." },
+            { t:"Longer conversation memory", d:"KROFT remembers more of a long conversation — 60 messages of context instead of 20." },
+            { t:"Scheduled reminder calls", d:"Set a time and KROFT rings you in the app, speaks the reminder, and can talk it through if you answer." },
+          ].map(b => (
+            <div key={b.t} style={{ display:"flex", gap:9, alignItems:"flex-start" }}>
+              <Dot color={C.positive} />
+              <div>
+                <div style={{ fontSize:12.5, fontWeight:600, color:C.text }}>{b.t}</div>
+                <Mono style={{ color:C.muted, lineHeight:1.5 }}>{b.d}</Mono>
               </div>
             </div>
-          );
-        })()}
-        {subscribed && (
-          <Mono style={{ display:"block", color:C.soft, marginBottom:14 }}>Unlimited chat, voice, drafts and reports.</Mono>
+          ))}
+        </div>
+        <Mono style={{ display:"block", color:C.muted, lineHeight:1.6, marginBottom:12, paddingTop:10, borderTop:`1px solid ${C.div}` }}>
+          Finances, budgets, contacts, notes, tasks, recurring transactions and notifications are complete on the free plan and always will be — Plus is only about the AI calls above.
+        </Mono>
+        {!subscribed && <Btn sm disabled={billingLoading} onClick={onUpgrade}>{billingLoading ? <Spinner size={14} color={C.black} thickness={2} /> : "Upgrade"}</Btn>}
+      </ProfileRow>
+    ),
+    billing: (
+      <ProfileRow label="Billing" sub={subscriptionStatus === "past_due" ? "Renewal failed — action needed" : subscribed ? "Active" : "No payment method on file"} expanded={openRow==="billing"} onToggle={()=>toggle("billing")}>
+        <Mono style={{ display:"block", color:C.soft, lineHeight:1.7, marginBottom:10 }}>
+          {subscriptionStatus === "past_due"
+            ? "Your last renewal charge failed, so Plus access has paused. Resubscribe below to restore it."
+            : subscribed
+            ? "Your subscription and card are held by our secure payment partner, not KROFT. There's no self-serve billing portal — cancel here any time, or contact support for a receipt."
+            : "Upgrading opens a secure checkout — KROFT never sees or stores your card details directly."}
+        </Mono>
+        {subscribed && !autoRenews && (
+          <Mono style={{ display:"block", color:C.muted, lineHeight:1.7, marginBottom:10 }}>
+            Your current payment method doesn't automatically renew — you'll need to manually resubscribe before your current period ends.
+          </Mono>
         )}
-        {subscribed
-          ? <Btn sm v="outline" disabled={billingLoading} onClick={onManageBilling}>{billingLoading ? <Spinner size={14} color={C.soft} thickness={2} /> : "Cancel plan"}</Btn>
-          : <Btn sm disabled={billingLoading} onClick={onUpgrade}>{billingLoading ? <Spinner size={14} color={C.black} thickness={2} /> : "Upgrade to KROFT Plus"}</Btn>}
-      </Card>
+        {!subscribed && (
+          <Mono style={{ display:"block", color:C.muted, lineHeight:1.7, marginBottom:10 }}>
+            KROFT Plus renews automatically only with a card. Bank transfer, USSD, and mobile money are also accepted at checkout, but those don't auto-renew — you'd need to manually resubscribe each cycle.
+          </Mono>
+        )}
+        {subscribed && <Btn sm v="outline" disabled={billingLoading} onClick={onManageBilling}>{billingLoading ? <Spinner size={14} color={C.soft} thickness={2} /> : "Cancel plan"}</Btn>}
+        {!subscribed && (
+          <Btn sm disabled={billingLoading} onClick={onUpgrade}>{billingLoading ? <Spinner size={14} color={C.black} thickness={2} /> : subscriptionStatus === "past_due" ? "Resubscribe" : "Upgrade"}</Btn>
+        )}
+      </ProfileRow>
+    ),
+    paymethods: (
+      <ProfileRow label="Payment Methods" sub={subscribed ? "On file with our payment partner" : "None on file"} expanded={openRow==="paymethods"} onToggle={()=>toggle("paymethods")}>
+        <Mono style={{ display:"block", color:C.soft, lineHeight:1.7, marginBottom:subscribed?10:0 }}>
+          {subscribed
+            ? "Card details live with our payment partner, not KROFT. There's no self-serve way to swap the card on an active plan — cancel here, then re-subscribe with the new card."
+            : "Card entry happens through our secure payment partner once you upgrade to KROFT Plus."}
+        </Mono>
+        {subscribed && <Btn sm v="outline" disabled={billingLoading} onClick={onManageBilling}>{billingLoading ? <Spinner size={14} color={C.soft} thickness={2} /> : "Cancel plan"}</Btn>}
+      </ProfileRow>
+    ),
+    usage: (
+      <ProfileRow label="Usage Statistics" sub="Real activity from this session" expanded={openRow==="usage"} onToggle={()=>toggle("usage")}>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:9 }}>
+          {[
+            { l:"Voice turns today", v: voiceTurnsCount, ai:true },
+            { l:"Total AI messages", v: usageStats.totalMessages, ai:true },
+            { l:"Appointments", v: usageStats.appts },
+            { l:"Finance entries", v: usageStats.financeEntries },
+            { l:"Notes", v: usageStats.notes },
+            { l:"Tasks", v: usageStats.tasks },
+          ].map(s => (
+            <div key={s.l} style={{ background:s.ai?C.accentBg:C.surface, borderRadius:12, padding:"10px 12px", border:s.ai?`1px solid ${C.accent}33`:"none" }}>
+              <div style={{ fontSize:18, fontWeight:800, color:s.ai?C.accent:C.white }}>{s.v}</div>
+              <Mono style={{ display:"block", color:C.muted, marginTop:2 }}>{s.l}</Mono>
+            </div>
+          ))}
+        </div>
+      </ProfileRow>
+    ),
+    managesub: (
+      <ProfileRow label="Manage Subscription" sub={subscribed ? "Change or cancel plan" : "You're on the free plan"} expanded={openRow==="managesub"} onToggle={()=>toggle("managesub")}>
+        {subscribed ? (
+          <>
+            <Mono style={{ display:"block", color:C.soft, lineHeight:1.7, marginBottom:10 }}>You're on KROFT Plus. Cancel any time, right here — there's no separate billing site to visit.</Mono>
+            <Btn sm v="outline" disabled={billingLoading} onClick={onManageBilling}>{billingLoading ? <Spinner size={14} color={C.soft} thickness={2} /> : "Cancel plan"}</Btn>
+          </>
+        ) : (
+          <>
+            <Mono style={{ display:"block", color:C.soft, lineHeight:1.7, marginBottom:10 }}>Nothing to manage yet — upgrade to KROFT Plus to remove your daily message limit.</Mono>
+            <Btn sm disabled={billingLoading} onClick={onUpgrade}>{billingLoading ? <Spinner size={14} color={C.black} thickness={2} /> : "Upgrade"}</Btn>
+          </>
+        )}
+      </ProfileRow>
+    ),
+    help: (
+      <ProfileRow label="Help Center" sub="Guides and answers" expanded={openRow==="help"} onToggle={()=>toggle("help")}>
+        <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>Help articles will appear here once connected to Orynthra's support content.</Mono>
+      </ProfileRow>
+    ),
+    report: (
+      <ProfileRow label="Contact Support" sub="Something not working right" expanded={openRow==="report"} onToggle={()=>toggle("report")}>
+        <textarea
+          placeholder="Describe what happened…"
+          rows={3}
+          value={supportMsg}
+          onChange={e => { setSupportMsg(e.target.value); setSupportSent(false); }}
+          style={{ width:"100%", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"10px 12px", color:C.text, fontSize:12, fontFamily:APP_FONT, outline:"none", resize:"vertical", boxSizing:"border-box", marginBottom:8 }}
+        />
+        <Btn
+          sm
+          disabled={!supportMsg.trim()}
+          onClick={() => {
+            window.location.href = `mailto:support@virttechnologies.com?subject=${encodeURIComponent("KROFT support request")}&body=${encodeURIComponent(supportMsg)}`;
+            setSupportSent(true);
+          }}
+        >
+          Send report
+        </Btn>
+        {supportSent && <Mono style={{ display:"block", color:C.soft, marginTop:8 }}>Opening your email app to send this to support@virttechnologies.com.</Mono>}
+      </ProfileRow>
+    ),
+    feature: (
+      <ProfileRow label="Send Feedback" sub="Tell us what to build next" expanded={openRow==="feature"} onToggle={()=>toggle("feature")}>
+        <textarea
+          placeholder="What would make KROFT better?"
+          rows={3}
+          value={feedbackMsg}
+          onChange={e => { setFeedbackMsg(e.target.value); setFeedbackSent(false); }}
+          style={{ width:"100%", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"10px 12px", color:C.text, fontSize:12, fontFamily:APP_FONT, outline:"none", resize:"vertical", boxSizing:"border-box", marginBottom:8 }}
+        />
+        <Btn
+          sm
+          disabled={!feedbackMsg.trim()}
+          onClick={() => {
+            window.location.href = `mailto:feedback@virttechnologies.com?subject=${encodeURIComponent("KROFT feature idea")}&body=${encodeURIComponent(feedbackMsg)}`;
+            setFeedbackSent(true);
+          }}
+        >
+          Submit idea
+        </Btn>
+        {feedbackSent && <Mono style={{ display:"block", color:C.soft, marginTop:8 }}>Opening your email app to send this to feedback@virttechnologies.com.</Mono>}
+      </ProfileRow>
+    ),
+    about: (
+      <ProfileRow label="About Kroft" sub="Version, legal, credits" expanded={openRow==="about"} onToggle={()=>toggle("about")}>
+        <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>KROFT by Orynthra. Your personal AI assistant.</Mono>
+      </ProfileRow>
+    ),
+  };
 
-      <Card style={{ padding:"2px 16px" }}>
-        <ProfileRow label="What's in Plus" sub={subscribed ? "Active" : "Free plan"} expanded={openRow==="plus"} onToggle={()=>toggle("plus")}>
-          {/* The free tier isn't a stripped-down trial — finances, budgets, contacts, notes,
-              recurring transactions, notifications, AI chat, drafts/suggestions and monthly
-              reports are complete and stay free permanently. Plus is specifically about voice
-              (a materially more expensive resource — open-ended spoken conversation) and a
-              handful of real conveniences, not gating basic text usage. */}
-          <div style={{ display:"flex", flexDirection:"column", gap:10, marginBottom:12 }}>
-            {[
-              { t:"Unlimited voice mode", d:`Talk to KROFT as much as you want, hands-free — free plan gets ${voiceLimit} voice turns a day.` },
-              { t:"Budget rollover", d:"Unused budget carries into next month instead of resetting to zero." },
-              { t:"Longer conversation memory", d:"KROFT remembers more of a long conversation — 60 messages of context instead of 20." },
-              { t:"Scheduled reminder calls", d:"Set a time and KROFT rings you in the app, speaks the reminder, and can talk it through if you answer." },
-            ].map(b => (
-              <div key={b.t} style={{ display:"flex", gap:9, alignItems:"flex-start" }}>
-                <Dot color={C.positive} />
-                <div>
-                  <div style={{ fontSize:12.5, fontWeight:600, color:C.text }}>{b.t}</div>
-                  <Mono style={{ color:C.muted, lineHeight:1.5 }}>{b.d}</Mono>
-                </div>
-              </div>
-            ))}
+  // Plan summary shown above the plan's rows.
+  const planSummary = (
+    <Card style={{ marginBottom:16, border:`1px solid ${C.border}` }}>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
+        <div style={{ fontSize:16, fontWeight:800, color:C.white }}>{subscribed ? "KROFT Plus" : "Free Plan"}</div>
+        <Tag tone={subscribed?"positive":undefined}>{subscribed ? "Active" : "Current"}</Tag>
+      </div>
+      {/* Chat, AI drafts/suggestions and monthly reports are unlimited on every plan — nothing
+          to meter. Voice is the one AI pool still worth a real allowance: an open-ended spoken
+          conversation is a materially different resource than a one-shot text call. */}
+      {!subscribed && (() => {
+        const pct = Math.min(100, (voiceTurnsCount/voiceLimit)*100);
+        const barColor = pct>=90?C.negative:pct>=70?C.warning:C.accent;
+        return (
+          <div style={{ marginBottom:11 }}>
+            <div style={{ display:"flex", justifyContent:"space-between", marginBottom:4 }}>
+              <Mono style={{ color:C.soft }}>Voice mode</Mono>
+              <Mono style={{ color:C.muted }}>{voiceTurnsCount}/{voiceLimit} today</Mono>
+            </div>
+            <div style={{ background:C.surface, borderRadius:99, height:6, overflow:"hidden" }}>
+              <div style={{ height:"100%", width:`${pct}%`, background:barColor, borderRadius:99, transition:"width .3s ease" }} />
+            </div>
           </div>
-          <Mono style={{ display:"block", color:C.muted, lineHeight:1.6, marginBottom:12, paddingTop:10, borderTop:`1px solid ${C.div}` }}>
-            Finances, budgets, contacts, notes, tasks, recurring transactions and notifications are complete on the free plan and always will be — Plus is only about the AI calls above.
-          </Mono>
-          {!subscribed && <Btn sm disabled={billingLoading} onClick={onUpgrade}>{billingLoading ? <Spinner size={14} color={C.black} thickness={2} /> : "Upgrade"}</Btn>}
-        </ProfileRow>
-        <ProfileRow label="Billing" sub={subscriptionStatus === "past_due" ? "Renewal failed — action needed" : subscribed ? "Active" : "No payment method on file"} expanded={openRow==="billing"} onToggle={()=>toggle("billing")}>
-          <Mono style={{ display:"block", color:C.soft, lineHeight:1.7, marginBottom:10 }}>
-            {subscriptionStatus === "past_due"
-              ? "Your last renewal charge failed, so Plus access has paused. Resubscribe below to restore it."
-              : subscribed
-              ? "Your subscription and card are held by our secure payment partner, not KROFT. There's no self-serve billing portal — cancel here any time, or contact support for a receipt."
-              : "Upgrading opens a secure checkout — KROFT never sees or stores your card details directly."}
-          </Mono>
-          {subscribed && !autoRenews && (
-            <Mono style={{ display:"block", color:C.muted, lineHeight:1.7, marginBottom:10 }}>
-              Your current payment method doesn't automatically renew — you'll need to manually resubscribe before your current period ends.
-            </Mono>
-          )}
-          {!subscribed && (
-            <Mono style={{ display:"block", color:C.muted, lineHeight:1.7, marginBottom:10 }}>
-              KROFT Plus renews automatically only with a card. Bank transfer, USSD, and mobile money are also accepted at checkout, but those don't auto-renew — you'd need to manually resubscribe each cycle.
-            </Mono>
-          )}
-          {subscribed && <Btn sm v="outline" disabled={billingLoading} onClick={onManageBilling}>{billingLoading ? <Spinner size={14} color={C.soft} thickness={2} /> : "Cancel plan"}</Btn>}
-          {!subscribed && (
-            <Btn sm disabled={billingLoading} onClick={onUpgrade}>{billingLoading ? <Spinner size={14} color={C.black} thickness={2} /> : subscriptionStatus === "past_due" ? "Resubscribe" : "Upgrade"}</Btn>
-          )}
-        </ProfileRow>
-        <ProfileRow label="Payment Methods" sub={subscribed ? "On file with our payment partner" : "None on file"} expanded={openRow==="paymethods"} onToggle={()=>toggle("paymethods")}>
-          <Mono style={{ display:"block", color:C.soft, lineHeight:1.7, marginBottom:subscribed?10:0 }}>
-            {subscribed
-              ? "Card details live with our payment partner, not KROFT. There's no self-serve way to swap the card on an active plan — cancel here, then re-subscribe with the new card."
-              : "Card entry happens through our secure payment partner once you upgrade to KROFT Plus."}
-          </Mono>
-          {subscribed && <Btn sm v="outline" disabled={billingLoading} onClick={onManageBilling}>{billingLoading ? <Spinner size={14} color={C.soft} thickness={2} /> : "Cancel plan"}</Btn>}
-        </ProfileRow>
-        <ProfileRow label="Usage Statistics" sub="Real activity from this session" expanded={openRow==="usage"} onToggle={()=>toggle("usage")}>
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:9 }}>
-            {[
-              { l:"Voice turns today", v: voiceTurnsCount, ai:true },
-              { l:"Total AI messages", v: usageStats.totalMessages, ai:true },
-              { l:"Appointments", v: usageStats.appts },
-              { l:"Finance entries", v: usageStats.financeEntries },
-              { l:"Notes", v: usageStats.notes },
-              { l:"Tasks", v: usageStats.tasks },
-            ].map(s => (
-              <div key={s.l} style={{ background:s.ai?C.accentBg:C.surface, borderRadius:12, padding:"10px 12px", border:s.ai?`1px solid ${C.accent}33`:"none" }}>
-                <div style={{ fontSize:18, fontWeight:800, color:s.ai?C.accent:C.white }}>{s.v}</div>
-                <Mono style={{ display:"block", color:C.muted, marginTop:2 }}>{s.l}</Mono>
-              </div>
-            ))}
-          </div>
-        </ProfileRow>
-        <ProfileRow label="Manage Subscription" sub={subscribed ? "Change or cancel plan" : "You're on the free plan"} expanded={openRow==="managesub"} onToggle={()=>toggle("managesub")}>
-          {subscribed ? (
-            <>
-              <Mono style={{ display:"block", color:C.soft, lineHeight:1.7, marginBottom:10 }}>You're on KROFT Plus. Cancel any time, right here — there's no separate billing site to visit.</Mono>
-              <Btn sm v="outline" disabled={billingLoading} onClick={onManageBilling}>{billingLoading ? <Spinner size={14} color={C.soft} thickness={2} /> : "Cancel plan"}</Btn>
-            </>
-          ) : (
-            <>
-              <Mono style={{ display:"block", color:C.soft, lineHeight:1.7, marginBottom:10 }}>Nothing to manage yet — upgrade to KROFT Plus to remove your daily message limit.</Mono>
-              <Btn sm disabled={billingLoading} onClick={onUpgrade}>{billingLoading ? <Spinner size={14} color={C.black} thickness={2} /> : "Upgrade"}</Btn>
-            </>
-          )}
-        </ProfileRow>
-      </Card>
-    </div>
+        );
+      })()}
+      {subscribed && (
+        <Mono style={{ display:"block", color:C.soft, marginBottom:14 }}>Unlimited chat, voice, drafts and reports.</Mono>
+      )}
+      {subscribed
+        ? <Btn sm v="outline" disabled={billingLoading} onClick={onManageBilling}>{billingLoading ? <Spinner size={14} color={C.soft} thickness={2} /> : "Cancel plan"}</Btn>
+        : <Btn sm disabled={billingLoading} onClick={onUpgrade}>{billingLoading ? <Spinner size={14} color={C.black} thickness={2} /> : "Upgrade to KROFT Plus"}</Btn>}
+    </Card>
   );
 
-  // ── DRILL-DOWN: SUPPORT ──
-  if (screen === "support") return (
-    <div style={{ animation:"fadeUp .25s ease" }}>
-      <ProfileScreenHeader title="Support" onBack={goBack} />
-      <Card style={{ padding:"2px 16px" }}>
-        <ProfileRow label="Help Center" sub="Guides and answers" expanded={openRow==="help"} onToggle={()=>toggle("help")}>
-          <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>Help articles will appear here once connected to Orynthra's support content.</Mono>
-        </ProfileRow>
-        <ProfileRow label="Contact Support" sub="Something not working right" expanded={openRow==="report"} onToggle={()=>toggle("report")}>
-          <textarea
-            placeholder="Describe what happened…"
-            rows={3}
-            value={supportMsg}
-            onChange={e => { setSupportMsg(e.target.value); setSupportSent(false); }}
-            style={{ width:"100%", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"10px 12px", color:C.text, fontSize:12, fontFamily:APP_FONT, outline:"none", resize:"vertical", boxSizing:"border-box", marginBottom:8 }}
-          />
-          <Btn
-            sm
-            disabled={!supportMsg.trim()}
-            onClick={() => {
-              window.location.href = `mailto:support@virttechnologies.com?subject=${encodeURIComponent("KROFT support request")}&body=${encodeURIComponent(supportMsg)}`;
-              setSupportSent(true);
-            }}
-          >
-            Send report
-          </Btn>
-          {supportSent && <Mono style={{ display:"block", color:C.soft, marginTop:8 }}>Opening your email app to send this to support@virttechnologies.com.</Mono>}
-        </ProfileRow>
-        <ProfileRow label="Send Feedback" sub="Tell us what to build next" expanded={openRow==="feature"} onToggle={()=>toggle("feature")}>
-          <textarea
-            placeholder="What would make KROFT better?"
-            rows={3}
-            value={feedbackMsg}
-            onChange={e => { setFeedbackMsg(e.target.value); setFeedbackSent(false); }}
-            style={{ width:"100%", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"10px 12px", color:C.text, fontSize:12, fontFamily:APP_FONT, outline:"none", resize:"vertical", boxSizing:"border-box", marginBottom:8 }}
-          />
-          <Btn
-            sm
-            disabled={!feedbackMsg.trim()}
-            onClick={() => {
-              window.location.href = `mailto:feedback@virttechnologies.com?subject=${encodeURIComponent("KROFT feature idea")}&body=${encodeURIComponent(feedbackMsg)}`;
-              setFeedbackSent(true);
-            }}
-          >
-            Submit idea
-          </Btn>
-          {feedbackSent && <Mono style={{ display:"block", color:C.soft, marginTop:8 }}>Opening your email app to send this to feedback@virttechnologies.com.</Mono>}
-        </ProfileRow>
-        <ProfileRow label="About Kroft" sub="Version, legal, credits" expanded={openRow==="about"} onToggle={()=>toggle("about")}>
-          <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>KROFT by Orynthra. Your personal AI assistant.</Mono>
-        </ProfileRow>
-      </Card>
-    </div>
-  );
+  // The screen each Profile row opens. One with a single setting opens it already expanded —
+  // tapping into a screen only to tap again to reveal its one row is a wasted step.
+  const SCREENS = {
+    personalization: { title:"Personalization", rows:["personality", "prefs"] },
+    memory:          { title:"Memory", rows:["memory"] },
+    connected:       { title:"Connected apps", rows:["cal", "mail", "apps"] },
+    plan:            { title:subscribed ? "KROFT Plus" : "Upgrade plan", top:planSummary, rows:["plus", "billing", "paymethods", "managesub"] },
+    usage:           { title:"Usage and limits", rows:["usage"] },
+    general:         { title:"General", rows:["appearance"] },
+    notifications:   { title:"Notifications", rows:["notifs"] },
+    voice:           { title:"Voice", rows:["voice"] },
+    automations:     { title:"Automations", rows:["auto"] },
+    security:        { title:"Security and login", rows:["faceid", "devices"] },
+    privacy:         { title:"Privacy center", rows:["privacy", "wellnessai"] },
+    data:            { title:"History and data", rows:["data"] },
+    report:          { title:"Report a problem", rows:["report"] },
+    feedback:        { title:"Send feedback", rows:["feature"] },
+    help:            { title:"Help", rows:["help"] },
+    about:           { title:"About", rows:["about"] },
+  };
+  const goTo = key => onNav({ screen:key, openRow:SCREENS[key].rows.length === 1 ? SCREENS[key].rows[0] : null });
+
+  if (screen && SCREENS[screen]) {
+    const s = SCREENS[screen];
+    return (
+      <div style={{ animation:"fadeUp .25s ease" }}>
+        <ProfileScreenHeader title={s.title} onBack={goBack} />
+        {s.top}
+        <Card style={{ padding:"2px 16px" }}>
+          {s.rows.map(k => <Fragment key={k}>{rows[k]}</Fragment>)}
+        </Card>
+      </div>
+    );
+  }
 
   // ── MAIN HUB ──
-  const CATEGORIES = [
-    { key:"ai",           label:"AI & Personalization", sub:"Preferences, memory, voice, appearance" },
-    { key:"productivity",  label:"Productivity",         sub:"Calendar, email, automations" },
-    { key:"privacy",       label:"Privacy & Security",   sub:"Face ID, devices, data" },
-    { key:"subscription",  label:"Subscription",         sub:"KROFT Plus, billing, usage" },
-    { key:"support",       label:"Support",              sub:"Help, feedback, about" },
+  const connectedCount = Object.values(user.connected).filter(Boolean).length;
+  const GROUPS = [
+    { title:"My KROFT", items:[
+      { key:"personalization", icon:"smile", label:"Personalization" },
+      { key:"memory", icon:"book", label:"Memory" },
+      { key:"connected", icon:"apps", label:"Connected apps", value:connectedCount ? `${connectedCount} connected` : "" },
+    ] },
+    { title:"Account", items:[
+      { icon:"briefcase", label:"Business", value:user.businessName || "Personal", onClick:onEditBusinessDetails },
+      subscribed
+        ? { key:"plan", icon:"sparkle", label:"KROFT Plus", value:"Active" }
+        : { key:"plan", icon:"sparkle", label:"Upgrade plan", tone:"accent", value:subscriptionStatus === "past_due" ? "Renewal failed" : "" },
+      { key:"usage", icon:"chart", label:"Usage and limits" },
+      user.email && { icon:"email", label:"Email", detail:user.email },
+      user.phone && { icon:"phone", label:"Phone", detail:user.phone },
+    ].filter(Boolean) },
+    { items:[
+      { key:"general", icon:"gear", label:"General", value:theme === "dark" ? "Dark" : "Light" },
+      { key:"notifications", icon:"reminders", label:"Notifications", value:{ granted:"On", denied:"Blocked", unsupported:"Unavailable" }[notifPermission] || "Off" },
+      { key:"voice", icon:"waveform", label:"Voice", value:voiceReplies ? VOICE_PROFILES[resolveVoiceId(voicePref)].name : "Off" },
+      { key:"automations", icon:"bolt", label:"Automations", value:proactiveInsights ? "On" : "Off" },
+      { key:"security", icon:"shieldUser", label:"Security and login", value:user.webauthnCredentialId ? "Face ID on" : "" },
+      { key:"privacy", icon:"shieldCheck", label:"Privacy center" },
+      { key:"data", icon:"database", label:"History and data", value:isSupabaseConfigured ? "Synced" : "This device" },
+      { key:"report", icon:"bug", label:"Report a problem" },
+      { key:"feedback", icon:"megaphone", label:"Send feedback" },
+      { key:"help", icon:"help", label:"Help" },
+      { key:"about", icon:"info", label:"About" },
+    ] },
   ];
 
   return (
     <div style={{ animation:"fadeUp .25s ease" }}>
-      {/* Header */}
       <div style={{ display:"flex", flexDirection:"column", alignItems:"center", textAlign:"center", marginBottom:28 }}>
-        <div style={{ width:84, height:84, borderRadius:"50%", overflow:"hidden", background:user.photo?`url(${user.photo}) center/cover no-repeat`:C.surface, border:`2px solid ${C.border}`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:28, fontWeight:800, color:C.white, marginBottom:14 }}>
+        <div style={{ width:84, height:84, borderRadius:"50%", overflow:"hidden", background:user.photo?`url(${user.photo}) center/cover no-repeat`:C.surface, border:`2px solid ${C.border}`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:28, fontWeight:700, color:C.white, marginBottom:14 }}>
           {!user.photo && initials}
         </div>
         {editingName ? (
-          <div style={{ width:"100%", maxWidth:260, marginBottom:10 }}>
+          <div style={{ width:"100%", maxWidth:260 }}>
             <Inp autoFocus value={nameDraft} onChange={e=>setNameDraft(e.target.value)}
               onKeyDown={e => { if (e.key==="Enter") saveName(); if (e.key==="Escape") cancelEditName(); }}
               placeholder="What should KROFT call you?" style={{ textAlign:"center", marginBottom:8 }} />
@@ -2632,36 +2771,34 @@ function ProfileSection({ user, onUpdateName, onEditPreferences, onEditBusinessD
             </div>
           </div>
         ) : (
-          <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:3 }}>
-            <div style={{ fontSize:20, fontWeight:800, color:C.white, letterSpacing:-.5 }}>{user.name || "Your name"}</div>
+          <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+            <div style={{ fontSize:22, fontWeight:700, color:C.white, letterSpacing:-.5 }}>{user.name || "Your name"}</div>
             <button onClick={() => { setNameDraft(user.name||""); setEditingName(true); }} aria-label="Edit your name" title="Edit your name"
-              style={{ background:"none", border:"none", cursor:"pointer", padding:4, color:C.muted, display:"flex", alignItems:"center" }}>
-              <NavIcon id="edit" size={14} color={C.muted} />
+              style={{ background:"none", border:"none", cursor:"pointer", padding:4, display:"flex", alignItems:"center" }}>
+              <NavIcon id="edit" size={16} color={C.muted} />
             </button>
           </div>
         )}
-        {!editingName && <Mono style={{ color:C.muted, marginBottom:12 }}>Powered by Orynthra</Mono>}
-        <div style={{ display:"flex", gap:7, flexWrap:"wrap", justifyContent:"center" }}>
-          <Tag tone="positive">Online</Tag>
-          {/* "Synced" claimed cloud sync even in local-only mode, where nothing syncs anywhere
-              — this reflects which one is actually true for this deployment. */}
-          {isSupabaseConfigured ? <Tag tone="accent">Synced</Tag> : <Tag>Local only</Tag>}
-          {user.webauthnCredentialId && <Tag tone="positive">Face ID enabled</Tag>}
-        </div>
       </div>
 
-      {/* Compact category list — tap to drill in, nothing expands inline here */}
-      <Card style={{ padding:"2px 16px", marginBottom:20 }}>
-        {CATEGORIES.map((c, i) => (
-          <ProfileCategoryRow key={c.key} label={c.label} sub={c.sub} onClick={() => goTo(c.key)} isLast={i===CATEGORIES.length-1} />
-        ))}
-      </Card>
+      {GROUPS.map((g, gi) => (
+        <SettingsGroup key={gi} title={g.title}>
+          {g.items.map((it, i) => (
+            <SettingsRow key={it.label} icon={it.icon} label={it.label} value={it.value} detail={it.detail} tone={it.tone}
+              onClick={it.onClick || (it.key ? () => goTo(it.key) : undefined)} isLast={i === g.items.length - 1} />
+          ))}
+        </SettingsGroup>
+      ))}
 
-      <Btn v="outline" full onClick={onSignOut} style={{ padding:"13px", fontSize:13 }}>Sign Out</Btn>
+      <SettingsGroup>
+        <SettingsRow icon="logout" label="Log out" tone="danger" onClick={() => setConfirmLogout(true)} isLast />
+      </SettingsGroup>
+      <Mono style={{ display:"block", textAlign:"center", color:C.muted, marginTop:-8 }}>KROFT by Orynthra</Mono>
+
+      {confirmLogout && <LogoutDialog onCancel={() => setConfirmLogout(false)} onConfirm={onSignOut} />}
     </div>
   );
 }
-
 // Catches runtime errors anywhere in the app tree and shows a recoverable fallback screen
 // instead of letting React unmount everything to a blank white page. Without this, a single
 // bad state access in any one tab (a null contact, a malformed date, etc.) would crash the
@@ -2789,6 +2926,11 @@ function KroftApp({ onFullReset } = {}) {
     appliedTheme.current = theme;
   }
   useEffect(() => { setThemeTick(t => t + 1); }, [theme]);
+  // Which Profile screen is open and which of its rows is expanded. Held here rather than inside
+  // ProfileSection because a theme change remounts everything under key={themeTick} — switching
+  // to dark mode from Profile → General used to throw you back to the Profile hub. Reset when
+  // leaving the Profile tab, so coming back starts at the hub as before.
+  const [profileNav, setProfileNav] = useState({ screen:null, openRow:null });
 
   // Declared before the splash effect below, which reads it — a const referenced above its
   // declaration throws on first render.
@@ -2960,6 +3102,7 @@ function KroftApp({ onFullReset } = {}) {
   const [camStream, setCamStream] = useState(null);
   const [photoSource, setPhotoSource] = useState("");
   const [tab, setTab] = useState("home");
+  useEffect(() => { if (tab !== "profile") setProfileNav({ screen:null, openRow:null }); }, [tab]);
   const [homeSection, setHomeSection] = useState("overview");
   const [workspaceSection, setWorkspaceSection] = useState(null); // null = hub screen
   const [workspaceSearch, setWorkspaceSearch] = useState("");
@@ -10579,6 +10722,7 @@ ${voiceMode
         {tab==="profile" && (
           <div style={{ animation:"fadeUp .4s ease" }}>
             <ProfileSection
+              nav={profileNav} onNav={setProfileNav}
               user={user}
               onUpdateName={name => setUser(u => ({ ...u, name }))}
               // Two different buttons used to share this one callback: "Manage connections"
