@@ -10094,8 +10094,11 @@ ${voiceMode
                   return (
                   <div key={m.id || i} style={{ display:"flex", flexDirection:"column", alignItems:m.role==="user"?"flex-end":"flex-start", animation:"fadeUp .3s ease" }}>
                     <div {...(m.role==="user" ? longPress((x,y) => setCopyPopup({ x, y, content:m.content })) : {})}
-                      style={{ background:m.role==="user"?C.white:C.surface, border:`1px solid ${m.role==="user"?C.soft:C.cardB}`, borderRadius:m.role==="user"?"14px 14px 3px 14px":"14px 14px 14px 3px", padding:"10px 14px", maxWidth:"80%",
-                        ...(m.role==="user" ? { cursor:"pointer", WebkitTouchCallout:"none", WebkitUserSelect:"none", userSelect:"none" } : {}) }}>
+                      // Only the user's own messages sit in a bubble; KROFT's replies are plain
+                      // full-width text, so the answer reads like a page rather than a chat card.
+                      style={m.role==="user"
+                        ? { background:C.white, border:`1px solid ${C.soft}`, borderRadius:"14px 14px 3px 14px", padding:"10px 14px", maxWidth:"80%", cursor:"pointer", WebkitTouchCallout:"none", WebkitUserSelect:"none", userSelect:"none" }
+                        : { padding:"2px 2px", width:"100%", boxSizing:"border-box" }}>
                       {m.role==="assistant" && <Mono style={{ display:"block", color:C.muted, fontSize:9, letterSpacing:.8, marginBottom:5 }}>KROFT</Mono>}
                       {m.attachments?.length > 0 && (
                         <div style={{ display:"flex", flexWrap:"wrap", gap:6, marginBottom:m.content?8:0 }}>
