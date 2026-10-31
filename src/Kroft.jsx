@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo, Component, lazy, Suspense } from "react";
-import { supabase, isSupabaseConfigured } from "./supabaseClient.js";
+import { supabase, isSupabaseConfigured, supabaseUrl, supabaseAnonKey } from "./supabaseClient.js";
 import { fmtCur } from "./charts/format.js";
 
 // A lazy chunk fetched over a flaky mobile connection can fail with a plain network error —
@@ -1213,12 +1213,10 @@ const Tag = ({ children, hi, tone, style, light }) => {
   );
 };
 
-// Both onboarding images are cropped to the phone's screen content only (status bar/notch and
-// home indicator removed), at a fixed 531:949 pixel ratio. This wrapper reproduces
-// object-fit:contain sizing manually (max-width driven by height*ratio, max-height driven by
-// width/ratio) so the rendered box always has that exact same ratio, at any viewport size — which
-// is what makes the percentage-based button overlays in WelcomeScreen line up with the image
-// pixels underneath them regardless of device screen shape.
+// The splash image is cropped to the phone's screen content only (status bar/notch and home
+// indicator removed), at a fixed 531:949 pixel ratio. This wrapper reproduces object-fit:contain
+// sizing manually (max-width driven by height*ratio, max-height driven by width/ratio) so the
+// rendered box keeps that exact ratio at any viewport size.
 const ONBOARD_RATIO = 531 / 949;
 const OnboardImageFrame = ({ children }) => (
   <div style={{ position:"fixed", inset:0, background:"#f4f2ee", display:"flex", alignItems:"center", justifyContent:"center" }}>
@@ -1240,26 +1238,55 @@ function SplashScreen({ fading }) {
   );
 }
 
-// Screen 2 of the onboarding reference — same exact image, plus two invisible clickable overlays
-// positioned (as percentages of the image's own pixel dimensions) exactly over the "Get Started"
-// and "I already have an account" buttons drawn into the picture, so tapping the picture's own
-// buttons triggers real navigation without redrawing them.
-function WelcomeScreen({ onGetStarted, onLogIn }) {
+// The KROFT mark: two stacked rounded bars.
+const KroftMark = ({ size = 50, color = "#14161a" }) => (
+  <svg viewBox="0 0 50 40" width={size} height={size * 0.8} aria-hidden="true" style={{ display:"block" }}>
+    <rect x="0" y="0" width="50" height="18.5" rx="9.25" fill={color} />
+    <rect x="0" y="21.5" width="50" height="18.5" rx="9.25" fill={color} />
+  </svg>
+);
+
+const GoogleG = ({ size = 20 }) => (
+  <svg viewBox="0 0 48 48" width={size} height={size} aria-hidden="true">
+    <path fill="#FFC107" d="M43.6 20.1H42V20H24v8h11.3c-1.6 4.7-6.1 8-11.3 8-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 8 3l5.7-5.7C34 6.1 29.3 4 24 4 13 4 4 13 4 24s9 20 20 20 20-9 20-20c0-1.3-.1-2.6-.4-3.9z" />
+    <path fill="#FF3D00" d="m6.3 14.7 6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 8 3l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z" />
+    <path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2A11.9 11.9 0 0 1 24 36c-5.2 0-9.6-3.3-11.3-7.9l-6.5 5C9.5 39.6 16.2 44 24 44z" />
+    <path fill="#1976D2" d="M43.6 20.1H42V20H24v8h11.3a12 12 0 0 1-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.6-.4-3.9z" />
+  </svg>
+);
+
+// First screen for anyone not signed in. Always light, matching the rest of account creation.
+// Phone and Google both sign in OR create an account (the code/redirect proves who you are
+// either way), so only email needs a separate "Log in" path for returning users.
+function WelcomeScreen({ onPhone, onGoogle, onEmail, onLogIn, googleLoading }) {
+  const pill = { width:"100%", height:52, borderRadius:999, display:"flex", alignItems:"center", justifyContent:"center", gap:12, fontSize:"clamp(13.5px, 4.1vw, 16px)", whiteSpace:"nowrap", fontWeight:600, fontFamily:"'Space Grotesk',sans-serif", cursor:"pointer", border:"none", letterSpacing:-.1 };
+  const lightPill = { ...pill, background:"#f7f8fa", color:"#14161a", boxShadow:"0 6px 16px rgba(40,48,60,.10), 0 1px 0 rgba(255,255,255,.9) inset" };
   return (
-    <div style={{ position:"fixed", inset:0, zIndex:900 }}>
-      <OnboardImageFrame>
-        <img src="/onboarding-screen-2.png" alt="" style={{ width:"100%", height:"100%", display:"block" }} />
-        <button
-          onClick={onGetStarted}
-          aria-label="Get Started"
-          style={{ position:"absolute", left:"6.8%", top:"81.1%", width:"87.1%", height:"7.1%", background:"transparent", border:"none", padding:0, cursor:"pointer" }}
-        />
-        <button
-          onClick={onLogIn}
-          aria-label="I already have an account"
-          style={{ position:"absolute", left:"6.8%", top:"89.8%", width:"87.1%", height:"7.2%", background:"transparent", border:"none", padding:0, cursor:"pointer" }}
-        />
-      </OnboardImageFrame>
+    <div style={{ position:"fixed", inset:0, zIndex:900, overflowY:"auto", background:"linear-gradient(180deg,#e8ebef 0%,#c7ccd3 100%)", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:"28px clamp(14px, 7vw, 30px)" }}>
+      <div style={{ width:"100%", maxWidth:340, background:"linear-gradient(180deg,#f2f3f6 0%,#e6e8ec 100%)", borderRadius:36, padding:"34px clamp(14px, 5vw, 20px) 26px", boxShadow:"0 30px 60px rgba(40,48,60,.22), 0 1px 0 rgba(255,255,255,.8) inset", animation:"stepIn .5s ease" }}>
+        <div style={{ padding:"0 8px" }}>
+          <KroftMark size={50} />
+          <h1 style={{ fontSize:27, fontWeight:700, color:"#14161a", letterSpacing:-.6, margin:"30px 0 8px" }}>Meet Kroft</h1>
+          <p style={{ fontSize:15.5, lineHeight:1.5, color:"#5f6670", margin:"0 0 30px" }}>Your personal AI, built to help you get more out of every day.</p>
+        </div>
+        <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+          <button onClick={onPhone} style={{ ...pill, background:"#14161a", color:"#fff", boxShadow:"0 10px 22px rgba(20,22,26,.28)" }}>
+            <svg viewBox="0 0 24 24" width={19} height={19} aria-hidden="true"><path fill="#fff" d="M6.6 3h2.7c.4 0 .8.3.9.7l1 3.6c.1.4 0 .8-.3 1L9.2 9.8a13 13 0 0 0 5 5l1.5-1.7c.3-.3.7-.4 1-.3l3.6 1c.4.1.7.5.7.9v2.7c0 1-.8 1.8-1.8 1.8C10.4 19.2 3.8 12.6 3.8 4.8 3.8 3.8 4.6 3 5.6 3z" /></svg>
+            Continue with phone number
+          </button>
+          <button onClick={onGoogle} disabled={googleLoading} style={{ ...lightPill, cursor:googleLoading?"wait":"pointer" }}>
+            {googleLoading ? <Spinner size={18} color="#14161a" thickness={2} /> : <GoogleG size={20} />}
+            Continue with Google
+          </button>
+          <button onClick={onEmail} style={lightPill}>
+            <svg viewBox="0 0 24 24" width={21} height={21} aria-hidden="true"><rect x="2" y="5" width="20" height="14" rx="2" fill="#14161a" /><path d="M3.2 6.4 12 13l8.8-6.6" stroke="#f7f8fa" strokeWidth="1.7" fill="none" strokeLinejoin="round" /></svg>
+            Sign up with email
+          </button>
+        </div>
+      </div>
+      <button onClick={onLogIn} style={{ marginTop:22, background:"none", border:"none", cursor:"pointer", fontFamily:"'Space Grotesk',sans-serif", fontSize:14, color:"#4a5059" }}>
+        Already have an account? <span style={{ color:"#14161a", fontWeight:700, textDecoration:"underline" }}>Log in</span>
+      </button>
     </div>
   );
 }
@@ -1420,7 +1447,7 @@ const OSTEP_LABELS = ["Photo","Business","Prefs","Ready"];
 function OShell({ step, children, hideProgress, light }) {
   const oc = light ? LIGHT : C;
   const idx = OSTEPS.indexOf(step);
-  const showBar = !hideProgress && !["login","signup","reset-password"].includes(step);
+  const showBar = !hideProgress && !["login","signup","reset-password","phone"].includes(step);
   const barIdx = Math.max(0, idx - 2);
   const pct = showBar ? Math.round((barIdx / (OSTEP_LABELS.length - 1)) * 100) : 0;
   return (
@@ -2860,6 +2887,14 @@ function KroftApp({ onFullReset } = {}) {
   // True while a signup/login request to Supabase Auth is in flight, so the button can show a
   // spinner and can't be double-submitted by an impatient extra click.
   const [authLoading, setAuthLoading] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
+  // Phone sign-in runs as one "phone" step in three stages: enter the number, enter the texted
+  // code, then (new accounts only) say what KROFT should call you.
+  const [phoneStage, setPhoneStage] = useState("number");
+  const [phoneInput, setPhoneInput] = useState("");
+  const [otpInput, setOtpInput] = useState("");
+  const [phoneError, setPhoneError] = useState("");
+  const [phoneLoading, setPhoneLoading] = useState(false);
   const [user, setUser] = useState({ name:"", email:"", password:"", phone:"", photo:null, businessName:"", businessType:"", currency:"USD", connected:{gmail:false,calendar:false,uber:false,outlookMail:false,outlookCalendar:false} });
   // Real Google connection state, as reported by api/google/status.js — the actual source of
   // truth for whether Gmail/Calendar are linked. user.connected.gmail/.calendar (persisted,
@@ -3377,13 +3412,34 @@ function KroftApp({ onFullReset } = {}) {
       // means a returning, still-signed-in user — skip straight to their dashboard once their
       // data loads, rather than making them log in again on every reload.
       let hasSession = false;
+      let returnedFromGoogle = false;
+      let authUser = null;
       if (isSupabaseConfigured) {
+        // Coming back from Google sign-in: Supabase puts the new session's tokens (or an error,
+        // e.g. if they backed out) in the URL hash. detectSessionInUrl is off in
+        // supabaseClient.js, so establish the session by hand — same approach as the
+        // password-reset link below, which carries type=recovery and is left to that handler.
+        const hash = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+        const query = new URLSearchParams(window.location.search);
+        const oauthError = hash.get("error_description") || query.get("error_description");
+        if (oauthError) {
+          window.history.replaceState({}, "", window.location.pathname);
+          toast(/denied|cancel/i.test(oauthError) ? "Google sign-in was cancelled." : "Google sign-in didn't work. Try again.");
+        } else if (hash.get("access_token") && hash.get("refresh_token") && hash.get("type") !== "recovery") {
+          const { error } = await supabase.auth.setSession({ access_token: hash.get("access_token"), refresh_token: hash.get("refresh_token") });
+          window.history.replaceState({}, "", window.location.pathname + window.location.search);
+          if (error) toast("That sign-in link has expired. Try again.");
+          else returnedFromGoogle = true;
+        }
         const { data: { session } = {} } = await supabase.auth.getSession();
         hasSession = !!session;
+        authUser = session?.user || null;
       }
       const data = await hydrateAllGroups();
       if (cancelled) return;
-      if (hasSession) {
+      if (returnedFromGoogle) {
+        routeAfterExternalSignIn(data, authUser);
+      } else if (hasSession) {
         setStep("dashboard");
       } else if (!isSupabaseConfigured) {
         // Local-only mode (no Supabase configured): fall back to this app's original
@@ -4556,6 +4612,85 @@ function KroftApp({ onFullReset } = {}) {
       if (notifPermission === "granted") subscribeToPush(authedFetch);
     }
   }, [step]);
+
+  // Which sign-in methods the Supabase project actually has switched on. Google and phone each
+  // need setup on the Supabase side (a Google OAuth client; an SMS provider), and starting either
+  // one while it's off fails badly — Google lands on a raw JSON error page from Supabase. GoTrue
+  // serves this publicly, so it's checked before starting either flow, once per session.
+  const authSettingsRef = useRef(null);
+  const getAuthSettings = async () => {
+    if (authSettingsRef.current) return authSettingsRef.current;
+    try {
+      const res = await fetch(`${supabaseUrl}/auth/v1/settings`, { headers:{ apikey:supabaseAnonKey } });
+      if (!res.ok) return null;
+      authSettingsRef.current = await res.json();
+      return authSettingsRef.current;
+    } catch { return null; }
+  };
+
+  // After Google or phone sign-in: a returning account goes straight to its dashboard; a new one
+  // (no saved profile yet) gets its name/email/phone filled in from the sign-in and goes through
+  // onboarding like an email signup would. Phone sign-in doesn't come with a name, so it asks.
+  const routeAfterExternalSignIn = (data, authUser) => {
+    const savedName = data?.profile?.user?.name;
+    if (savedName) { setStep("dashboard"); toast(`Welcome back, ${firstNameOf(savedName)||"there"}.`); return; }
+    const meta = authUser?.user_metadata || {};
+    const name = meta.full_name || meta.name || "";
+    setUser(u => ({ ...u, name: u.name || name, email: u.email || authUser?.email || "", phone: u.phone || (authUser?.phone ? `+${authUser.phone}` : "") }));
+    setEditingFromProfile(false);
+    if (name) setStep("photo");
+    else { setPhoneStage("name"); setPhoneError(""); setStep("phone"); }
+  };
+
+  const signInWithGoogle = async () => {
+    if (!isSupabaseConfigured) { toast("Google sign-in isn't available in local-only mode. Use email instead."); return; }
+    setGoogleLoading(true);
+    const settings = await getAuthSettings();
+    if (settings && !settings.external?.google) { setGoogleLoading(false); toast("Google sign-in isn't set up yet. Use your phone number or email for now."); return; }
+    // Leaves the app for Google; the return trip (tokens in the URL hash) is picked up by the
+    // mount-time effect, since supabaseClient.js has detectSessionInUrl turned off.
+    const { error } = await supabase.auth.signInWithOAuth({ provider:"google", options:{ redirectTo: window.location.origin } });
+    if (error) { setGoogleLoading(false); toast("Couldn't start Google sign-in. Try again."); }
+  };
+
+  const openPhoneSignIn = () => {
+    if (!isSupabaseConfigured) { toast("Phone sign-in isn't available in local-only mode. Use email instead."); return; }
+    setPhoneStage("number"); setOtpInput(""); setPhoneError(""); setStep("phone");
+  };
+
+  // Keeps digits and a single leading "+", so "+234 801-234 5678" becomes "+2348012345678".
+  const normalizePhone = s => { const t = s.trim(); return (t.startsWith("+") ? "+" : "") + t.replace(/\D/g, ""); };
+
+  const sendPhoneCode = async () => {
+    const phone = normalizePhone(phoneInput);
+    if (!/^\+\d{8,15}$/.test(phone)) { setPhoneError("Enter your number with its country code, e.g. +234 801 234 5678."); return; }
+    setPhoneLoading(true); setPhoneError("");
+    const settings = await getAuthSettings();
+    if (settings && !settings.external?.phone) { setPhoneLoading(false); setPhoneError("Phone sign-in isn't set up yet. Use Google or email for now."); return; }
+    const { error } = await supabase.auth.signInWithOtp({ phone });
+    setPhoneLoading(false);
+    if (error) { setPhoneError(error.message || "Couldn't send the code. Try again."); return; }
+    if (phoneStage === "code") toast("New code sent.");
+    setOtpInput(""); setPhoneStage("code");
+  };
+
+  const verifyPhoneCode = async () => {
+    const token = otpInput.replace(/\D/g, "");
+    if (token.length !== 6) { setPhoneError("Enter the 6-digit code we texted you."); return; }
+    setPhoneLoading(true); setPhoneError("");
+    const { data, error } = await supabase.auth.verifyOtp({ phone: normalizePhone(phoneInput), token, type:"sms" });
+    if (error) { setPhoneLoading(false); setPhoneError(error.message || "That code didn't work. Check it and try again."); return; }
+    // The mount-time load ran before anyone was signed in — load this account's data for real.
+    const loaded = await hydrateAllGroups();
+    setPhoneLoading(false);
+    routeAfterExternalSignIn(loaded, data.user);
+  };
+
+  const finishPhoneName = () => {
+    if (!user.name?.trim()) { setPhoneError("Tell KROFT what to call you."); return; }
+    setUser(u => ({ ...u, name: u.name.trim() }));
+    setPhoneError(""); setStep("photo");
+  };
 
   const doSignup = async () => {
     if (!user.name||!user.email||!signupPw) { setSignupError("Please fill in all required fields."); return; }
@@ -6947,12 +7082,88 @@ ${voiceMode
   // signup screen, zeroed finances) for a returning user whose real data just hasn't arrived.
   if (showSplash || !dataLoaded) return <SplashScreen fading={splashFading && dataLoaded} />;
 
+  // Rendered on both the signed-in dashboard and the sign-in/onboarding screens — it used to live
+  // only in the dashboard view, so every toast fired before sign-in (e.g. "Check your email to
+  // confirm your account") silently never appeared.
+  // Above every overlay, including voice mode (1200). Toasts carry the undo for an action KROFT
+  // just took — and a misheard amount is far likelier by voice than by typing, so burying the
+  // undo behind the voice overlay hid it exactly where it mattered most. aria-live so toasts are
+  // announced rather than shown only; "polite" waits for a pause instead of cutting across
+  // whatever is being read.
+  const toastStack = (
+    <div role="status" aria-live="polite" aria-atomic="false"
+      style={{ position:"fixed", top:14, right:14, zIndex:1400, display:"flex", flexDirection:"column", gap:7, maxWidth:300 }}>
+      {toasts.map(t => (
+        <div key={t.id} style={{ background:C.card, border:`1px solid ${C.accent}44`, borderRadius:14, padding:"9px 14px", animation:"slideIn .3s ease", boxShadow:`0 8px 28px rgba(0,0,0,.7), 0 0 0 1px ${C.accentBg}` }}>
+          <div style={{ display:"flex", alignItems:"center", gap:7 }}>
+            <Dot color={C.accent} />
+            <div style={{ fontSize:11, color:C.white, lineHeight:1.4, fontFamily:"'Space Grotesk',sans-serif", flex:1 }}>{t.msg}</div>
+            {t.onUndo && (
+              <button onClick={() => { t.onUndo(); setToasts(p => p.filter(x => x.id !== t.id)); }} style={{ background:"none", border:"none", color:C.accent, fontSize:11, fontWeight:700, fontFamily:"'Space Grotesk',sans-serif", cursor:"pointer", padding:"4px 2px", flexShrink:0 }}>Undo</button>
+            )}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+
   if (step !== "dashboard") return (
     <div key={themeTick} style={{ fontFamily:"'Space Grotesk',sans-serif", overflowX:"hidden", maxWidth:"100vw", touchAction:"pan-y" }}>
       <style>{G}</style>
+      {toastStack}
 
       {step === "welcome" && (
-        <WelcomeScreen onGetStarted={() => setStep("signup")} onLogIn={() => setStep("login")} />
+        <WelcomeScreen onPhone={openPhoneSignIn} onGoogle={signInWithGoogle} onEmail={() => setStep("signup")} onLogIn={() => setStep("login")} googleLoading={googleLoading} />
+      )}
+
+      {step === "phone" && (
+        <OShell step="phone" light>
+          <div style={{ marginBottom:22 }}>
+            <div style={{ marginBottom:22 }}><KroftMark size={44} color={LIGHT.white} /></div>
+            <h1 style={{ fontSize:27, fontWeight:800, color:LIGHT.white, letterSpacing:-1, marginBottom:6 }}>
+              {phoneStage==="number" ? "Your phone number" : phoneStage==="code" ? "Enter your code" : "What should KROFT call you?"}
+            </h1>
+            <Mono light style={{ display:"block", color:LIGHT.muted, lineHeight:1.6 }}>
+              {phoneStage==="number" ? "We'll text you a 6-digit code to sign in or create your account."
+                : phoneStage==="code" ? `Sent to ${normalizePhone(phoneInput)}.`
+                : "Your first name is fine. You can change it later in Profile."}
+            </Mono>
+          </div>
+          {phoneStage==="number" && (
+            <Inp light type="tel" inputMode="tel" autoComplete="tel" placeholder="+234 801 234 5678" value={phoneInput}
+              onChange={e => { setPhoneInput(e.target.value); setPhoneError(""); }} onKeyDown={e => e.key==="Enter" && sendPhoneCode()} />
+          )}
+          {phoneStage==="code" && (
+            <Inp light inputMode="numeric" autoComplete="one-time-code" placeholder="123456" value={otpInput}
+              onChange={e => { setOtpInput(e.target.value.replace(/\D/g, "").slice(0, 6)); setPhoneError(""); }} onKeyDown={e => e.key==="Enter" && verifyPhoneCode()}
+              style={{ fontSize:22, letterSpacing:8, textAlign:"center" }} />
+          )}
+          {phoneStage==="name" && (
+            <Inp light autoComplete="given-name" placeholder="Your name" value={user.name||""}
+              onChange={e => { setUser(u => ({ ...u, name:e.target.value })); setPhoneError(""); }} onKeyDown={e => e.key==="Enter" && finishPhoneName()} />
+          )}
+          {phoneError && (
+            <div role="alert" style={{ background:LIGHT.fill, border:`1px solid ${LIGHT.border}`, borderRadius:8, padding:"9px 13px", marginTop:10 }}>
+              <Mono light style={{ color:LIGHT.soft, lineHeight:1.5 }}>{phoneError}</Mono>
+            </div>
+          )}
+          <Btn light full disabled={phoneLoading} style={{ padding:"13px", fontSize:14, marginTop:14 }}
+            onClick={phoneStage==="number" ? sendPhoneCode : phoneStage==="code" ? verifyPhoneCode : finishPhoneName}>
+            {phoneLoading ? <><Spinner size={16} color={LIGHT.black} thickness={2} />{phoneStage==="number" ? "Sending…" : "Checking…"}</>
+              : phoneStage==="number" ? "Send code" : phoneStage==="code" ? "Verify" : "Continue"}
+          </Btn>
+          {phoneStage==="code" && (
+            <div style={{ display:"flex", justifyContent:"space-between", marginTop:14 }}>
+              <Mono light style={{ color:LIGHT.muted, cursor:"pointer", textDecoration:"underline" }} onClick={() => { setPhoneStage("number"); setOtpInput(""); setPhoneError(""); }}>Use a different number</Mono>
+              <Mono light style={{ color:LIGHT.muted, cursor:phoneLoading?"wait":"pointer", textDecoration:"underline" }} onClick={() => !phoneLoading && sendPhoneCode()}>Resend code</Mono>
+            </div>
+          )}
+          {phoneStage==="number" && (
+            <div style={{ textAlign:"center", marginTop:16 }}>
+              <Mono light style={{ color:LIGHT.muted, cursor:"pointer", textDecoration:"underline" }} onClick={() => { setPhoneError(""); setStep("welcome"); }}>Back</Mono>
+            </div>
+          )}
+        </OShell>
       )}
 
       {step === "login" && (
@@ -7039,9 +7250,12 @@ ${voiceMode
             <div style={{ flex:1, height:1, background:C.border }} /><Mono style={{ color:C.muted }}>or</Mono><div style={{ flex:1, height:1, background:C.border }} />
           </div>
           <div style={{ display:"flex", gap:9 }}>
-            {[{l:"Google",e:"user@gmail.com"},{l:"Apple",e:"user@icloud.com"}].map(s => (
-              <button key={s.l} onClick={() => { setUser(u => ({...u, email:s.e})); setStep("signup"); }} style={{ flex:1, background:C.surface, border:`1px solid ${C.muted}`, borderRadius:12, padding:"10px", cursor:"pointer", color:C.white, fontSize:12, fontWeight:600, fontFamily:"'Space Grotesk',sans-serif" }} onMouseEnter={e => e.currentTarget.style.borderColor=C.white} onMouseLeave={e => e.currentTarget.style.borderColor=C.muted}>
-                {s.l}
+            {[
+              { l:"Google", icon:googleLoading ? <Spinner size={14} color={C.white} thickness={2} /> : <GoogleG size={15} />, onClick:signInWithGoogle, disabled:googleLoading },
+              { l:"Phone", icon:<svg viewBox="0 0 24 24" width={14} height={14} aria-hidden="true"><path fill={C.white} d="M6.6 3h2.7c.4 0 .8.3.9.7l1 3.6c.1.4 0 .8-.3 1L9.2 9.8a13 13 0 0 0 5 5l1.5-1.7c.3-.3.7-.4 1-.3l3.6 1c.4.1.7.5.7.9v2.7c0 1-.8 1.8-1.8 1.8C10.4 19.2 3.8 12.6 3.8 4.8 3.8 3.8 4.6 3 5.6 3z" /></svg>, onClick:openPhoneSignIn },
+            ].map(s => (
+              <button key={s.l} onClick={s.onClick} disabled={s.disabled} style={{ flex:1, display:"flex", alignItems:"center", justifyContent:"center", gap:8, background:C.surface, border:`1px solid ${C.muted}`, borderRadius:12, padding:"10px", cursor:s.disabled?"wait":"pointer", color:C.white, fontSize:12, fontWeight:600, fontFamily:"'Space Grotesk',sans-serif" }} onMouseEnter={e => e.currentTarget.style.borderColor=C.white} onMouseLeave={e => e.currentTarget.style.borderColor=C.muted}>
+                {s.icon}{s.l}
               </button>
             ))}
           </div>
@@ -7618,27 +7832,7 @@ ${voiceMode
         />
       )}
 
-      {/* Above every overlay, including voice mode (1200). Toasts carry the undo for an action
-          KROFT just took — and a misheard amount is far likelier by voice than by typing, so
-          burying the undo behind the voice overlay hid it exactly where it mattered most. */}
-      {/* aria-live so toasts are announced rather than shown only. These carry undo prompts and
-          budget warnings — a screen reader user previously got no signal that a destructive
-          action had happened, let alone that it could be reversed. "polite" waits for a pause
-          instead of cutting across whatever is being read. */}
-      <div role="status" aria-live="polite" aria-atomic="false"
-        style={{ position:"fixed", top:14, right:14, zIndex:1400, display:"flex", flexDirection:"column", gap:7, maxWidth:300 }}>
-        {toasts.map(t => (
-          <div key={t.id} style={{ background:C.card, border:`1px solid ${C.accent}44`, borderRadius:14, padding:"9px 14px", animation:"slideIn .3s ease", boxShadow:`0 8px 28px rgba(0,0,0,.7), 0 0 0 1px ${C.accentBg}` }}>
-            <div style={{ display:"flex", alignItems:"center", gap:7 }}>
-              <Dot color={C.accent} />
-              <div style={{ fontSize:11, color:C.white, lineHeight:1.4, fontFamily:"'Space Grotesk',sans-serif", flex:1 }}>{t.msg}</div>
-              {t.onUndo && (
-                <button onClick={() => { t.onUndo(); setToasts(p => p.filter(x => x.id !== t.id)); }} style={{ background:"none", border:"none", color:C.accent, fontSize:11, fontWeight:700, fontFamily:"'Space Grotesk',sans-serif", cursor:"pointer", padding:"4px 2px", flexShrink:0 }}>Undo</button>
-              )}
-            </div>
-          </div>
-        ))}
-      </div>
+      {toastStack}
 
       {showConfetti && <Confetti onDone={() => setShowConfetti(false)} />}
 
