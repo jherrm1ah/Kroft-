@@ -2206,6 +2206,95 @@ function SettingsGroup({ title, children }) {
   );
 }
 
+const MicrosoftLogo = ({ size = 22 }) => (
+  <svg viewBox="0 0 22 22" width={size} height={size} aria-hidden="true">
+    <rect x="0" y="0" width="10" height="10" fill="#F25022" /><rect x="12" y="0" width="10" height="10" fill="#7FBA00" />
+    <rect x="0" y="12" width="10" height="10" fill="#00A4EF" /><rect x="12" y="12" width="10" height="10" fill="#FFB900" />
+  </svg>
+);
+
+// Profile → Connected apps: where email and calendar accounts are linked and unlinked. One card
+// per provider, because a single Google (or Microsoft) sign-in grants mail and calendar together
+// (see GOOGLE_SCOPES / MICROSOFT_SCOPES in api/_lib) — so Connect and Disconnect act on the whole
+// account. Each card lists exactly what that grant lets KROFT do, matching the scopes requested.
+function ConnectedApps({ google, microsoft }) {
+  const providers = [
+    { name:"Google", logo:<GoogleG size={24} />, ...google,
+      services:[["Gmail", google.status.gmail], ["Google Calendar", google.status.calendar]],
+      // [what it allows, whether that part was granted — null for parts of every grant]
+      permissions:[["Read your Gmail inbox", google.status.gmail], ["Send emails you write or confirm in KROFT", google.status.gmail],
+        ["See your Google Calendar", google.status.calendar], ["Add events you create in KROFT to that calendar", google.status.calendar]],
+      disconnectNote:"Disconnecting removes KROFT's access and revokes it with Google." },
+    { name:"Microsoft", logo:<MicrosoftLogo size={22} />, ...microsoft,
+      services:[["Outlook Mail", microsoft.status.mail], ["Outlook Calendar", microsoft.status.calendar]],
+      permissions:[["Read your Outlook inbox", microsoft.status.mail], ["Send emails you write or confirm in KROFT", microsoft.status.mail],
+        ["See your Outlook calendar and add events you create in KROFT", microsoft.status.calendar], ["Your name and email address", null], ["Stay connected without signing in again", null]],
+      disconnectNote:"Disconnecting deletes KROFT's access. To also remove KROFT from your Microsoft account, visit myaccount.microsoft.com/consent." },
+  ];
+  return (
+    <div>
+      <p style={{ fontSize:14.5, lineHeight:1.55, color:C.soft, margin:"0 4px 18px" }}>
+        Link an account so KROFT can work with your real email and calendar. You approve access on Google's or Microsoft's own sign-in page, and you can disconnect any time.
+      </p>
+      {!isSupabaseConfigured && (
+        <div style={{ background:C.fill, border:`1px solid ${C.border}`, borderRadius:14, padding:"11px 14px", marginBottom:14, fontSize:13.5, color:C.soft, lineHeight:1.5 }}>
+          Connecting accounts needs a signed-in KROFT account. This copy is running in local-only mode.
+        </div>
+      )}
+      {providers.map(p => {
+        const on = p.services.filter(([, v]) => v).map(([n]) => n);
+        const connected = on.length > 0;
+        const partial = connected && on.length < p.services.length;
+        return (
+          <div key={p.name} style={{ background:C.card, border:`1px solid ${C.cardB}`, borderRadius:24, padding:"18px 18px 16px", marginBottom:14 }}>
+            <div style={{ display:"flex", alignItems:"center", gap:13 }}>
+              <div style={{ width:44, height:44, borderRadius:"50%", background:C.surface, border:`1px solid ${C.cardB}`, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>{p.logo}</div>
+              <div style={{ flex:1, minWidth:0 }}>
+                <div style={{ fontSize:16.5, fontWeight:600, color:C.text }}>{p.name}</div>
+                <div style={{ fontSize:13.5, color:connected ? C.positive : C.muted, marginTop:1 }}>{connected ? `Connected · ${on.join(" and ")}` : "Not connected"}</div>
+              </div>
+              <Btn sm v={connected ? "outline" : "solid"} disabled={!isSupabaseConfigured || p.linking} onClick={connected ? p.disconnect : p.connect} style={{ flexShrink:0 }}>
+                {p.linking ? <Spinner size={14} color={connected ? C.soft : C.black} thickness={2} /> : connected ? "Disconnect" : "Connect"}
+              </Btn>
+            </div>
+            {partial && (
+              <div style={{ fontSize:13, color:C.warning, lineHeight:1.5, marginTop:10 }}>
+                {p.services.filter(([, v]) => !v).map(([n]) => n).join(" and ")} wasn't allowed. Disconnect and connect again, and tick it on the permissions page to add it.
+              </div>
+            )}
+            <div style={{ borderTop:`1px solid ${C.div}`, marginTop:14, paddingTop:12 }}>
+              <div style={{ fontSize:13, fontWeight:600, color:C.muted, marginBottom:8 }}>{connected ? "KROFT can" : "Connecting lets KROFT"}</div>
+              {p.permissions.map(([t, granted]) => {
+                // Once connected, a part the person didn't allow is shown as not allowed rather
+                // than ticked — the list says what KROFT can actually do right now.
+                const missing = connected && granted === false;
+                return (
+                  <div key={t} style={{ display:"flex", gap:9, alignItems:"flex-start", marginBottom:6 }}>
+                    <svg viewBox="0 0 24 24" width={16} height={16} aria-hidden="true" style={{ flexShrink:0, marginTop:2 }}>
+                      {missing
+                        ? <path d="M7 7l10 10M17 7 7 17" stroke={C.muted} strokeWidth="2" fill="none" strokeLinecap="round" />
+                        : <path d="m5 12.5 4.5 4.5L19 7.5" stroke={connected ? C.positive : C.muted} strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round" />}
+                    </svg>
+                    <span style={{ fontSize:14, color:missing ? C.muted : C.text, lineHeight:1.45 }}>{t}{missing ? " (not allowed)" : ""}</span>
+                  </div>
+                );
+              })}
+              {connected && <div style={{ fontSize:12.5, color:C.muted, lineHeight:1.5, marginTop:8 }}>{p.disconnectNote}</div>}
+            </div>
+          </div>
+        );
+      })}
+      <div style={{ background:C.card, border:`1px solid ${C.cardB}`, borderRadius:24, padding:"16px 18px", display:"flex", alignItems:"center", gap:13 }}>
+        <div style={{ width:44, height:44, borderRadius:"50%", background:"#000", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, color:"#fff", fontSize:12, fontWeight:700, letterSpacing:-.2 }}>Uber</div>
+        <div style={{ flex:1, minWidth:0 }}>
+          <div style={{ fontSize:16.5, fontWeight:600, color:C.text }}>Uber</div>
+          <div style={{ fontSize:13.5, color:C.muted, lineHeight:1.45, marginTop:1 }}>No connection needed. KROFT opens Uber with your destination filled in, and you book there.</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // Confirmation before signing out. Logging out of a synced account ends the session on this
 // device, so it asks first rather than acting on a single stray tap.
 function LogoutDialog({ onConfirm, onCancel }) {
@@ -2284,7 +2373,7 @@ function ProfileSwitch({ value, onChange }) {
   );
 }
 
-function ProfileSection({ nav, onNav, user, onUpdateName, onEditPreferences, onEditBusinessDetails, onSignOut, theme, onToggleTheme, toast, subscribed, subscriptionStatus, autoRenews, billingLoading, onUpgrade, onManageBilling, usageStats, voiceReplies, onSetVoiceReplies, proactiveInsights, onSetProactiveInsights, wellnessAiContext, onSetWellnessAiContext, voicePref, onSetVoicePref, voiceSpeed, onSetVoiceSpeed, onSetupBiometric, onRemoveBiometric, onExportData, onImportData, notifPermission, notifPrefs, onEnableNotifications, onSetNotifPref, onTestNotification, voiceTurnsCount, voiceLimit }) {
+function ProfileSection({ nav, onNav, connections, user, onUpdateName, onEditBusinessDetails, onSignOut, theme, onToggleTheme, toast, subscribed, subscriptionStatus, autoRenews, billingLoading, onUpgrade, onManageBilling, usageStats, voiceReplies, onSetVoiceReplies, proactiveInsights, onSetProactiveInsights, wellnessAiContext, onSetWellnessAiContext, voicePref, onSetVoicePref, voiceSpeed, onSetVoiceSpeed, onSetupBiometric, onRemoveBiometric, onExportData, onImportData, notifPermission, notifPrefs, onEnableNotifications, onSetNotifPref, onTestNotification, voiceTurnsCount, voiceLimit }) {
   // nav.screen is null for the main hub, otherwise a key of SCREENS below. Held in KroftApp (see
   // profileNav there) so it survives the remount a theme change triggers.
   const { screen, openRow } = nav;
@@ -2414,21 +2503,6 @@ function ProfileSection({ nav, onNav, user, onUpdateName, onEditPreferences, onE
             </Mono>
           </>
         )}
-      </ProfileRow>
-    ),
-    cal: (
-      <ProfileRow label="Calendar Connections" sub={[user.connected.calendar&&"Google Calendar",user.connected.outlookCalendar&&"Outlook Calendar"].filter(Boolean).join(" + ")||"Not linked"} expanded={openRow==="cal"} onToggle={()=>toggle("cal")}>
-        <Btn sm v="outline" onClick={onEditPreferences}>Manage connections</Btn>
-      </ProfileRow>
-    ),
-    mail: (
-      <ProfileRow label="Email Accounts" sub={[user.connected.gmail&&"Gmail",user.connected.outlookMail&&"Outlook"].filter(Boolean).join(" + ")||"Not linked"} expanded={openRow==="mail"} onToggle={()=>toggle("mail")}>
-        <Btn sm v="outline" onClick={onEditPreferences}>Manage connections</Btn>
-      </ProfileRow>
-    ),
-    apps: (
-      <ProfileRow label="Linked Apps" sub={`${Object.values(user.connected).filter(Boolean).length} connected`} expanded={openRow==="apps"} onToggle={()=>toggle("apps")}>
-        <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>Gmail, Google Calendar, Outlook Mail and Outlook Calendar can each be linked from Preferences. Uber works automatically — no linking needed.</Mono>
       </ProfileRow>
     ),
     auto: (
@@ -2655,7 +2729,7 @@ function ProfileSection({ nav, onNav, user, onUpdateName, onEditPreferences, onE
   // The screen each Profile row opens. One with a single setting opens it already expanded —
   // tapping into a screen only to tap again to reveal its one row is a wasted step.
   const SCREENS = {
-    connected:       { title:"Connected apps", rows:["cal", "mail", "apps"] },
+    connected:       { title:"Connected apps", body:<ConnectedApps google={connections.google} microsoft={connections.microsoft} />, rows:[] },
     plan:            { title:subscribed ? "KROFT Plus" : "Upgrade plan", top:planSummary, rows:["plus", "billing", "paymethods", "managesub"] },
     usage:           { title:"Usage and limits", rows:["usage"] },
     general:         { title:"General", rows:["appearance"] },
@@ -2676,15 +2750,19 @@ function ProfileSection({ nav, onNav, user, onUpdateName, onEditPreferences, onE
       <div style={{ animation:"fadeUp .25s ease" }}>
         <ProfileScreenHeader title={s.title} onBack={goBack} />
         {s.top}
-        <Card style={{ padding:"2px 16px" }}>
-          {s.rows.map(k => <Fragment key={k}>{rows[k]}</Fragment>)}
-        </Card>
+        {s.body}
+        {s.rows.length > 0 && (
+          <Card style={{ padding:"2px 16px" }}>
+            {s.rows.map(k => <Fragment key={k}>{rows[k]}</Fragment>)}
+          </Card>
+        )}
       </div>
     );
   }
 
   // ── MAIN HUB ──
-  const connectedCount = Object.values(user.connected).filter(Boolean).length;
+  const g = connections.google.status, m = connections.microsoft.status;
+  const connectedCount = [g.gmail || g.calendar, m.mail || m.calendar].filter(Boolean).length;
   const GROUPS = [
     { title:"Account", items:[
       { icon:"briefcase", label:"Business", value:`${user.businessName || "Personal"} · ${user.currency}`, onClick:onEditBusinessDetails },
@@ -3057,7 +3135,11 @@ function KroftApp({ onFullReset } = {}) {
   const [camStream, setCamStream] = useState(null);
   const [photoSource, setPhotoSource] = useState("");
   const [tab, setTab] = useState("home");
-  useEffect(() => { if (tab !== "profile") setProfileNav({ screen:null, openRow:null }); }, [tab]);
+  const prevTab = useRef(tab);
+  useEffect(() => {
+    if (prevTab.current === "profile" && tab !== "profile") setProfileNav({ screen:null, openRow:null });
+    prevTab.current = tab;
+  }, [tab]);
   const [homeSection, setHomeSection] = useState("overview");
   const [workspaceSection, setWorkspaceSection] = useState(null); // null = hub screen
   const [workspaceSearch, setWorkspaceSearch] = useState("");
@@ -3966,7 +4048,6 @@ function KroftApp({ onFullReset } = {}) {
       // fires on every login (and every prefs round-trip) and silently discards whatever
       // history was just restored from persistent storage.
       setAiMessages(p => p.length > 0 ? p : [{ role:"assistant", content:`Hey ${firstNameOf(user.name)||"there"} — I'm KROFT, your personal AI assistant by Orynthra. Ask me anything — finances, schedule, general knowledge, advice, or just chat. I'm here for all of it.` }]);
-      toast(`Welcome to KROFT, ${firstNameOf(user.name)||"there"}.`);
     }
   }, [step]);
 
@@ -4407,12 +4488,21 @@ function KroftApp({ onFullReset } = {}) {
   // Google's consent screen won't render inside a fetch response or an iframe. The browser
   // leaves the app entirely here; the flow continues on return via api/google/callback.js and
   // the oauth=success/error query-param handling in the mount effect below.
-  const connectGoogle = async () => {
+  // Connecting leaves the app for Google's/Microsoft's consent page and comes back with a full
+  // reload, which loses which screen you were on. A short-lived sessionStorage note (cleared as
+  // soon as it's read) brings you back there — Profile → Connected apps — instead of Home. Only
+  // a navigation hint, never data, so losing it (private mode, storage blocked) costs nothing.
+  const OAUTH_RETURN_KEY = "kroft:oauthReturn";
+  const rememberOAuthReturn = returnTo => {
+    try { if (returnTo) sessionStorage.setItem(OAUTH_RETURN_KEY, returnTo); else sessionStorage.removeItem(OAUTH_RETURN_KEY); } catch { /* hint only */ }
+  };
+  const connectGoogle = async (returnTo) => {
     setGoogleLinking(true);
     try {
       const res = await authedFetch("/api/google/start");
       if (!res.ok) { toast("Couldn't start Google sign-in. Try again."); setGoogleLinking(false); return; }
       const { url } = await res.json();
+      rememberOAuthReturn(returnTo);
       window.location.href = url;
     } catch {
       toast("Couldn't start Google sign-in. Try again.");
@@ -4455,12 +4545,13 @@ function KroftApp({ onFullReset } = {}) {
     }
   };
 
-  const connectMicrosoft = async () => {
+  const connectMicrosoft = async (returnTo) => {
     setMicrosoftLinking(true);
     try {
       const res = await authedFetch("/api/microsoft/start");
       if (!res.ok) { toast("Couldn't start Microsoft sign-in. Try again."); setMicrosoftLinking(false); return; }
       const { url } = await res.json();
+      rememberOAuthReturn(returnTo);
       window.location.href = url;
     } catch {
       toast("Couldn't start Microsoft sign-in. Try again.");
@@ -4487,14 +4578,21 @@ function KroftApp({ onFullReset } = {}) {
   // both — api/mail/messages.js merges them) and replaces the local `emails` list with it,
   // rather than appending to whatever was there before (which, before an account is connected,
   // is nothing — see the emails useState above).
-  const syncMail = async () => {
+  // quiet: the automatic pull right after connecting an account, which shouldn't bury the
+  // "account connected" message under "Loaded 0 emails", or report a 409 for a scope the person
+  // simply chose not to grant. Real failures still show.
+  const syncMail = async ({ quiet = false } = {}) => {
     setSyncingMail(true);
     try {
       const res = await authedFetch("/api/mail/messages");
-      if (!res.ok) { toast(res.status===409 ? "No email account is connected." : "Couldn't load your inbox right now."); return; }
+      if (!res.ok) { if (!(quiet && res.status === 409)) toast(res.status===409 ? "No email account is connected." : "Couldn't load your inbox right now."); return; }
       const { messages } = await res.json();
+      // A 200 without the expected list (an error page from a gateway, a partial outage) goes
+      // to the catch below instead of being stored — an undefined list here would crash the
+      // Email screen the next time it renders.
+      if (!Array.isArray(messages)) throw new Error("Unexpected inbox response");
       setEmails(messages);
-      toast(`Loaded ${messages.length} email${messages.length===1?"":"s"}.`);
+      if (!quiet) toast(`Loaded ${messages.length} email${messages.length===1?"":"s"}.`);
     } catch {
       toast("Couldn't load your inbox right now.");
     } finally {
@@ -4507,14 +4605,17 @@ function KroftApp({ onFullReset } = {}) {
   // any previously-synced remote events (tagged source:"google"|"outlook") so a re-sync
   // doesn't pile up duplicates, while leaving purely local appointments (added directly in
   // Kroft, never sent to a connected calendar) untouched.
-  const syncCalendar = async () => {
+  const syncCalendar = async ({ quiet = false } = {}) => {
     setSyncingCalendar(true);
     try {
       const res = await authedFetch("/api/calendar/events");
-      if (!res.ok) { toast(res.status===409 ? "No calendar is connected." : "Couldn't load your calendar right now."); return; }
+      if (!res.ok) { if (!(quiet && res.status === 409)) toast(res.status===409 ? "No calendar is connected." : "Couldn't load your calendar right now."); return; }
       const { appts: remoteAppts } = await res.json();
+      // Same guard as syncMail's — the spread below runs inside a state updater, outside this
+      // try/catch, so a malformed response would otherwise take the whole app down.
+      if (!Array.isArray(remoteAppts)) throw new Error("Unexpected calendar response");
       setAppts(p => [...p.filter(a => a.source !== "google" && a.source !== "outlook"), ...remoteAppts]);
-      toast(`Loaded ${remoteAppts.length} event${remoteAppts.length===1?"":"s"}.`);
+      if (!quiet) toast(`Loaded ${remoteAppts.length} event${remoteAppts.length===1?"":"s"}.`);
     } catch {
       toast("Couldn't load your calendar right now.");
     } finally {
@@ -4658,6 +4759,9 @@ function KroftApp({ onFullReset } = {}) {
     const oauthResult = params.get("oauth");
     if (!oauthResult) return;
     const provider = params.get("oauth_provider") === "microsoft" ? "Microsoft" : "Google";
+    let returnTo = null;
+    try { returnTo = sessionStorage.getItem(OAUTH_RETURN_KEY); sessionStorage.removeItem(OAUTH_RETURN_KEY); } catch { /* hint only */ }
+    if (returnTo === "connected") { setTab("profile"); setProfileNav({ screen:"connected", openRow:null }); }
     if (oauthResult === "success") {
       toast(`${provider} account connected.`);
       refreshGoogleStatus();
@@ -4665,8 +4769,8 @@ function KroftApp({ onFullReset } = {}) {
       // Best-effort first pull so the newly-connected inbox/calendar aren't still showing
       // stale mock data or an empty list the moment the user lands back on the dashboard —
       // each call is a no-op (a handled 409) if that particular scope wasn't actually granted.
-      syncMail();
-      syncCalendar();
+      syncMail({ quiet:true });
+      syncCalendar({ quiet:true });
     } else if (oauthResult === "error") {
       const reason = params.get("oauth_error") || "unknown_error";
       toast(reason === "access_denied" ? `${provider} sign-in was cancelled.` : `Couldn't connect ${provider}. Try again.`);
@@ -7538,7 +7642,7 @@ ${voiceMode
       )}
 
       {step === "prefs" && (
-        <OShell step="prefs" hideProgress={editingFromProfile} light={obLight}>
+        <OShell step="prefs" light={obLight}>
           <h2 style={{ fontSize:26, fontWeight:800, color:obc.white, letterSpacing:-1, marginBottom:4 }}>Preferences</h2>
           <Mono light={obLight} style={{ display:"block", color:obc.muted, marginBottom:22 }}>Connect the accounts KROFT should work with.</Mono>
           <div style={{ marginBottom:22 }}>
@@ -7582,11 +7686,7 @@ ${voiceMode
               ))}
             </div>
           </div>
-          {editingFromProfile ? (
-            <div style={{ display:"flex", gap:10 }}><Btn light={obLight} v="outline" onClick={() => setStep("dashboard")} style={{ flex:1 }}>Cancel</Btn><Btn light={obLight} onClick={() => { saveProfileNow().catch(()=>{}); setStep("dashboard"); toast("Preferences saved."); }} style={{ flex:2 }}>Save</Btn></div>
-          ) : (
-            <div style={{ display:"flex", gap:10 }}><Btn light={obLight} v="outline" onClick={() => setStep("business")} style={{ flex:1 }}>Back</Btn><Btn light={obLight} onClick={() => setStep("done")} style={{ flex:2 }}>Almost done</Btn></div>
-          )}
+          <div style={{ display:"flex", gap:10 }}><Btn light={obLight} v="outline" onClick={() => setStep("business")} style={{ flex:1 }}>Back</Btn><Btn light={obLight} onClick={() => setStep("done")} style={{ flex:2 }}>Almost done</Btn></div>
         </OShell>
       )}
 
@@ -7609,7 +7709,7 @@ ${voiceMode
                 </div>
               ))}
             </div>
-            <Btn light full onClick={() => setStep("dashboard")} style={{ padding:"14px", fontSize:15 }}>Enter KROFT</Btn>
+            <Btn light full onClick={() => { setStep("dashboard"); toast(`Welcome to KROFT, ${firstNameOf(user.name)||"there"}.`); }} style={{ padding:"14px", fontSize:15 }}>Enter KROFT</Btn>
           </div>
         </OShell>
       )}
@@ -8826,7 +8926,7 @@ ${voiceMode
                 <Mono style={{ display:"block", color:C.soft, marginBottom:18 }}>{(googleStatus.gmail || microsoftStatus.mail) ? "Nothing here right now — compose a new email to get started." : "Connect Gmail or Outlook to let KROFT organize your inbox."}</Mono>
                 <div style={{ display:"flex", gap:9, justifyContent:"center" }}>
                   <Btn sm onClick={() => setComposeDraft({to:"",subject:"",body:""})}>Compose Email</Btn>
-                  {!(googleStatus.gmail || microsoftStatus.mail) && <Btn sm v="outline" onClick={() => { setEditingFromProfile(true); setStep("prefs"); }}>Connect Email</Btn>}
+                  {!(googleStatus.gmail || microsoftStatus.mail) && <Btn sm v="outline" onClick={() => { setTab("profile"); setProfileNav({ screen:"connected", openRow:null }); }}>Connect Email</Btn>}
                 </div>
               </Card>
             )}
@@ -10678,6 +10778,10 @@ ${voiceMode
           <div style={{ animation:"fadeUp .4s ease" }}>
             <ProfileSection
               nav={profileNav} onNav={setProfileNav}
+              connections={{
+                google: { status:googleStatus, linking:googleLinking, connect:() => connectGoogle("connected"), disconnect:disconnectGoogle },
+                microsoft: { status:microsoftStatus, linking:microsoftLinking, connect:() => connectMicrosoft("connected"), disconnect:disconnectMicrosoft },
+              }}
               user={user}
               onUpdateName={name => setUser(u => ({ ...u, name }))}
               // Two different buttons used to share this one callback: "Manage connections"
@@ -10687,7 +10791,6 @@ ${voiceMode
               // prop meant "Edit details" silently opened account-linking and edited none of
               // what it promised. Split into two so each button reaches the fields it actually
               // claims to edit.
-              onEditPreferences={() => { setEditingFromProfile(true); setStep("prefs"); }}
               onEditBusinessDetails={() => { setEditingFromProfile(true); setStep("business"); }}
               onExportData={exportData}
               onImportData={importData}
