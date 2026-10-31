@@ -1,4 +1,5 @@
 import { BarChart, Bar, Cell, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
+import { APP_FONT } from "./format.js";
 
 export default function WellnessTrendChart({ data, c, activeColor }) {
   return (
@@ -8,7 +9,7 @@ export default function WellnessTrendChart({ data, c, activeColor }) {
         <XAxis dataKey="label" tick={{ fill:c.muted, fontSize:10 }} axisLine={false} tickLine={false} />
         <YAxis domain={[0,100]} hide />
         <Tooltip formatter={v=>`${v}/100`} contentStyle={{ background:c.card, border:`1px solid ${c.cardB}`, borderRadius:12, fontSize:11, color:c.white }} cursor={{ fill:c.surface }} />
-        <Bar dataKey="score" radius={[6,6,0,0]} maxBarSize={28} label={{ position:"top", fill:c.muted, fontSize:10, fontFamily:"'Space Grotesk',sans-serif" }}>
+        <Bar dataKey="score" radius={[6,6,0,0]} maxBarSize={28} label={{ position:"top", fill:c.muted, fontSize:10, fontFamily:APP_FONT }}>
           {data.map((e,i) => <Cell key={i} fill={e.label==="Today" ? activeColor : activeColor+"33"} />)}
         </Bar>
       </BarChart>

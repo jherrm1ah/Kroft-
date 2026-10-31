@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo, Component, lazy, Suspense } from "react";
 import { supabase, isSupabaseConfigured, supabaseUrl, supabaseAnonKey } from "./supabaseClient.js";
-import { fmtCur } from "./charts/format.js";
+import { fmtCur, APP_FONT } from "./charts/format.js";
 
 // A lazy chunk fetched over a flaky mobile connection can fail with a plain network error —
 // dynamic import() rejects, and React throws that straight into the nearest error boundary,
@@ -114,10 +114,9 @@ const BRIEF = DARK;
 // visible flash on every cold load.
 const C = { ...LIGHT };
 
-// Space Mono is no longer used anywhere (see the Mono component below — small text switched to
-// this same sans-serif for legibility), so it's dropped from the import rather than fetched and
-// left unused.
-const FONT = `@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&display=swap');`;
+// The one web font the app uses (APP_FONT in charts/format.js), in every weight the UI asks for —
+// headings go up to 800/900, which the browser would otherwise fake by smearing a lighter weight.
+const FONT = `@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');`;
 
 const ANIM = `
 @keyframes fadeUp{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:translateY(0)}}
@@ -842,7 +841,7 @@ const Btn = ({ children, onClick, v="solid", sm, disabled, full, style, light, "
   // feedback everywhere at once rather than touching each call site individually.
   const handleClick = e => { if (disabled) return; haptic(8); onClick?.(e); };
   return (
-    <button onClick={handleClick} disabled={disabled} aria-label={ariaLabel} style={{ width:full?"100%":"auto", minWidth:sm&&isIconOnly?36:"auto", minHeight:sm?36:44, background:s.bg, border:`1px solid ${s.bc}`, borderRadius:12, padding:sm?"8px 14px":"10px 22px", cursor:disabled?"not-allowed":"pointer", color:s.col, fontWeight:700, fontSize:sm?12:13, fontFamily:"'Space Grotesk',sans-serif", letterSpacing:.3, transition:"all .18s cubic-bezier(.34,1.56,.64,1)", opacity:disabled?.4:1, display:"inline-flex", alignItems:"center", justifyContent:"center", gap:6, boxSizing:"border-box", ...style }}>
+    <button onClick={handleClick} disabled={disabled} aria-label={ariaLabel} style={{ width:full?"100%":"auto", minWidth:sm&&isIconOnly?36:"auto", minHeight:sm?36:44, background:s.bg, border:`1px solid ${s.bc}`, borderRadius:12, padding:sm?"8px 14px":"10px 22px", cursor:disabled?"not-allowed":"pointer", color:s.col, fontWeight:700, fontSize:sm?12:13, fontFamily:APP_FONT, letterSpacing:.3, transition:"all .18s cubic-bezier(.34,1.56,.64,1)", opacity:disabled?.4:1, display:"inline-flex", alignItems:"center", justifyContent:"center", gap:6, boxSizing:"border-box", ...style }}>
       {children}
     </button>
   );
@@ -1132,7 +1131,7 @@ function MoodOrb({ mood, label, active, onClick }) {
       }}>
         <MoodFace mood={mood} size={20} style={{ transformOrigin:"center", animation: active ? MOOD_FACE_ANIM[mood] : "none" }} />
       </div>
-      <span style={{ fontSize:11, fontWeight:700, color: active ? `rgb(${glow})` : C.soft, fontFamily:"'Space Grotesk',sans-serif" }}>{label}</span>
+      <span style={{ fontSize:11, fontWeight:700, color: active ? `rgb(${glow})` : C.soft, fontFamily:APP_FONT }}>{label}</span>
     </button>
   );
 }
@@ -1164,7 +1163,7 @@ const Inp = ({ id, placeholder, value, onChange, type="text", inputMode, style, 
   const oc = light ? LIGHT : C;
   return (
     <input id={id} type={type} inputMode={inputMode} placeholder={placeholder} value={value} onChange={onChange} onKeyDown={onKeyDown} {...rest}
-      style={{ width:"100%", background:oc.surface, border:`1px solid ${oc.cardB}`, borderRadius:12, padding:"11px 14px", color:oc.text, fontSize:13, fontFamily:"'Space Grotesk',sans-serif", outline:"none", transition:"border-color .18s", boxSizing:"border-box", ...style }}
+      style={{ width:"100%", background:oc.surface, border:`1px solid ${oc.cardB}`, borderRadius:12, padding:"11px 14px", color:oc.text, fontSize:13, fontFamily:APP_FONT, outline:"none", transition:"border-color .18s", boxSizing:"border-box", ...style }}
       onFocus={e => { e.target.style.borderColor=oc.accent; e.target.style.boxShadow=`0 0 0 3px ${oc.accentBg}`; }} onBlur={e => { e.target.style.borderColor=oc.cardB; e.target.style.boxShadow="none"; }} />
   );
 };
@@ -1174,7 +1173,7 @@ const Inp = ({ id, placeholder, value, onChange, type="text", inputMode, style, 
 // harder to tell apart at 11px, exactly where the extra clarity matters most. Same sans-serif as
 // the rest of the app now, just smaller and softer-colored.
 const Mono = ({ children, style, light }) => (
-  <span style={{ fontFamily:"'Space Grotesk',sans-serif", fontSize:11, color:(light?LIGHT:C).soft, ...style }}>{children}</span>
+  <span style={{ fontFamily:APP_FONT, fontSize:11, color:(light?LIGHT:C).soft, ...style }}>{children}</span>
 );
 
 const CategorySelect = ({ value, onChange, cats, onAddCategory, style }) => {
@@ -1183,13 +1182,13 @@ const CategorySelect = ({ value, onChange, cats, onAddCategory, style }) => {
   if (adding) {
     return (
       <div style={{ display:"flex", gap:5, ...style }}>
-        <input autoFocus value={draft} onChange={e=>setDraft(e.target.value)} placeholder="New category" onKeyDown={e=>{ if (e.key==="Enter" && draft.trim()) { onAddCategory(draft.trim()); onChange(draft.trim()); setDraft(""); setAdding(false); } if (e.key==="Escape") { setAdding(false); setDraft(""); } }} style={{ width:100, background:C.surface, border:`1px solid ${C.soft}`, borderRadius:12, padding:"11px 10px", color:C.text, fontSize:12, fontFamily:"'Space Grotesk',sans-serif", outline:"none" }} />
+        <input autoFocus value={draft} onChange={e=>setDraft(e.target.value)} placeholder="New category" onKeyDown={e=>{ if (e.key==="Enter" && draft.trim()) { onAddCategory(draft.trim()); onChange(draft.trim()); setDraft(""); setAdding(false); } if (e.key==="Escape") { setAdding(false); setDraft(""); } }} style={{ width:100, background:C.surface, border:`1px solid ${C.soft}`, borderRadius:12, padding:"11px 10px", color:C.text, fontSize:12, fontFamily:APP_FONT, outline:"none" }} />
         <button onClick={() => { if (draft.trim()) { onAddCategory(draft.trim()); onChange(draft.trim()); } setDraft(""); setAdding(false); }} style={{ background:C.white, border:"none", borderRadius:12, padding:"0 10px", color:C.black, fontSize:12, fontWeight:700, cursor:"pointer" }}>✓</button>
       </div>
     );
   }
   return (
-    <select value={value} onChange={e => e.target.value==="__add__" ? setAdding(true) : onChange(e.target.value)} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 12px", color:C.text, fontSize:12, fontFamily:"'Space Grotesk',sans-serif", outline:"none", ...style }}>
+    <select value={value} onChange={e => e.target.value==="__add__" ? setAdding(true) : onChange(e.target.value)} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 12px", color:C.text, fontSize:12, fontFamily:APP_FONT, outline:"none", ...style }}>
       {cats.map(c => <option key={c}>{c}</option>)}
       <option value="__add__">+ Add category…</option>
     </select>
@@ -1205,7 +1204,7 @@ const Tag = ({ children, hi, tone, style, light }) => {
       background: toneColor ? toneBg : (hi?oc.text:oc.surface),
       color: toneColor || (hi?oc.invText:oc.soft),
       border: toneColor ? `1px solid ${toneColor}55` : (hi?"none":`1px solid ${oc.border}`),
-      borderRadius:7, padding:"2px 8px", fontSize:10, fontWeight:600, letterSpacing:.4, whiteSpace:"nowrap", fontFamily:"'Space Grotesk',sans-serif",
+      borderRadius:7, padding:"2px 8px", fontSize:10, fontWeight:600, letterSpacing:.4, whiteSpace:"nowrap", fontFamily:APP_FONT,
       ...style
     }}>
       {children}
@@ -1260,7 +1259,7 @@ const GoogleG = ({ size = 20 }) => (
 // Phone and Google both sign in OR create an account (the code/redirect proves who you are
 // either way), so only email needs a separate "Log in" path for returning users.
 function WelcomeScreen({ onPhone, onGoogle, onEmail, onLogIn, googleLoading }) {
-  const pill = { width:"100%", height:56, borderRadius:999, display:"flex", alignItems:"center", justifyContent:"center", gap:12, fontSize:"clamp(14px, 4.4vw, 17px)", whiteSpace:"nowrap", fontWeight:600, fontFamily:"'Space Grotesk',sans-serif", cursor:"pointer", letterSpacing:-.1 };
+  const pill = { width:"100%", height:56, borderRadius:999, display:"flex", alignItems:"center", justifyContent:"center", gap:12, fontSize:"clamp(14px, 4.4vw, 17px)", whiteSpace:"nowrap", fontWeight:600, fontFamily:APP_FONT, cursor:"pointer", letterSpacing:-.1 };
   // KROFT's own light palette (see LIGHT): warm cream background, near-black ink, warm beige
   // borders, indigo accent for the one link. Matches the splash before it and the account
   // creation screens after it, so the brand reads as one surface from launch to dashboard.
@@ -1286,7 +1285,7 @@ function WelcomeScreen({ onPhone, onGoogle, onEmail, onLogIn, googleLoading }) {
           <svg viewBox="0 0 24 24" width={22} height={22} aria-hidden="true"><rect x="2" y="5" width="20" height="14" rx="2" fill={ink} /><path d="M3.2 6.4 12 13l8.8-6.6" stroke={paper} strokeWidth="1.7" fill="none" strokeLinejoin="round" /></svg>
           Sign up with email
         </button>
-        <button onClick={onLogIn} style={{ marginTop:4, padding:"8px", background:"none", border:"none", cursor:"pointer", fontFamily:"'Space Grotesk',sans-serif", fontSize:14.5, color:LIGHT.muted }}>
+        <button onClick={onLogIn} style={{ marginTop:4, padding:"8px", background:"none", border:"none", cursor:"pointer", fontFamily:APP_FONT, fontSize:14.5, color:LIGHT.muted }}>
           Already have an account? <span style={{ color:LIGHT.accent, fontWeight:700, textDecoration:"underline" }}>Log in</span>
         </button>
       </div>
@@ -1542,7 +1541,7 @@ function ActionSheet({ title, subtitle, actions, onClose }) {
               </div>
             ) : (
               <button key={a.label} onClick={() => { if (a.destructive) setConfirming(a.label); else { a.onClick(); onClose(); } }}
-                style={{ width:"100%", textAlign:"left", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"13px 15px", cursor:"pointer", color:a.destructive?C.negative:C.text, fontSize:14, fontWeight:600, fontFamily:"'Space Grotesk',sans-serif", minHeight:48 }}>
+                style={{ width:"100%", textAlign:"left", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"13px 15px", cursor:"pointer", color:a.destructive?C.negative:C.text, fontSize:14, fontWeight:600, fontFamily:APP_FONT, minHeight:48 }}>
                 {a.label}
               </button>
             )
@@ -1587,7 +1586,7 @@ function VoiceStyleSpeedControls({ voicePref, onSetVoicePref, voiceSpeed, onSetV
       <Mono style={{ display:"block", color:C.white, marginTop:6, marginBottom:8 }}>Speaking speed</Mono>
       <div style={{ display:"flex", gap:8, marginBottom:10 }}>
         {[{ m:0.85, l:"Slower" }, { m:1.0, l:"Normal" }, { m:1.15, l:"Faster" }].map(s => (
-          <button key={s.l} onClick={() => onSetVoiceSpeed(s.m)} style={{ flex:1, padding:"9px 6px", borderRadius:10, cursor:"pointer", textAlign:"center", background:(voiceSpeed||1)===s.m?C.white:C.surface, border:`1px solid ${(voiceSpeed||1)===s.m?C.white:C.cardB}`, color:(voiceSpeed||1)===s.m?C.black:C.text, fontSize:12, fontWeight:700, fontFamily:"'Space Grotesk',sans-serif" }}>
+          <button key={s.l} onClick={() => onSetVoiceSpeed(s.m)} style={{ flex:1, padding:"9px 6px", borderRadius:10, cursor:"pointer", textAlign:"center", background:(voiceSpeed||1)===s.m?C.white:C.surface, border:`1px solid ${(voiceSpeed||1)===s.m?C.white:C.cardB}`, color:(voiceSpeed||1)===s.m?C.black:C.text, fontSize:12, fontWeight:700, fontFamily:APP_FONT }}>
             {s.l}
           </button>
         ))}
@@ -1737,8 +1736,8 @@ function VoiceMode({ state, transcript, reply, error, onStart, onStop, onClose, 
 
       <div style={{ width:"100%", maxWidth:460, display:"flex", gap:10 }}>
         {state === "idle"
-          ? <button onClick={onStart} disabled={!supported} style={{ flex:1, minHeight:52, borderRadius:16, border:"none", background:supported?C.text:C.surface, color:supported?C.card:C.muted, fontSize:15, fontWeight:700, fontFamily:"'Space Grotesk',sans-serif", cursor:supported?"pointer":"not-allowed" }}>{primed ? "Start talking" : "Allow microphone"}</button>
-          : <button onClick={onStop} style={{ flex:1, minHeight:52, borderRadius:16, border:`1px solid ${C.border}`, background:"transparent", color:C.text, fontSize:15, fontWeight:700, fontFamily:"'Space Grotesk',sans-serif", cursor:"pointer" }}>{state==="speaking" ? "Interrupt" : state==="thinking" ? "Cancel" : "Stop"}</button>}
+          ? <button onClick={onStart} disabled={!supported} style={{ flex:1, minHeight:52, borderRadius:16, border:"none", background:supported?C.text:C.surface, color:supported?C.card:C.muted, fontSize:15, fontWeight:700, fontFamily:APP_FONT, cursor:supported?"pointer":"not-allowed" }}>{primed ? "Start talking" : "Allow microphone"}</button>
+          : <button onClick={onStop} style={{ flex:1, minHeight:52, borderRadius:16, border:`1px solid ${C.border}`, background:"transparent", color:C.text, fontSize:15, fontWeight:700, fontFamily:APP_FONT, cursor:"pointer" }}>{state==="speaking" ? "Interrupt" : state==="thinking" ? "Cancel" : "Stop"}</button>}
       </div>
     </div>
   );
@@ -1839,10 +1838,10 @@ function AddEntryModal({ kind, theme, value, onChange, cats, onAddCategory, onSu
         <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
           <Inp placeholder="Description" value={value.label} onChange={e => onChange(v=>({...v,label:e.target.value}))} style={{ flex:2, minWidth:120 }} />
           <Inp placeholder="Amount" value={value.amount} type="number" inputMode="decimal" min="0" step="0.01" onChange={e => onChange(v=>({...v,amount:e.target.value}))} style={{ flex:1, minWidth:80 }} />
-          <input type="date" value={value.date||todayISO()} max={todayISO()} onChange={e => onChange(v=>({...v,date:e.target.value}))} style={{ flex:1, minWidth:130, background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"10px 12px", color:C.text, fontSize:12, fontFamily:"'Space Grotesk',sans-serif", outline:"none", colorScheme:theme }} />
+          <input type="date" value={value.date||todayISO()} max={todayISO()} onChange={e => onChange(v=>({...v,date:e.target.value}))} style={{ flex:1, minWidth:130, background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"10px 12px", color:C.text, fontSize:12, fontFamily:APP_FONT, outline:"none", colorScheme:theme }} />
           <CategorySelect value={value.cat} onChange={c => onChange(v=>({...v,cat:c}))} cats={cats} onAddCategory={onAddCategory} />
           {/* Turns the entry into a template that re-posts itself on this cadence. */}
-          <select value={value.repeat} onChange={e => onChange(v=>({...v,repeat:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 12px", color:C.text, fontSize:12, fontFamily:"'Space Grotesk',sans-serif", outline:"none" }}>
+          <select value={value.repeat} onChange={e => onChange(v=>({...v,repeat:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 12px", color:C.text, fontSize:12, fontFamily:APP_FONT, outline:"none" }}>
             <option value="none">Does not repeat</option>
             <option value="weekly">Repeats weekly</option>
             <option value="monthly">Repeats monthly</option>
@@ -1951,7 +1950,7 @@ function ComposeModal({ draft, onChange, onSend, onClose }) {
         <div style={{ display:"flex", flexDirection:"column", gap:10, marginBottom:14 }}>
           <Inp placeholder="To: email address" type="email" inputMode="email" value={draft.to} onChange={e => onChange({...draft, to:e.target.value})} />
           <Inp placeholder="Subject" value={draft.subject} onChange={e => onChange({...draft, subject:e.target.value})} />
-          <textarea placeholder="Write your message…" value={draft.body} onChange={e => onChange({...draft, body:e.target.value})} rows={6} style={{ width:"100%", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 14px", color:C.text, fontSize:13, fontFamily:"'Space Grotesk',sans-serif", outline:"none", resize:"vertical", boxSizing:"border-box" }} onFocus={e => { e.target.style.borderColor=C.accent; e.target.style.boxShadow=`0 0 0 3px ${C.accentBg}`; }} onBlur={e => { e.target.style.borderColor=C.cardB; e.target.style.boxShadow="none"; }} />
+          <textarea placeholder="Write your message…" value={draft.body} onChange={e => onChange({...draft, body:e.target.value})} rows={6} style={{ width:"100%", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 14px", color:C.text, fontSize:13, fontFamily:APP_FONT, outline:"none", resize:"vertical", boxSizing:"border-box" }} onFocus={e => { e.target.style.borderColor=C.accent; e.target.style.boxShadow=`0 0 0 3px ${C.accentBg}`; }} onBlur={e => { e.target.style.borderColor=C.cardB; e.target.style.boxShadow="none"; }} />
         </div>
         <div style={{ display:"flex", gap:10 }}>
           <Btn v="outline" onClick={onClose} style={{ flex:1 }}>Cancel</Btn>
@@ -2008,7 +2007,7 @@ const ContactSelect = ({ value, onChange, contacts, style }) => {
   const business = contacts.filter(c => c.category === "business");
   const family = contacts.filter(c => c.category === "family");
   return (
-    <select value={value || ""} onChange={e => onChange(e.target.value ? Number(e.target.value) : null)} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 12px", color:C.text, fontSize:12, fontFamily:"'Space Grotesk',sans-serif", outline:"none", ...style }}>
+    <select value={value || ""} onChange={e => onChange(e.target.value ? Number(e.target.value) : null)} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 12px", color:C.text, fontSize:12, fontFamily:APP_FONT, outline:"none", ...style }}>
       <option value="">No contact</option>
       {business.length > 0 && <optgroup label="Business">{business.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</optgroup>}
       {family.length > 0 && <optgroup label="Family">{family.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</optgroup>}
@@ -2142,7 +2141,7 @@ function Briefing({ user, income, expenses, emails, appts, onClose }) {
           ))}
         </div>
         <div style={{ display:"flex", justifyContent:"center", marginBottom:22 }}><WaveBar active={!done} color={BRIEF.text} /></div>
-        <button onClick={onClose} style={{ minHeight:44, padding:"11px 28px", fontSize:13, fontWeight:700, fontFamily:"'Space Grotesk',sans-serif", letterSpacing:.3, borderRadius:12, cursor:"pointer", background:done?BRIEF.white:"transparent", border:`1px solid ${done?BRIEF.white:BRIEF.muted}`, color:done?BRIEF.black:BRIEF.soft }}>{done?`Let's go, ${firstNameOf(user.name)}`:"Skip"}</button>
+        <button onClick={onClose} style={{ minHeight:44, padding:"11px 28px", fontSize:13, fontWeight:700, fontFamily:APP_FONT, letterSpacing:.3, borderRadius:12, cursor:"pointer", background:done?BRIEF.white:"transparent", border:`1px solid ${done?BRIEF.white:BRIEF.muted}`, color:done?BRIEF.black:BRIEF.soft }}>{done?`Let's go, ${firstNameOf(user.name)}`:"Skip"}</button>
       </div>
     </div>
   );
@@ -2276,10 +2275,10 @@ function ProfileSection({ user, onUpdateName, onEditPreferences, onEditBusinessD
         <ProfileRow label="Appearance" sub={theme==="dark" ? "Dark mode" : "Light mode"} expanded={openRow==="appearance"} onToggle={()=>toggle("appearance")}>
           <Mono style={{ display:"block", color:C.soft, lineHeight:1.7, marginBottom:12 }}>Switch between dark and light. Both use only black, white and off-white — no grey.</Mono>
           <div style={{ display:"flex", gap:8 }}>
-            <button onClick={() => onToggleTheme("dark")} style={{ flex:1, padding:"11px 6px", borderRadius:10, cursor:"pointer", textAlign:"center", background:theme==="dark"?C.white:C.surface, border:`1px solid ${theme==="dark"?C.white:C.cardB}`, color:theme==="dark"?C.black:C.text, fontSize:12, fontWeight:700, fontFamily:"'Space Grotesk',sans-serif" }}>
+            <button onClick={() => onToggleTheme("dark")} style={{ flex:1, padding:"11px 6px", borderRadius:10, cursor:"pointer", textAlign:"center", background:theme==="dark"?C.white:C.surface, border:`1px solid ${theme==="dark"?C.white:C.cardB}`, color:theme==="dark"?C.black:C.text, fontSize:12, fontWeight:700, fontFamily:APP_FONT }}>
               Dark
             </button>
-            <button onClick={() => onToggleTheme("light")} style={{ flex:1, padding:"11px 6px", borderRadius:10, cursor:"pointer", textAlign:"center", background:theme==="light"?C.white:C.surface, border:`1px solid ${theme==="light"?C.white:C.cardB}`, color:theme==="light"?C.black:C.text, fontSize:12, fontWeight:700, fontFamily:"'Space Grotesk',sans-serif" }}>
+            <button onClick={() => onToggleTheme("light")} style={{ flex:1, padding:"11px 6px", borderRadius:10, cursor:"pointer", textAlign:"center", background:theme==="light"?C.white:C.surface, border:`1px solid ${theme==="light"?C.white:C.cardB}`, color:theme==="light"?C.black:C.text, fontSize:12, fontWeight:700, fontFamily:APP_FONT }}>
               Light
             </button>
           </div>
@@ -2565,7 +2564,7 @@ function ProfileSection({ user, onUpdateName, onEditPreferences, onEditBusinessD
             rows={3}
             value={supportMsg}
             onChange={e => { setSupportMsg(e.target.value); setSupportSent(false); }}
-            style={{ width:"100%", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"10px 12px", color:C.text, fontSize:12, fontFamily:"'Space Grotesk',sans-serif", outline:"none", resize:"vertical", boxSizing:"border-box", marginBottom:8 }}
+            style={{ width:"100%", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"10px 12px", color:C.text, fontSize:12, fontFamily:APP_FONT, outline:"none", resize:"vertical", boxSizing:"border-box", marginBottom:8 }}
           />
           <Btn
             sm
@@ -2585,7 +2584,7 @@ function ProfileSection({ user, onUpdateName, onEditPreferences, onEditBusinessD
             rows={3}
             value={feedbackMsg}
             onChange={e => { setFeedbackMsg(e.target.value); setFeedbackSent(false); }}
-            style={{ width:"100%", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"10px 12px", color:C.text, fontSize:12, fontFamily:"'Space Grotesk',sans-serif", outline:"none", resize:"vertical", boxSizing:"border-box", marginBottom:8 }}
+            style={{ width:"100%", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"10px 12px", color:C.text, fontSize:12, fontFamily:APP_FONT, outline:"none", resize:"vertical", boxSizing:"border-box", marginBottom:8 }}
           />
           <Btn
             sm
@@ -2674,7 +2673,7 @@ class ErrorBoundary extends Component {
   render() {
     if (this.state.error) {
       return (
-        <div style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:C.bg, color:C.text, fontFamily:"'Space Grotesk',sans-serif", padding:24 }}>
+        <div style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:C.bg, color:C.text, fontFamily:APP_FONT, padding:24 }}>
           <div style={{ maxWidth:360, textAlign:"center" }}>
             <div style={{ fontSize:34, marginBottom:14 }}>⚠️</div>
             <div style={{ fontSize:18, fontWeight:700, marginBottom:8 }}>Something went wrong</div>
@@ -2687,13 +2686,13 @@ class ErrorBoundary extends Component {
             <div style={{ display:"flex", gap:9, justifyContent:"center" }}>
               <button
                 onClick={() => this.setState({ error: null })}
-                style={{ background:C.white, color:C.black, border:"none", borderRadius:12, padding:"11px 22px", fontSize:13, fontWeight:700, cursor:"pointer", fontFamily:"'Space Grotesk',sans-serif" }}
+                style={{ background:C.white, color:C.black, border:"none", borderRadius:12, padding:"11px 22px", fontSize:13, fontWeight:700, cursor:"pointer", fontFamily:APP_FONT }}
               >
                 Try again
               </button>
               <button
                 onClick={() => window.location.reload()}
-                style={{ background:"transparent", color:C.text, border:`1px solid ${C.border}`, borderRadius:12, padding:"11px 22px", fontSize:13, fontWeight:700, cursor:"pointer", fontFamily:"'Space Grotesk',sans-serif" }}
+                style={{ background:"transparent", color:C.text, border:`1px solid ${C.border}`, borderRadius:12, padding:"11px 22px", fontSize:13, fontWeight:700, cursor:"pointer", fontFamily:APP_FONT }}
               >
                 Reload
               </button>
@@ -7043,7 +7042,7 @@ ${voiceMode
     *{box-sizing:border-box;margin:0;padding:0}
     html,body{overflow-x:hidden;max-width:100vw;overscroll-behavior-x:none}
     #root,#app{overflow-x:hidden}
-    input,button,select,textarea{font-family:'Space Grotesk',sans-serif}
+    html,body,input,button,select,textarea{font-family:${APP_FONT}}
     ::-webkit-scrollbar{width:3px}::-webkit-scrollbar-thumb{background:${C.border};border-radius:2px}
     .hbtn:hover{opacity:.75} .tabBtn:hover{background:${C.surface}!important;color:${C.white}!important}
     .row:hover{background:${C.hover}!important}
@@ -7100,9 +7099,9 @@ ${voiceMode
         <div key={t.id} style={{ background:C.card, border:`1px solid ${C.accent}44`, borderRadius:14, padding:"9px 14px", animation:"slideIn .3s ease", boxShadow:`0 8px 28px rgba(0,0,0,.7), 0 0 0 1px ${C.accentBg}` }}>
           <div style={{ display:"flex", alignItems:"center", gap:7 }}>
             <Dot color={C.accent} />
-            <div style={{ fontSize:11, color:C.white, lineHeight:1.4, fontFamily:"'Space Grotesk',sans-serif", flex:1 }}>{t.msg}</div>
+            <div style={{ fontSize:11, color:C.white, lineHeight:1.4, fontFamily:APP_FONT, flex:1 }}>{t.msg}</div>
             {t.onUndo && (
-              <button onClick={() => { t.onUndo(); setToasts(p => p.filter(x => x.id !== t.id)); }} style={{ background:"none", border:"none", color:C.accent, fontSize:11, fontWeight:700, fontFamily:"'Space Grotesk',sans-serif", cursor:"pointer", padding:"4px 2px", flexShrink:0 }}>Undo</button>
+              <button onClick={() => { t.onUndo(); setToasts(p => p.filter(x => x.id !== t.id)); }} style={{ background:"none", border:"none", color:C.accent, fontSize:11, fontWeight:700, fontFamily:APP_FONT, cursor:"pointer", padding:"4px 2px", flexShrink:0 }}>Undo</button>
             )}
           </div>
         </div>
@@ -7111,7 +7110,7 @@ ${voiceMode
   );
 
   if (step !== "dashboard") return (
-    <div key={themeTick} style={{ fontFamily:"'Space Grotesk',sans-serif", overflowX:"hidden", maxWidth:"100vw", touchAction:"pan-y" }}>
+    <div key={themeTick} style={{ fontFamily:APP_FONT, overflowX:"hidden", maxWidth:"100vw", touchAction:"pan-y" }}>
       <style>{G}</style>
       {toastStack}
 
@@ -7226,8 +7225,8 @@ ${voiceMode
                 <Mono style={{ color:C.muted, cursor:"pointer", textDecoration:"underline", fontSize:11 }} onClick={() => { if (!isSupabaseConfigured) { toast("Sign in with a real account to reset your password."); return; } setForgotEmail(loginEmail); setForgotError(""); setForgotOpen(true); }}>Forgot password?</Mono>
               </div>
               <div style={{ position:"relative" }}>
-                <input id="lpw" type={showLoginPw?"text":"password"} placeholder="••••••••" value={loginPw} onChange={e => { setLoginPw(e.target.value); setLoginError(""); }} onKeyDown={e => e.key==="Enter"&&doLogin()} style={{ width:"100%", background:C.surface, border:`1px solid ${loginError&&!locked?C.soft:C.cardB}`, borderRadius:12, padding:"11px 44px 11px 14px", color:C.text, fontSize:13, fontFamily:"'Space Grotesk',sans-serif", outline:"none", boxSizing:"border-box" }} onFocus={e => { e.target.style.borderColor=C.accent; e.target.style.boxShadow=`0 0 0 3px ${C.accentBg}`; }} onBlur={e => { e.target.style.borderColor=C.cardB; e.target.style.boxShadow="none"; }} />
-                <button onClick={() => setShowLoginPw(v => !v)} style={{ position:"absolute", right:12, top:"50%", transform:"translateY(-50%)", background:"none", border:"none", cursor:"pointer", color:C.soft, fontSize:10, fontFamily:"'Space Grotesk',sans-serif", letterSpacing:.5 }}>{showLoginPw?"HIDE":"SHOW"}</button>
+                <input id="lpw" type={showLoginPw?"text":"password"} placeholder="••••••••" value={loginPw} onChange={e => { setLoginPw(e.target.value); setLoginError(""); }} onKeyDown={e => e.key==="Enter"&&doLogin()} style={{ width:"100%", background:C.surface, border:`1px solid ${loginError&&!locked?C.soft:C.cardB}`, borderRadius:12, padding:"11px 44px 11px 14px", color:C.text, fontSize:13, fontFamily:APP_FONT, outline:"none", boxSizing:"border-box" }} onFocus={e => { e.target.style.borderColor=C.accent; e.target.style.boxShadow=`0 0 0 3px ${C.accentBg}`; }} onBlur={e => { e.target.style.borderColor=C.cardB; e.target.style.boxShadow="none"; }} />
+                <button onClick={() => setShowLoginPw(v => !v)} style={{ position:"absolute", right:12, top:"50%", transform:"translateY(-50%)", background:"none", border:"none", cursor:"pointer", color:C.soft, fontSize:10, fontFamily:APP_FONT, letterSpacing:.5 }}>{showLoginPw?"HIDE":"SHOW"}</button>
               </div>
             </div>
           </div>
@@ -7238,7 +7237,7 @@ ${voiceMode
           )}
           <Btn full onClick={doLogin} disabled={locked||authLoading} style={{ padding:"13px", fontSize:14, marginBottom:10 }}>{locked?`Locked (${lockTimer}s)`:authLoading?(<><Spinner size={16} color={C.black} thickness={2} />Logging in…</>):"Log In"}</Btn>
           {user.webauthnCredentialId && (
-            <button onClick={doFingerprint} disabled={fpLoading||fpSuccess||locked} style={{ width:"100%", background:fpSuccess?"rgba(255,255,255,.1)":C.surface, border:`1px solid ${fpSuccess?C.white:C.muted}`, borderRadius:12, padding:"11px", cursor:locked||fpLoading||fpSuccess?"not-allowed":"pointer", color:fpSuccess?C.white:C.soft, fontSize:13, fontWeight:600, marginBottom:14, display:"flex", alignItems:"center", justifyContent:"center", gap:10, fontFamily:"'Space Grotesk',sans-serif", transition:"all .3s", opacity:locked?.4:1 }}>
+            <button onClick={doFingerprint} disabled={fpLoading||fpSuccess||locked} style={{ width:"100%", background:fpSuccess?"rgba(255,255,255,.1)":C.surface, border:`1px solid ${fpSuccess?C.white:C.muted}`, borderRadius:12, padding:"11px", cursor:locked||fpLoading||fpSuccess?"not-allowed":"pointer", color:fpSuccess?C.white:C.soft, fontSize:13, fontWeight:600, marginBottom:14, display:"flex", alignItems:"center", justifyContent:"center", gap:10, fontFamily:APP_FONT, transition:"all .3s", opacity:locked?.4:1 }}>
               {fpLoading ? (<><Spinner size={16} color={C.white} thickness={2} />Verifying…</>) : fpSuccess ? "Fingerprint verified" : "Sign in with Fingerprint / Face ID"}
             </button>
           )}
@@ -7257,7 +7256,7 @@ ${voiceMode
               { l:"Google", icon:googleLoading ? <Spinner size={14} color={C.white} thickness={2} /> : <GoogleG size={15} />, onClick:signInWithGoogle, disabled:googleLoading },
               { l:"Phone", icon:<svg viewBox="0 0 24 24" width={14} height={14} aria-hidden="true"><path fill={C.white} d="M6.6 3h2.7c.4 0 .8.3.9.7l1 3.6c.1.4 0 .8-.3 1L9.2 9.8a13 13 0 0 0 5 5l1.5-1.7c.3-.3.7-.4 1-.3l3.6 1c.4.1.7.5.7.9v2.7c0 1-.8 1.8-1.8 1.8C10.4 19.2 3.8 12.6 3.8 4.8 3.8 3.8 4.6 3 5.6 3z" /></svg>, onClick:openPhoneSignIn },
             ].map(s => (
-              <button key={s.l} onClick={s.onClick} disabled={s.disabled} style={{ flex:1, display:"flex", alignItems:"center", justifyContent:"center", gap:8, background:C.surface, border:`1px solid ${C.muted}`, borderRadius:12, padding:"10px", cursor:s.disabled?"wait":"pointer", color:C.white, fontSize:12, fontWeight:600, fontFamily:"'Space Grotesk',sans-serif" }} onMouseEnter={e => e.currentTarget.style.borderColor=C.white} onMouseLeave={e => e.currentTarget.style.borderColor=C.muted}>
+              <button key={s.l} onClick={s.onClick} disabled={s.disabled} style={{ flex:1, display:"flex", alignItems:"center", justifyContent:"center", gap:8, background:C.surface, border:`1px solid ${C.muted}`, borderRadius:12, padding:"10px", cursor:s.disabled?"wait":"pointer", color:C.white, fontSize:12, fontWeight:600, fontFamily:APP_FONT }} onMouseEnter={e => e.currentTarget.style.borderColor=C.white} onMouseLeave={e => e.currentTarget.style.borderColor=C.muted}>
                 {s.icon}{s.l}
               </button>
             ))}
@@ -7279,11 +7278,11 @@ ${voiceMode
           <div style={{ display:"flex", flexDirection:"column", gap:13, marginBottom:12 }}>
             <div>
               <Mono style={{ display:"block", color:C.soft, marginBottom:6, letterSpacing:1 }}>New password</Mono>
-              <input type="password" placeholder="At least 8 characters" value={newPw} onChange={e => { setNewPw(e.target.value); setResetPwError(""); }} style={{ width:"100%", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 14px", color:C.text, fontSize:13, fontFamily:"'Space Grotesk',sans-serif", outline:"none", boxSizing:"border-box" }} onFocus={e => { e.target.style.borderColor=C.accent; e.target.style.boxShadow=`0 0 0 3px ${C.accentBg}`; }} onBlur={e => { e.target.style.borderColor=C.cardB; e.target.style.boxShadow="none"; }} />
+              <input type="password" placeholder="At least 8 characters" value={newPw} onChange={e => { setNewPw(e.target.value); setResetPwError(""); }} style={{ width:"100%", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 14px", color:C.text, fontSize:13, fontFamily:APP_FONT, outline:"none", boxSizing:"border-box" }} onFocus={e => { e.target.style.borderColor=C.accent; e.target.style.boxShadow=`0 0 0 3px ${C.accentBg}`; }} onBlur={e => { e.target.style.borderColor=C.cardB; e.target.style.boxShadow="none"; }} />
             </div>
             <div>
               <Mono style={{ display:"block", color:C.soft, marginBottom:6, letterSpacing:1 }}>Confirm password</Mono>
-              <input type="password" placeholder="Re-enter your new password" value={confirmNewPw} onChange={e => { setConfirmNewPw(e.target.value); setResetPwError(""); }} onKeyDown={e => e.key==="Enter"&&doResetPassword()} style={{ width:"100%", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 14px", color:C.text, fontSize:13, fontFamily:"'Space Grotesk',sans-serif", outline:"none", boxSizing:"border-box" }} onFocus={e => { e.target.style.borderColor=C.accent; e.target.style.boxShadow=`0 0 0 3px ${C.accentBg}`; }} onBlur={e => { e.target.style.borderColor=C.cardB; e.target.style.boxShadow="none"; }} />
+              <input type="password" placeholder="Re-enter your new password" value={confirmNewPw} onChange={e => { setConfirmNewPw(e.target.value); setResetPwError(""); }} onKeyDown={e => e.key==="Enter"&&doResetPassword()} style={{ width:"100%", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 14px", color:C.text, fontSize:13, fontFamily:APP_FONT, outline:"none", boxSizing:"border-box" }} onFocus={e => { e.target.style.borderColor=C.accent; e.target.style.boxShadow=`0 0 0 3px ${C.accentBg}`; }} onBlur={e => { e.target.style.borderColor=C.cardB; e.target.style.boxShadow="none"; }} />
             </div>
           </div>
           {resetPwError && (
@@ -7310,11 +7309,11 @@ ${voiceMode
             <div>
               <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:5 }}>
                 <Mono light style={{ color:LIGHT.soft }}>Password *</Mono>
-                <button onClick={() => { const p = generatePassword(); setSignupPw(p); setConfirmPw(p); setShowSignupPw(true); setSignupError(""); toast("Strong password generated."); }} style={{ background:"none", border:"none", cursor:"pointer", fontFamily:"'Space Grotesk',sans-serif", fontSize:10, color:LIGHT.white, textDecoration:"underline", padding:0 }}>Suggest password</button>
+                <button onClick={() => { const p = generatePassword(); setSignupPw(p); setConfirmPw(p); setShowSignupPw(true); setSignupError(""); toast("Strong password generated."); }} style={{ background:"none", border:"none", cursor:"pointer", fontFamily:APP_FONT, fontSize:10, color:LIGHT.white, textDecoration:"underline", padding:0 }}>Suggest password</button>
               </div>
               <div style={{ position:"relative" }}>
-                <input type={showSignupPw?"text":"password"} placeholder="Create a strong password" value={signupPw} onChange={e => { setSignupPw(e.target.value); setSignupError(""); }} style={{ width:"100%", background:LIGHT.surface, border:`1px solid ${LIGHT.cardB}`, borderRadius:12, padding:"11px 54px 11px 14px", color:LIGHT.text, fontSize:13, fontFamily:"'Space Grotesk',sans-serif", outline:"none", boxSizing:"border-box" }} onFocus={e => { e.target.style.borderColor=LIGHT.accent; e.target.style.boxShadow=`0 0 0 3px ${LIGHT.accentBg}`; }} onBlur={e => { e.target.style.borderColor=LIGHT.cardB; e.target.style.boxShadow="none"; }} />
-                <button onClick={() => setShowSignupPw(v => !v)} style={{ position:"absolute", right:12, top:"50%", transform:"translateY(-50%)", background:"none", border:"none", cursor:"pointer", color:LIGHT.soft, fontSize:10, fontFamily:"'Space Grotesk',sans-serif", letterSpacing:.5 }}>{showSignupPw?"HIDE":"SHOW"}</button>
+                <input type={showSignupPw?"text":"password"} placeholder="Create a strong password" value={signupPw} onChange={e => { setSignupPw(e.target.value); setSignupError(""); }} style={{ width:"100%", background:LIGHT.surface, border:`1px solid ${LIGHT.cardB}`, borderRadius:12, padding:"11px 54px 11px 14px", color:LIGHT.text, fontSize:13, fontFamily:APP_FONT, outline:"none", boxSizing:"border-box" }} onFocus={e => { e.target.style.borderColor=LIGHT.accent; e.target.style.boxShadow=`0 0 0 3px ${LIGHT.accentBg}`; }} onBlur={e => { e.target.style.borderColor=LIGHT.cardB; e.target.style.boxShadow="none"; }} />
+                <button onClick={() => setShowSignupPw(v => !v)} style={{ position:"absolute", right:12, top:"50%", transform:"translateY(-50%)", background:"none", border:"none", cursor:"pointer", color:LIGHT.soft, fontSize:10, fontFamily:APP_FONT, letterSpacing:.5 }}>{showSignupPw?"HIDE":"SHOW"}</button>
               </div>
               {pw.length>0 && (
                 <div style={{ marginTop:7 }}>
@@ -7329,8 +7328,8 @@ ${voiceMode
             <div>
               <Mono light style={{ display:"block", color:LIGHT.soft, marginBottom:5 }}>Confirm password *</Mono>
               <div style={{ position:"relative" }}>
-                <input type={showConfirmPw?"text":"password"} placeholder="Repeat your password" value={confirmPw} onChange={e => { setConfirmPw(e.target.value); setSignupError(""); }} style={{ width:"100%", background:LIGHT.surface, border:`1px solid ${confirmPw.length>0?(confirmPw===signupPw?LIGHT.white:LIGHT.border):LIGHT.cardB}`, borderRadius:12, padding:"11px 54px 11px 14px", color:LIGHT.text, fontSize:13, fontFamily:"'Space Grotesk',sans-serif", outline:"none", boxSizing:"border-box" }} onFocus={e => { e.target.style.borderColor=LIGHT.accent; e.target.style.boxShadow=`0 0 0 3px ${LIGHT.accentBg}`; }} onBlur={e => { e.target.style.borderColor = confirmPw.length>0 ? (confirmPw===signupPw?LIGHT.white:LIGHT.border) : LIGHT.cardB; e.target.style.boxShadow="none"; }} />
-                <button onClick={() => setShowConfirmPw(v => !v)} style={{ position:"absolute", right:12, top:"50%", transform:"translateY(-50%)", background:"none", border:"none", cursor:"pointer", color:LIGHT.soft, fontSize:10, fontFamily:"'Space Grotesk',sans-serif", letterSpacing:.5 }}>{showConfirmPw?"HIDE":"SHOW"}</button>
+                <input type={showConfirmPw?"text":"password"} placeholder="Repeat your password" value={confirmPw} onChange={e => { setConfirmPw(e.target.value); setSignupError(""); }} style={{ width:"100%", background:LIGHT.surface, border:`1px solid ${confirmPw.length>0?(confirmPw===signupPw?LIGHT.white:LIGHT.border):LIGHT.cardB}`, borderRadius:12, padding:"11px 54px 11px 14px", color:LIGHT.text, fontSize:13, fontFamily:APP_FONT, outline:"none", boxSizing:"border-box" }} onFocus={e => { e.target.style.borderColor=LIGHT.accent; e.target.style.boxShadow=`0 0 0 3px ${LIGHT.accentBg}`; }} onBlur={e => { e.target.style.borderColor = confirmPw.length>0 ? (confirmPw===signupPw?LIGHT.white:LIGHT.border) : LIGHT.cardB; e.target.style.boxShadow="none"; }} />
+                <button onClick={() => setShowConfirmPw(v => !v)} style={{ position:"absolute", right:12, top:"50%", transform:"translateY(-50%)", background:"none", border:"none", cursor:"pointer", color:LIGHT.soft, fontSize:10, fontFamily:APP_FONT, letterSpacing:.5 }}>{showConfirmPw?"HIDE":"SHOW"}</button>
               </div>
               {confirmPw.length>0&&confirmPw!==signupPw && <Mono light style={{ color:LIGHT.soft, display:"block", marginTop:4, fontSize:10 }}>Passwords do not match</Mono>}
               {confirmPw.length>0&&confirmPw===signupPw && <Mono light style={{ color:LIGHT.white, display:"block", marginTop:4, fontSize:10 }}>Passwords match</Mono>}
@@ -7380,14 +7379,14 @@ ${voiceMode
               {user.photo && <div style={{ textAlign:"center", marginBottom:14 }}><Tag light hi>{photoSource==="camera"?"From camera":"From gallery"}</Tag></div>}
               <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:11, marginBottom:12 }}>
                 {[{label:"Gallery",sub:"Pick from your photos",fn:()=>galleryRef.current?.click()},{label:"Camera",sub:"Take a photo now",fn:openCamera}].map(b => (
-                  <button key={b.label} onClick={b.fn} style={{ background:LIGHT.card, border:`1px solid ${LIGHT.cardB}`, borderRadius:14, padding:"22px 12px", cursor:"pointer", textAlign:"center", fontFamily:"'Space Grotesk',sans-serif" }} onMouseEnter={e => { e.currentTarget.style.borderColor=LIGHT.soft; e.currentTarget.style.background=LIGHT.hover; }} onMouseLeave={e => { e.currentTarget.style.borderColor=LIGHT.cardB; e.currentTarget.style.background=LIGHT.card; }}>
+                  <button key={b.label} onClick={b.fn} style={{ background:LIGHT.card, border:`1px solid ${LIGHT.cardB}`, borderRadius:14, padding:"22px 12px", cursor:"pointer", textAlign:"center", fontFamily:APP_FONT }} onMouseEnter={e => { e.currentTarget.style.borderColor=LIGHT.soft; e.currentTarget.style.background=LIGHT.hover; }} onMouseLeave={e => { e.currentTarget.style.borderColor=LIGHT.cardB; e.currentTarget.style.background=LIGHT.card; }}>
                     <div style={{ fontSize:13, fontWeight:700, color:LIGHT.white, marginBottom:3 }}>{b.label}</div>
                     <Mono light style={{ color:LIGHT.muted, fontSize:10 }}>{b.sub}</Mono>
                   </button>
                 ))}
               </div>
               {cameraError && <div style={{ background:LIGHT.fill, border:`1px solid ${LIGHT.muted}`, borderRadius:12, padding:"10px 13px", marginBottom:11 }}><Mono light style={{ color:LIGHT.soft, lineHeight:1.6 }}>{cameraError}</Mono></div>}
-              {user.photo && <button onClick={() => { setUser(u => ({...u,photo:null})); setPhotoSource(""); }} style={{ width:"100%", background:"none", border:`1px dashed ${LIGHT.border}`, borderRadius:12, padding:"9px", cursor:"pointer", color:LIGHT.muted, fontSize:11, fontFamily:"'Space Grotesk',sans-serif", marginBottom:11 }}>Remove photo</button>}
+              {user.photo && <button onClick={() => { setUser(u => ({...u,photo:null})); setPhotoSource(""); }} style={{ width:"100%", background:"none", border:`1px dashed ${LIGHT.border}`, borderRadius:12, padding:"9px", cursor:"pointer", color:LIGHT.muted, fontSize:11, fontFamily:APP_FONT, marginBottom:11 }}>Remove photo</button>}
               {!user.photo && <div style={{ background:LIGHT.surface, borderRadius:12, padding:"10px 14px", marginBottom:11, textAlign:"center" }}><Mono light style={{ color:LIGHT.soft, lineHeight:1.6 }}>No photo? KROFT will show your initials{user.name?" — "+user.name.split(" ").map(n=>n[0]).join("").toUpperCase():""} as your avatar.</Mono></div>}
             </>
           )}
@@ -7403,7 +7402,7 @@ ${voiceMode
             <div><Mono light={obLight} style={{ display:"block", color:obc.soft, marginBottom:6, letterSpacing:1 }}>Business name</Mono><Inp light={obLight} placeholder="e.g. Carter Consulting LLC" value={user.businessName} onChange={e => setUser(u => ({...u,businessName:e.target.value}))} /></div>
             <div>
               <Mono light={obLight} style={{ display:"block", color:obc.soft, marginBottom:6, letterSpacing:1 }}>Business type</Mono>
-              <select value={user.businessType} onChange={e => setUser(u => ({...u,businessType:e.target.value}))} style={{ width:"100%", background:obc.surface, border:`1px solid ${obc.cardB}`, borderRadius:12, padding:"11px 14px", color:user.businessType?obc.text:obc.muted, fontSize:13, fontFamily:"'Space Grotesk',sans-serif", outline:"none", cursor:"pointer" }} onFocus={e => { e.target.style.borderColor=obc.accent; e.target.style.boxShadow=`0 0 0 3px ${obc.accentBg}`; }} onBlur={e => { e.target.style.borderColor=obc.cardB; e.target.style.boxShadow="none"; }}>
+              <select value={user.businessType} onChange={e => setUser(u => ({...u,businessType:e.target.value}))} style={{ width:"100%", background:obc.surface, border:`1px solid ${obc.cardB}`, borderRadius:12, padding:"11px 14px", color:user.businessType?obc.text:obc.muted, fontSize:13, fontFamily:APP_FONT, outline:"none", cursor:"pointer" }} onFocus={e => { e.target.style.borderColor=obc.accent; e.target.style.boxShadow=`0 0 0 3px ${obc.accentBg}`; }} onBlur={e => { e.target.style.borderColor=obc.cardB; e.target.style.boxShadow="none"; }}>
                 <option value="">Select type…</option>
                 {["Freelancer","Consultant","Agency","Retail","Restaurant","Tech Startup","Healthcare","Real Estate","E-commerce","Other"].map(t => <option key={t}>{t}</option>)}
               </select>
@@ -7411,7 +7410,7 @@ ${voiceMode
             <div>
               <Mono light={obLight} style={{ display:"block", color:obc.soft, marginBottom:8, letterSpacing:1 }}>Currency</Mono>
               <select value={Object.values(CURRENCY_GROUPS).some(g=>g.includes(user.currency)) ? user.currency : ""} onChange={e => { if (e.target.value) { setUser(u => ({...u,currency:e.target.value})); setCustomCurrency(""); setCustomCurrencyError(""); } }}
-                style={{ width:"100%", background:obc.surface, border:`1px solid ${obc.cardB}`, borderRadius:12, padding:"11px 14px", color:obc.text, fontSize:13, fontFamily:"'Space Grotesk',sans-serif", outline:"none", cursor:"pointer", marginBottom:8 }}>
+                style={{ width:"100%", background:obc.surface, border:`1px solid ${obc.cardB}`, borderRadius:12, padding:"11px 14px", color:obc.text, fontSize:13, fontFamily:APP_FONT, outline:"none", cursor:"pointer", marginBottom:8 }}>
                 <option value="" disabled>{Object.values(CURRENCY_GROUPS).some(g=>g.includes(user.currency)) ? "Select…" : `Custom: ${user.currency}`}</option>
                 {Object.entries(CURRENCY_GROUPS).map(([region, codes]) => (
                   <optgroup key={region} label={region}>
@@ -7536,7 +7535,7 @@ ${voiceMode
   ];
 
   return (
-    <div key={themeTick} style={{ fontFamily:"'Space Grotesk',sans-serif", background:C.bg, minHeight:"100vh", color:C.text, overflowX:"hidden", maxWidth:"100vw", touchAction:"pan-y" }}>
+    <div key={themeTick} style={{ fontFamily:APP_FONT, background:C.bg, minHeight:"100vh", color:C.text, overflowX:"hidden", maxWidth:"100vw", touchAction:"pan-y" }}>
       <style>{G}</style>
       {showBriefing && <Briefing user={user} income={totalIncome} expenses={totalExpenses} emails={emails} appts={todaysAppts} onClose={() => setShowBriefing(false)} />}
       {showChatHistory && (() => {
@@ -7633,7 +7632,7 @@ ${voiceMode
                             <Inp placeholder="Description" value={editingEntry.label} onChange={ev => setEditingEntry(v=>({...v,label:ev.target.value}))} style={{ padding:"8px 10px", fontSize:12 }} />
                             <div style={{ display:"flex", gap:7 }}>
                               <Inp placeholder="Amount" type="number" inputMode="decimal" min="0" step="0.01" value={editingEntry.amount} onChange={ev => setEditingEntry(v=>({...v,amount:ev.target.value}))} style={{ padding:"8px 10px", fontSize:12, flex:1 }} />
-                              <input type="date" value={editingEntry.date} max={todayISO()} onChange={ev => setEditingEntry(v=>({...v,date:ev.target.value}))} style={{ flex:1, background:C.card, border:`1px solid ${C.cardB}`, borderRadius:8, padding:"8px 9px", color:C.text, fontSize:11, fontFamily:"'Space Grotesk',sans-serif", outline:"none", colorScheme:theme }} />
+                              <input type="date" value={editingEntry.date} max={todayISO()} onChange={ev => setEditingEntry(v=>({...v,date:ev.target.value}))} style={{ flex:1, background:C.card, border:`1px solid ${C.cardB}`, borderRadius:8, padding:"8px 9px", color:C.text, fontSize:11, fontFamily:APP_FONT, outline:"none", colorScheme:theme }} />
                             </div>
                             <CategorySelect value={editingEntry.cat} onChange={c => setEditingEntry(v=>({...v,cat:c}))} cats={cats} onAddCategory={c => setCats(p=>p.includes(c)?p:[...p,c])} style={{ padding:"8px 9px", fontSize:11 }} />
                             <div style={{ display:"flex", gap:7 }}>
@@ -7810,7 +7809,7 @@ ${voiceMode
               top: Math.max(copyPopup.y - 56, 12),
               display:"flex", alignItems:"center", gap:8, background:C.card, border:`1px solid ${C.cardB}`,
               borderRadius:12, padding:"10px 16px", cursor:"pointer", boxShadow:C.shadowRaised,
-              color:C.text, fontSize:13, fontWeight:600, fontFamily:"'Space Grotesk',sans-serif",
+              color:C.text, fontSize:13, fontWeight:600, fontFamily:APP_FONT,
               animation:"pop .15s ease",
             }}
           >
@@ -8625,7 +8624,7 @@ ${voiceMode
                 <div style={{ fontSize:13, fontWeight:700, color:C.text, marginBottom:12 }}>New appointment</div>
                 <div style={{ display:"flex", flexDirection:"column", gap:9 }}>
                   <div style={{ display:"flex", gap:8 }}><Inp placeholder="Title *" value={newAppt.title} onChange={e=>setNewAppt(v=>({...v,title:e.target.value}))} style={{ flex:2 }} /><Inp placeholder="Time e.g. 4:00 PM" value={newAppt.time} onChange={e=>setNewAppt(v=>({...v,time:e.target.value}))} style={{ flex:1 }} /></div>
-                  <div style={{ display:"flex", gap:8 }}><input type="date" value={newAppt.date||todayISO()} onChange={e=>setNewAppt(v=>({...v,date:e.target.value}))} style={{ flex:1, background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 12px", color:C.text, fontSize:13, fontFamily:"'Space Grotesk',sans-serif", outline:"none", colorScheme:theme }} /><Inp placeholder="Location" value={newAppt.location} onChange={e=>setNewAppt(v=>({...v,location:e.target.value}))} style={{ flex:1 }} /></div>
+                  <div style={{ display:"flex", gap:8 }}><input type="date" value={newAppt.date||todayISO()} onChange={e=>setNewAppt(v=>({...v,date:e.target.value}))} style={{ flex:1, background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 12px", color:C.text, fontSize:13, fontFamily:APP_FONT, outline:"none", colorScheme:theme }} /><Inp placeholder="Location" value={newAppt.location} onChange={e=>setNewAppt(v=>({...v,location:e.target.value}))} style={{ flex:1 }} /></div>
                   <Inp placeholder="Notes (optional)" value={newAppt.notes} onChange={e=>setNewAppt(v=>({...v,notes:e.target.value}))} />
                   {(() => {
                     const conflict = findApptConflict(appts, newAppt.date||todayISO(), newAppt.time, null);
@@ -8637,7 +8636,7 @@ ${voiceMode
                   })()}
                   <div style={{ display:"flex", gap:10, alignItems:"center", flexWrap:"wrap" }}>
                     <label style={{ display:"flex", alignItems:"center", gap:6, cursor:"pointer" }}><input type="checkbox" checked={newAppt.urgent} onChange={e=>setNewAppt(v=>({...v,urgent:e.target.checked}))} style={{ accentColor:C.white, width:14, height:14 }} /><Mono style={{ color:C.soft }}>Urgent</Mono></label>
-                    <select value={newAppt.repeat} onChange={e=>setNewAppt(v=>({...v,repeat:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:8, padding:"7px 11px", color:C.text, fontSize:11, fontFamily:"'Space Grotesk',sans-serif", outline:"none" }}>{["none","daily","weekly","monthly"].map(r=><option key={r}>{r}</option>)}</select>
+                    <select value={newAppt.repeat} onChange={e=>setNewAppt(v=>({...v,repeat:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:8, padding:"7px 11px", color:C.text, fontSize:11, fontFamily:APP_FONT, outline:"none" }}>{["none","daily","weekly","monthly"].map(r=><option key={r}>{r}</option>)}</select>
                     {contacts.length > 0 && <ContactSelect value={newAppt.contactId} onChange={id=>setNewAppt(v=>({...v,contactId:id}))} contacts={contacts} />}
                     <Btn sm onClick={() => {
                       if (!newAppt.title||!newAppt.date) return;
@@ -8673,11 +8672,11 @@ ${voiceMode
                   <div style={{ fontSize:13, fontWeight:700, color:C.text, marginBottom:11 }}>Edit appointment</div>
                   <div style={{ display:"flex", flexDirection:"column", gap:9 }}>
                     <div style={{ display:"flex", gap:8 }}><Inp placeholder="Title *" value={editingAppt.title} onChange={e=>setEditingAppt(v=>({...v,title:e.target.value}))} style={{ flex:2 }} /><Inp placeholder="Time e.g. 4:00 PM" value={editingAppt.time} onChange={e=>setEditingAppt(v=>({...v,time:e.target.value}))} style={{ flex:1 }} /></div>
-                    <div style={{ display:"flex", gap:8 }}><input type="date" value={editingAppt.date||todayISO()} onChange={e=>setEditingAppt(v=>({...v,date:e.target.value}))} style={{ flex:1, background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 12px", color:C.text, fontSize:13, fontFamily:"'Space Grotesk',sans-serif", outline:"none", colorScheme:theme }} /><Inp placeholder="Location" value={editingAppt.location} onChange={e=>setEditingAppt(v=>({...v,location:e.target.value}))} style={{ flex:1 }} /></div>
+                    <div style={{ display:"flex", gap:8 }}><input type="date" value={editingAppt.date||todayISO()} onChange={e=>setEditingAppt(v=>({...v,date:e.target.value}))} style={{ flex:1, background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 12px", color:C.text, fontSize:13, fontFamily:APP_FONT, outline:"none", colorScheme:theme }} /><Inp placeholder="Location" value={editingAppt.location} onChange={e=>setEditingAppt(v=>({...v,location:e.target.value}))} style={{ flex:1 }} /></div>
                     <Inp placeholder="Notes (optional)" value={editingAppt.notes} onChange={e=>setEditingAppt(v=>({...v,notes:e.target.value}))} />
                     <div style={{ display:"flex", gap:10, alignItems:"center", flexWrap:"wrap" }}>
                       <label style={{ display:"flex", alignItems:"center", gap:6, cursor:"pointer" }}><input type="checkbox" checked={editingAppt.urgent} onChange={e=>setEditingAppt(v=>({...v,urgent:e.target.checked}))} style={{ accentColor:C.white, width:14, height:14 }} /><Mono style={{ color:C.soft }}>Urgent</Mono></label>
-                      <select value={editingAppt.repeat} onChange={e=>setEditingAppt(v=>({...v,repeat:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:8, padding:"7px 11px", color:C.text, fontSize:11, fontFamily:"'Space Grotesk',sans-serif", outline:"none" }}>{["none","daily","weekly","monthly"].map(r=><option key={r}>{r}</option>)}</select>
+                      <select value={editingAppt.repeat} onChange={e=>setEditingAppt(v=>({...v,repeat:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:8, padding:"7px 11px", color:C.text, fontSize:11, fontFamily:APP_FONT, outline:"none" }}>{["none","daily","weekly","monthly"].map(r=><option key={r}>{r}</option>)}</select>
                       {contacts.length > 0 && <ContactSelect value={editingAppt.contactId} onChange={id=>setEditingAppt(v=>({...v,contactId:id}))} contacts={contacts} />}
                     </div>
                     <div style={{ display:"flex", gap:8 }}>
@@ -8777,7 +8776,7 @@ ${voiceMode
                 <Inp placeholder="Title" value={newNote.title} onChange={e=>setNewNote(v=>({...v,title:e.target.value}))} style={{ marginBottom:9 }} />
                 <div style={{ display:"flex", gap:7, marginBottom:9 }}>
                   {[{checklist:false,l:"Text"},{checklist:true,l:"Checklist"}].map(o => (
-                    <button key={o.l} onClick={() => setNewNote(v=>({...v, checklist:o.checklist?(v.checklist||[]):null}))} style={{ flex:1, padding:"7px 10px", borderRadius:9, border:`1px solid ${!!newNote.checklist===o.checklist?C.white:C.cardB}`, background:!!newNote.checklist===o.checklist?"rgba(255,255,255,.1)":"transparent", color:!!newNote.checklist===o.checklist?C.white:C.muted, cursor:"pointer", fontSize:11, fontWeight:700, fontFamily:"'Space Grotesk',sans-serif" }}>{o.l}</button>
+                    <button key={o.l} onClick={() => setNewNote(v=>({...v, checklist:o.checklist?(v.checklist||[]):null}))} style={{ flex:1, padding:"7px 10px", borderRadius:9, border:`1px solid ${!!newNote.checklist===o.checklist?C.white:C.cardB}`, background:!!newNote.checklist===o.checklist?"rgba(255,255,255,.1)":"transparent", color:!!newNote.checklist===o.checklist?C.white:C.muted, cursor:"pointer", fontSize:11, fontWeight:700, fontFamily:APP_FONT }}>{o.l}</button>
                   ))}
                 </div>
                 {Array.isArray(newNote.checklist) ? (
@@ -8795,7 +8794,7 @@ ${voiceMode
                     </div>
                   </div>
                 ) : (
-                  <textarea placeholder="Write your note, checklist, or idea…" value={newNote.body} onChange={e=>setNewNote(v=>({...v,body:e.target.value}))} rows={4} style={{ width:"100%", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 14px", color:C.text, fontSize:13, fontFamily:"'Space Grotesk',sans-serif", outline:"none", resize:"vertical", boxSizing:"border-box", marginBottom:10 }} />
+                  <textarea placeholder="Write your note, checklist, or idea…" value={newNote.body} onChange={e=>setNewNote(v=>({...v,body:e.target.value}))} rows={4} style={{ width:"100%", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 14px", color:C.text, fontSize:13, fontFamily:APP_FONT, outline:"none", resize:"vertical", boxSizing:"border-box", marginBottom:10 }} />
                 )}
                 <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
                   <Btn sm v="outline" onClick={toggleListen}>{listening ? "Stop" : "Voice"}</Btn>
@@ -8827,7 +8826,7 @@ ${voiceMode
                   <Inp placeholder="Title" value={editingNote.title} onChange={e=>setEditingNote(v=>({...v,title:e.target.value}))} style={{ marginBottom:9 }} />
                   <div style={{ display:"flex", gap:7, marginBottom:9 }}>
                     {[{checklist:false,l:"Text"},{checklist:true,l:"Checklist"}].map(o => (
-                      <button key={o.l} onClick={() => setEditingNote(v=>({...v, checklist:o.checklist?(v.checklist||[]):null}))} style={{ flex:1, padding:"7px 10px", borderRadius:9, border:`1px solid ${!!editingNote.checklist===o.checklist?C.white:C.cardB}`, background:!!editingNote.checklist===o.checklist?"rgba(255,255,255,.1)":"transparent", color:!!editingNote.checklist===o.checklist?C.white:C.muted, cursor:"pointer", fontSize:11, fontWeight:700, fontFamily:"'Space Grotesk',sans-serif" }}>{o.l}</button>
+                      <button key={o.l} onClick={() => setEditingNote(v=>({...v, checklist:o.checklist?(v.checklist||[]):null}))} style={{ flex:1, padding:"7px 10px", borderRadius:9, border:`1px solid ${!!editingNote.checklist===o.checklist?C.white:C.cardB}`, background:!!editingNote.checklist===o.checklist?"rgba(255,255,255,.1)":"transparent", color:!!editingNote.checklist===o.checklist?C.white:C.muted, cursor:"pointer", fontSize:11, fontWeight:700, fontFamily:APP_FONT }}>{o.l}</button>
                     ))}
                   </div>
                   {Array.isArray(editingNote.checklist) ? (
@@ -8845,7 +8844,7 @@ ${voiceMode
                       </div>
                     </div>
                   ) : (
-                    <textarea placeholder="Write your note, checklist, or idea…" value={editingNote.body} onChange={e=>setEditingNote(v=>({...v,body:e.target.value}))} rows={4} style={{ width:"100%", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 14px", color:C.text, fontSize:13, fontFamily:"'Space Grotesk',sans-serif", outline:"none", resize:"vertical", boxSizing:"border-box", marginBottom:10 }} />
+                    <textarea placeholder="Write your note, checklist, or idea…" value={editingNote.body} onChange={e=>setEditingNote(v=>({...v,body:e.target.value}))} rows={4} style={{ width:"100%", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 14px", color:C.text, fontSize:13, fontFamily:APP_FONT, outline:"none", resize:"vertical", boxSizing:"border-box", marginBottom:10 }} />
                   )}
                   <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
                     <Btn sm v="outline" onClick={() => { setEditingNote(null); setEditNoteChecklistDraft(""); }} style={{ flex:1 }}>Cancel</Btn>
@@ -8917,11 +8916,11 @@ ${voiceMode
                 <div style={{ fontSize:13, fontWeight:700, color:C.text, marginBottom:11 }}>New task</div>
                 <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
                   <Inp placeholder="What needs to get done?" value={newTask.title} onChange={e=>setNewTask(v=>({...v,title:e.target.value}))} style={{ flex:2, minWidth:140 }} />
-                  <select value={newTask.priority} onChange={e=>setNewTask(v=>({...v,priority:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 12px", color:C.text, fontSize:12, fontFamily:"'Space Grotesk',sans-serif", outline:"none" }}>
+                  <select value={newTask.priority} onChange={e=>setNewTask(v=>({...v,priority:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 12px", color:C.text, fontSize:12, fontFamily:APP_FONT, outline:"none" }}>
                     {["Low","Normal","High","Urgent"].map(p => <option key={p}>{p}</option>)}
                   </select>
-                  <input type="date" value={newTask.dueDate} onChange={e=>setNewTask(v=>({...v,dueDate:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"10px 12px", color:C.text, fontSize:12, fontFamily:"'Space Grotesk',sans-serif", outline:"none", colorScheme:theme }} />
-                  <select value={newTask.repeat} onChange={e=>setNewTask(v=>({...v,repeat:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 12px", color:C.text, fontSize:12, fontFamily:"'Space Grotesk',sans-serif", outline:"none" }}>
+                  <input type="date" value={newTask.dueDate} onChange={e=>setNewTask(v=>({...v,dueDate:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"10px 12px", color:C.text, fontSize:12, fontFamily:APP_FONT, outline:"none", colorScheme:theme }} />
+                  <select value={newTask.repeat} onChange={e=>setNewTask(v=>({...v,repeat:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 12px", color:C.text, fontSize:12, fontFamily:APP_FONT, outline:"none" }}>
                     {["none","daily","weekly","monthly"].map(r => <option key={r}>{r}</option>)}
                   </select>
                   {contacts.length > 0 && <ContactSelect value={newTask.contactId} onChange={id=>setNewTask(v=>({...v,contactId:id}))} contacts={contacts} />}
@@ -8956,11 +8955,11 @@ ${voiceMode
                   <div style={{ fontSize:13, fontWeight:700, color:C.text, marginBottom:11 }}>Edit task</div>
                   <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
                     <Inp placeholder="What needs to get done?" value={editingTask.title} onChange={e=>setEditingTask(v=>({...v,title:e.target.value}))} style={{ flex:2, minWidth:140 }} />
-                    <select value={editingTask.priority} onChange={e=>setEditingTask(v=>({...v,priority:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 12px", color:C.text, fontSize:12, fontFamily:"'Space Grotesk',sans-serif", outline:"none" }}>
+                    <select value={editingTask.priority} onChange={e=>setEditingTask(v=>({...v,priority:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 12px", color:C.text, fontSize:12, fontFamily:APP_FONT, outline:"none" }}>
                       {["Low","Normal","High","Urgent"].map(p => <option key={p}>{p}</option>)}
                     </select>
-                    <input type="date" value={editingTask.dueDate||""} onChange={e=>setEditingTask(v=>({...v,dueDate:e.target.value}))} style={{ background:C.card, border:`1px solid ${C.cardB}`, borderRadius:8, padding:"8px 9px", color:C.text, fontSize:11, fontFamily:"'Space Grotesk',sans-serif", outline:"none", colorScheme:theme }} />
-                    <select value={editingTask.repeat} onChange={e=>setEditingTask(v=>({...v,repeat:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 12px", color:C.text, fontSize:12, fontFamily:"'Space Grotesk',sans-serif", outline:"none" }}>
+                    <input type="date" value={editingTask.dueDate||""} onChange={e=>setEditingTask(v=>({...v,dueDate:e.target.value}))} style={{ background:C.card, border:`1px solid ${C.cardB}`, borderRadius:8, padding:"8px 9px", color:C.text, fontSize:11, fontFamily:APP_FONT, outline:"none", colorScheme:theme }} />
+                    <select value={editingTask.repeat} onChange={e=>setEditingTask(v=>({...v,repeat:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 12px", color:C.text, fontSize:12, fontFamily:APP_FONT, outline:"none" }}>
                       {["none","daily","weekly","monthly"].map(r => <option key={r}>{r}</option>)}
                     </select>
                     {contacts.length > 0 && <ContactSelect value={editingTask.contactId} onChange={id=>setEditingTask(v=>({...v,contactId:id}))} contacts={contacts} />}
@@ -9036,7 +9035,7 @@ ${voiceMode
           <div style={{ animation:"fadeUp .4s ease" }}>
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:18 }}>
               <h2 style={{ fontSize:22, fontWeight:700, color:C.white, letterSpacing:-1 }}>Files</h2>
-              <label style={{ background:C.white, color:C.black, borderRadius:12, padding:"10px 22px", cursor:"pointer", fontSize:13, fontWeight:700, fontFamily:"'Space Grotesk',sans-serif" }}>
+              <label style={{ background:C.white, color:C.black, borderRadius:12, padding:"10px 22px", cursor:"pointer", fontSize:13, fontWeight:700, fontFamily:APP_FONT }}>
                 + Upload
                 <input type="file" multiple style={{ display:"none" }} onChange={handleFilesUpload} />
               </label>
@@ -9087,7 +9086,7 @@ ${voiceMode
               <Card style={{ marginBottom:13, border:`1px solid ${C.border}` }}>
                 <div style={{ fontSize:13, fontWeight:700, color:C.text, marginBottom:11 }}>New document</div>
                 <Inp placeholder="Document title" value={newDocument.title} onChange={e=>setNewDocument(v=>({...v,title:e.target.value}))} style={{ marginBottom:9 }} />
-                <textarea placeholder="Write your document…" value={newDocument.body} onChange={e=>setNewDocument(v=>({...v,body:e.target.value}))} rows={8} style={{ width:"100%", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 14px", color:C.text, fontSize:13, fontFamily:"'Space Grotesk',sans-serif", outline:"none", resize:"vertical", boxSizing:"border-box", marginBottom:10, lineHeight:1.6 }} />
+                <textarea placeholder="Write your document…" value={newDocument.body} onChange={e=>setNewDocument(v=>({...v,body:e.target.value}))} rows={8} style={{ width:"100%", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 14px", color:C.text, fontSize:13, fontFamily:APP_FONT, outline:"none", resize:"vertical", boxSizing:"border-box", marginBottom:10, lineHeight:1.6 }} />
                 <div style={{ display:"flex", gap:8 }}>
                   <Btn sm v="outline" onClick={() => { setShowAddDocument(false); setNewDocument({title:"",body:""}); }} style={{ flex:1 }}>Cancel</Btn>
                   <Btn sm onClick={() => { if (!newDocument.title.trim()) return; setDocuments(p=>[{id:uid(),...newDocument,createdAt:dateStr(),editedAt:null},...p]); setNewDocument({title:"",body:""}); setShowAddDocument(false); toast("Document created."); }} style={{ flex:1 }}>Create</Btn>
@@ -9106,7 +9105,7 @@ ${voiceMode
                 <Card key={d.id} style={{ marginBottom:11, border:`1px solid ${C.soft}` }}>
                   <div style={{ fontSize:13, fontWeight:700, color:C.text, marginBottom:11 }}>Edit document</div>
                   <Inp placeholder="Document title" value={editingDocument.title} onChange={e=>setEditingDocument(v=>({...v,title:e.target.value}))} style={{ marginBottom:9 }} />
-                  <textarea value={editingDocument.body} onChange={e=>setEditingDocument(v=>({...v,body:e.target.value}))} rows={8} style={{ width:"100%", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 14px", color:C.text, fontSize:13, fontFamily:"'Space Grotesk',sans-serif", outline:"none", resize:"vertical", boxSizing:"border-box", marginBottom:10, lineHeight:1.6 }} />
+                  <textarea value={editingDocument.body} onChange={e=>setEditingDocument(v=>({...v,body:e.target.value}))} rows={8} style={{ width:"100%", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 14px", color:C.text, fontSize:13, fontFamily:APP_FONT, outline:"none", resize:"vertical", boxSizing:"border-box", marginBottom:10, lineHeight:1.6 }} />
                   <div style={{ display:"flex", gap:8 }}>
                     <Btn sm v="outline" onClick={() => setEditingDocument(null)} style={{ flex:1 }}>Cancel</Btn>
                     <Btn sm onClick={() => { if (!editingDocument.title.trim()) return; setDocuments(p=>p.map(x=>x.id===d.id?{...editingDocument,editedAt:dateStr()}:x)); setEditingDocument(null); toast("Document updated."); }} style={{ flex:1 }}>Save</Btn>
@@ -9177,11 +9176,11 @@ ${voiceMode
                 <div style={{ display:"flex", flexDirection:"column", gap:9 }}>
                   <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
                     <Inp placeholder="Project name" value={newProject.name} onChange={e=>setNewProject(v=>({...v,name:e.target.value}))} style={{ flex:2, minWidth:140 }} />
-                    <input type="date" value={newProject.deadline} onChange={e=>setNewProject(v=>({...v,deadline:e.target.value}))} style={{ flex:1, minWidth:120, background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 12px", color:newProject.deadline?C.text:C.muted, fontSize:13, fontFamily:"'Space Grotesk',sans-serif", outline:"none", colorScheme:theme }} />
+                    <input type="date" value={newProject.deadline} onChange={e=>setNewProject(v=>({...v,deadline:e.target.value}))} style={{ flex:1, minWidth:120, background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 12px", color:newProject.deadline?C.text:C.muted, fontSize:13, fontFamily:APP_FONT, outline:"none", colorScheme:theme }} />
                   </div>
                   <Inp placeholder="What's this project about? (optional)" value={newProject.description} onChange={e=>setNewProject(v=>({...v,description:e.target.value}))} />
                   <div style={{ display:"flex", gap:8, alignItems:"center" }}>
-                    <select value={newProject.status} onChange={e=>setNewProject(v=>({...v,status:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"10px 12px", color:C.text, fontSize:12, fontFamily:"'Space Grotesk',sans-serif", outline:"none" }}>
+                    <select value={newProject.status} onChange={e=>setNewProject(v=>({...v,status:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"10px 12px", color:C.text, fontSize:12, fontFamily:APP_FONT, outline:"none" }}>
                       {["Not Started","In Progress","On Hold","Completed"].map(s => <option key={s}>{s}</option>)}
                     </select>
                     <Btn onClick={() => { if (!newProject.name.trim()) return; setProjects(p=>[{id:uid(),...newProject,taskIds:[],noteIds:[],fileIds:[],documentIds:[],expenseIds:[],incomeIds:[],contactIds:[],milestones:[]},...p]); setNewProject({name:"",deadline:"",description:"",status:"Not Started"}); setShowAddProject(false); toast("Project created."); }}>Create</Btn>
@@ -9237,10 +9236,10 @@ ${voiceMode
                     <Mono style={{ display:"block", color:C.white, letterSpacing:.8 }}>Edit project</Mono>
                     <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
                       <Inp placeholder="Project name" value={editingProject.name} onChange={e=>setEditingProject(v=>({...v,name:e.target.value}))} style={{ flex:2, minWidth:140 }} />
-                      <input type="date" value={editingProject.deadline||""} onChange={e=>setEditingProject(v=>({...v,deadline:e.target.value}))} style={{ flex:1, minWidth:120, background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 12px", color:C.text, fontSize:13, fontFamily:"'Space Grotesk',sans-serif", outline:"none", colorScheme:theme }} />
+                      <input type="date" value={editingProject.deadline||""} onChange={e=>setEditingProject(v=>({...v,deadline:e.target.value}))} style={{ flex:1, minWidth:120, background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 12px", color:C.text, fontSize:13, fontFamily:APP_FONT, outline:"none", colorScheme:theme }} />
                     </div>
                     <Inp placeholder="Description" value={editingProject.description||""} onChange={e=>setEditingProject(v=>({...v,description:e.target.value}))} />
-                    <select value={editingProject.status} onChange={e=>setEditingProject(v=>({...v,status:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"10px 12px", color:C.text, fontSize:12, fontFamily:"'Space Grotesk',sans-serif", outline:"none" }}>
+                    <select value={editingProject.status} onChange={e=>setEditingProject(v=>({...v,status:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"10px 12px", color:C.text, fontSize:12, fontFamily:APP_FONT, outline:"none" }}>
                       {["Not Started","In Progress","On Hold","Completed"].map(s => <option key={s}>{s}</option>)}
                     </select>
                     <div style={{ display:"flex", gap:8 }}>
@@ -9301,7 +9300,7 @@ ${voiceMode
                     <div>
                       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:7 }}>
                         <Mono style={{ color:C.white, letterSpacing:.8 }}>MILESTONES ({milestones.length})</Mono>
-                        <button onClick={() => { setAddingMilestoneToProject(addingMilestoneToProject===pr.id?null:pr.id); setMilestoneDraft(""); }} style={{ background:"none", border:"none", color:C.soft, cursor:"pointer", fontSize:11, fontFamily:"'Space Grotesk',sans-serif", textDecoration:"underline" }}>+ New</button>
+                        <button onClick={() => { setAddingMilestoneToProject(addingMilestoneToProject===pr.id?null:pr.id); setMilestoneDraft(""); }} style={{ background:"none", border:"none", color:C.soft, cursor:"pointer", fontSize:11, fontFamily:APP_FONT, textDecoration:"underline" }}>+ New</button>
                       </div>
                       {addingMilestoneToProject===pr.id && (
                         <div style={{ display:"flex", gap:7, marginBottom:8 }}>
@@ -9340,8 +9339,8 @@ ${voiceMode
                         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:7 }}>
                           <Mono style={{ color:C.white, letterSpacing:.8 }}>{sec.label.toUpperCase()} ({sec.items.length})</Mono>
                           <div style={{ display:"flex", gap:10 }}>
-                            {sec.onNew && <button onClick={sec.onNew} style={{ background:"none", border:"none", color:C.soft, cursor:"pointer", fontSize:11, fontFamily:"'Space Grotesk',sans-serif", textDecoration:"underline" }}>+ New</button>}
-                            <button onClick={() => setLinkPicker(linkPicker&&linkPicker.projectId===pr.id&&linkPicker.kind===sec.kind ? null : {projectId:pr.id,kind:sec.kind})} style={{ background:"none", border:"none", color:C.soft, cursor:"pointer", fontSize:11, fontFamily:"'Space Grotesk',sans-serif", textDecoration:"underline" }}>+ Link</button>
+                            {sec.onNew && <button onClick={sec.onNew} style={{ background:"none", border:"none", color:C.soft, cursor:"pointer", fontSize:11, fontFamily:APP_FONT, textDecoration:"underline" }}>+ New</button>}
+                            <button onClick={() => setLinkPicker(linkPicker&&linkPicker.projectId===pr.id&&linkPicker.kind===sec.kind ? null : {projectId:pr.id,kind:sec.kind})} style={{ background:"none", border:"none", color:C.soft, cursor:"pointer", fontSize:11, fontFamily:APP_FONT, textDecoration:"underline" }}>+ Link</button>
                           </div>
                         </div>
                         {sec.kind==="taskIds" && addingTaskToProject===pr.id && (
@@ -9439,7 +9438,7 @@ ${voiceMode
                   <Mono style={{ display:"block", color:C.white, marginBottom:11, letterSpacing:.8 }}>Edit memo</Mono>
                   <Inp placeholder={`Voice Memo ${voiceMemos.length-i}`} value={editingMemo.title} onChange={e=>setEditingMemo(v=>({...v,title:e.target.value}))} style={{ marginBottom:9 }} />
                   <Mono style={{ display:"block", color:C.soft, marginBottom:6, fontSize:9, letterSpacing:.8 }}>TRANSCRIPTION (edit if KROFT misheard something)</Mono>
-                  <textarea value={editingMemo.transcript} onChange={e=>setEditingMemo(v=>({...v,transcript:e.target.value}))} rows={4} style={{ width:"100%", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 14px", color:C.text, fontSize:12, fontFamily:"'Space Grotesk',sans-serif", outline:"none", resize:"vertical", boxSizing:"border-box", marginBottom:10, lineHeight:1.6 }} />
+                  <textarea value={editingMemo.transcript} onChange={e=>setEditingMemo(v=>({...v,transcript:e.target.value}))} rows={4} style={{ width:"100%", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 14px", color:C.text, fontSize:12, fontFamily:APP_FONT, outline:"none", resize:"vertical", boxSizing:"border-box", marginBottom:10, lineHeight:1.6 }} />
                   <div style={{ display:"flex", gap:8 }}>
                     <Btn sm v="outline" onClick={() => setEditingMemo(null)} style={{ flex:1 }}>Cancel</Btn>
                     <Btn sm onClick={() => { setVoiceMemos(p=>p.map(x=>x.id===m.id?editingMemo:x)); setEditingMemo(null); toast("Memo updated."); }} style={{ flex:1 }}>Save</Btn>
@@ -9498,8 +9497,8 @@ ${voiceMode
                   {/* Raw inputs, not Inp — Inp doesn't set colorScheme, and every other native
                       date/time picker in the app sets it explicitly. Without it the picker
                       renders with dark-on-dark text in dark mode, unreadable. */}
-                  <input type="date" min={todayISO()} value={newCall.date} onChange={e=>setNewCall(v=>({...v,date:e.target.value}))} style={{ flex:1, minWidth:130, background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 12px", color:C.text, fontSize:13, fontFamily:"'Space Grotesk',sans-serif", outline:"none", colorScheme:theme }} />
-                  <input type="time" value={newCall.time} onChange={e=>setNewCall(v=>({...v,time:e.target.value}))} style={{ flex:1, minWidth:110, background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 12px", color:C.text, fontSize:13, fontFamily:"'Space Grotesk',sans-serif", outline:"none", colorScheme:theme }} />
+                  <input type="date" min={todayISO()} value={newCall.date} onChange={e=>setNewCall(v=>({...v,date:e.target.value}))} style={{ flex:1, minWidth:130, background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 12px", color:C.text, fontSize:13, fontFamily:APP_FONT, outline:"none", colorScheme:theme }} />
+                  <input type="time" value={newCall.time} onChange={e=>setNewCall(v=>({...v,time:e.target.value}))} style={{ flex:1, minWidth:110, background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 12px", color:C.text, fontSize:13, fontFamily:APP_FONT, outline:"none", colorScheme:theme }} />
                 </div>
                 <Inp placeholder="Anything KROFT should say (optional)" value={newCall.note} onChange={e=>setNewCall(v=>({...v,note:e.target.value}))} style={{ width:"100%", boxSizing:"border-box", marginBottom:10 }} />
                 {/* Same honesty as every other notification here — this isn't a real phone call,
@@ -9606,7 +9605,7 @@ ${voiceMode
                     <Inp placeholder="Email" type="email" inputMode="email" value={editingContact.email} onChange={e=>setEditingContact(v=>({...v,email:e.target.value}))} style={{ flex:1 }} />
                   </div>
                   <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
-                    <select value={editingContact.category} onChange={e=>setEditingContact(v=>({...v,category:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:8, padding:"7px 11px", color:C.text, fontSize:11, fontFamily:"'Space Grotesk',sans-serif", outline:"none" }}>
+                    <select value={editingContact.category} onChange={e=>setEditingContact(v=>({...v,category:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:8, padding:"7px 11px", color:C.text, fontSize:11, fontFamily:APP_FONT, outline:"none" }}>
                       <option value="business">Business</option>
                       <option value="family">Family</option>
                     </select>
@@ -9689,7 +9688,7 @@ ${voiceMode
                       <Inp placeholder="Email" type="email" inputMode="email" value={newContact.email} onChange={e=>setNewContact(v=>({...v,email:e.target.value}))} style={{ flex:1 }} />
                     </div>
                     <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
-                      <select value={newContact.category} onChange={e=>setNewContact(v=>({...v,category:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:8, padding:"7px 11px", color:C.text, fontSize:11, fontFamily:"'Space Grotesk',sans-serif", outline:"none" }}>
+                      <select value={newContact.category} onChange={e=>setNewContact(v=>({...v,category:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:8, padding:"7px 11px", color:C.text, fontSize:11, fontFamily:APP_FONT, outline:"none" }}>
                         <option value="business">Business</option>
                         <option value="family">Family</option>
                       </select>
@@ -9870,7 +9869,7 @@ ${voiceMode
                     border:`1px solid ${aroundCategory===c.key ? C.white : C.cardB}`,
                     borderRadius:12, padding:"16px 14px", cursor:"pointer", textAlign:"left",
                     display:"flex", flexDirection:"column", gap:10, transition:"all .16s",
-                    fontFamily:"'Space Grotesk',sans-serif",
+                    fontFamily:APP_FONT,
                   }}
                   onMouseEnter={e => { if (aroundCategory!==c.key) { e.currentTarget.style.borderColor=C.soft; e.currentTarget.style.background=C.hover; } }}
                   onMouseLeave={e => { if (aroundCategory!==c.key) { e.currentTarget.style.borderColor=C.cardB; e.currentTarget.style.background=C.card; } }}
@@ -9886,7 +9885,7 @@ ${voiceMode
             <div style={{ display:"flex", flexWrap:"wrap", gap:7, marginBottom:22 }}>
               {["Find restaurants near me","Nearest pharmacy open now","Best café for remote work","Closest ATM","Nearby supermarkets","Hotels near me"].map(q => (
                 <button key={q} onClick={() => { setAroundQuery(q); searchNearby(q, { isNaturalLanguage:true }); }}
-                  style={{ background:C.card, border:`1px solid ${C.cardB}`, borderRadius:7, padding:"6px 12px", cursor:"pointer", color:C.soft, fontSize:11, fontFamily:"'Space Grotesk',sans-serif" }}
+                  style={{ background:C.card, border:`1px solid ${C.cardB}`, borderRadius:7, padding:"6px 12px", cursor:"pointer", color:C.soft, fontSize:11, fontFamily:APP_FONT }}
                   onMouseEnter={e=>{e.target.style.borderColor=C.soft;e.target.style.color=C.white;}}
                   onMouseLeave={e=>{e.target.style.borderColor=C.cardB;e.target.style.color=C.border;}}>
                   {q}
@@ -10093,7 +10092,7 @@ ${voiceMode
                 <div style={{ paddingBottom:4 }}>
                   <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:10 }}>
                     <Inp placeholder="Hours slept" type="number" min="0" max="24" step="0.25" value={sleepForm.hours} onChange={e => setSleepForm(v=>({...v,hours:e.target.value}))} style={{ flex:1, minWidth:100 }} />
-                    <select value={sleepForm.quality} onChange={e => setSleepForm(v=>({...v,quality:e.target.value}))} style={{ flex:1, minWidth:100, background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 12px", color:C.text, fontSize:12, fontFamily:"'Space Grotesk',sans-serif", outline:"none" }}>
+                    <select value={sleepForm.quality} onChange={e => setSleepForm(v=>({...v,quality:e.target.value}))} style={{ flex:1, minWidth:100, background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 12px", color:C.text, fontSize:12, fontFamily:APP_FONT, outline:"none" }}>
                       <option value="">Quality (optional)</option>
                       <option value="poor">Poor</option>
                       <option value="fair">Fair</option>
@@ -10104,11 +10103,11 @@ ${voiceMode
                   <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:12 }}>
                     <div style={{ flex:1, minWidth:100 }}>
                       <Mono style={{ display:"block", color:C.muted, marginBottom:4 }}>Bedtime</Mono>
-                      <input type="time" value={sleepForm.bedtime} onChange={e => setSleepForm(v=>({...v,bedtime:e.target.value}))} style={{ width:"100%", boxSizing:"border-box", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"10px 12px", color:C.text, fontSize:12, fontFamily:"'Space Grotesk',sans-serif", outline:"none", colorScheme:theme }} />
+                      <input type="time" value={sleepForm.bedtime} onChange={e => setSleepForm(v=>({...v,bedtime:e.target.value}))} style={{ width:"100%", boxSizing:"border-box", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"10px 12px", color:C.text, fontSize:12, fontFamily:APP_FONT, outline:"none", colorScheme:theme }} />
                     </div>
                     <div style={{ flex:1, minWidth:100 }}>
                       <Mono style={{ display:"block", color:C.muted, marginBottom:4 }}>Wake time</Mono>
-                      <input type="time" value={sleepForm.wakeTime} onChange={e => setSleepForm(v=>({...v,wakeTime:e.target.value}))} style={{ width:"100%", boxSizing:"border-box", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"10px 12px", color:C.text, fontSize:12, fontFamily:"'Space Grotesk',sans-serif", outline:"none", colorScheme:theme }} />
+                      <input type="time" value={sleepForm.wakeTime} onChange={e => setSleepForm(v=>({...v,wakeTime:e.target.value}))} style={{ width:"100%", boxSizing:"border-box", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"10px 12px", color:C.text, fontSize:12, fontFamily:APP_FONT, outline:"none", colorScheme:theme }} />
                     </div>
                   </div>
                   {/* Manual entry today — see sleepLog's own state comment on why the shape here is
@@ -10129,7 +10128,7 @@ ${voiceMode
                 onToggle={() => setOpenWellnessRow(v => v==="journal" ? null : "journal")}>
                 <div style={{ paddingBottom:4 }}>
                   <textarea value={journalDraft} onChange={e => setJournalDraft(e.target.value)} placeholder="What's on your mind?" rows={3}
-                    style={{ width:"100%", boxSizing:"border-box", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:14, padding:"11px 13px", color:C.text, fontSize:12.5, fontFamily:"'Space Grotesk',sans-serif", outline:"none", resize:"vertical", marginBottom:10 }} />
+                    style={{ width:"100%", boxSizing:"border-box", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:14, padding:"11px 13px", color:C.text, fontSize:12.5, fontFamily:APP_FONT, outline:"none", resize:"vertical", marginBottom:10 }} />
                   <div style={{ display:"flex", gap:8 }}>
                     <button onClick={toggleJournalListen} aria-label={journalListening ? "Stop dictation" : "Speak entry"} title={journalListening ? "Stop dictation" : "Speak entry"}
                       style={{ background:journalListening?C.negativeBg:C.surface, border:`1px solid ${journalListening?C.negative:C.cardB}`, borderRadius:12, padding:"10px 13px", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>
@@ -10317,7 +10316,7 @@ ${voiceMode
                       </div>
                       {isLongUserMsg && (
                         <button onClick={() => setExpandedUserMsgs(p => { const next = new Set(p); if (isExpanded) next.delete(msgKey); else next.add(msgKey); return next; })}
-                          style={{ background:"none", border:"none", padding:0, marginTop:4, cursor:"pointer", color:C.accent, fontSize:12.5, fontWeight:700, fontFamily:"'Space Grotesk',sans-serif" }}>
+                          style={{ background:"none", border:"none", padding:0, marginTop:4, cursor:"pointer", color:C.accent, fontSize:12.5, fontWeight:700, fontFamily:APP_FONT }}>
                           {isExpanded ? "Show less" : "Show more"}
                         </button>
                       )}
@@ -10406,7 +10405,7 @@ ${voiceMode
                 <div style={{ fontSize:12, fontWeight:600, color:C.muted, marginBottom:6 }}>Ask about your data</div>
                 <div style={{ display:"flex", flexWrap:"wrap", gap:7, marginBottom:12 }}>
                   {["What's on my schedule today?","Where is my money going?","What should I focus on?","How did this month compare?","Summarise my open tasks","How's my wellness today?"].map(q => (
-                    <button key={q} onClick={() => askKroft(q)} style={{ background:C.card, border:`1px solid ${C.cardB}`, borderRadius:7, padding:"6px 12px", cursor:"pointer", color:C.soft, fontSize:11, fontFamily:"'Space Grotesk',sans-serif" }} onMouseEnter={e=>{e.target.style.borderColor=C.soft;e.target.style.color=C.white;}} onMouseLeave={e=>{e.target.style.borderColor=C.cardB;e.target.style.color=C.border;}}>
+                    <button key={q} onClick={() => askKroft(q)} style={{ background:C.card, border:`1px solid ${C.cardB}`, borderRadius:7, padding:"6px 12px", cursor:"pointer", color:C.soft, fontSize:11, fontFamily:APP_FONT }} onMouseEnter={e=>{e.target.style.borderColor=C.soft;e.target.style.color=C.white;}} onMouseLeave={e=>{e.target.style.borderColor=C.cardB;e.target.style.color=C.border;}}>
                       {q}
                     </button>
                   ))}
@@ -10414,7 +10413,7 @@ ${voiceMode
                 <div style={{ fontSize:12, fontWeight:600, color:C.muted, marginBottom:6 }}>Or tell it to do something</div>
                 <div style={{ display:"flex", flexWrap:"wrap", gap:7 }}>
                   {["Log a 5,000 fuel expense","Remind me to call the bank tomorrow","Add a task to send the invoice","Schedule a meeting Friday at 10"].map(q => (
-                    <button key={q} onClick={() => askKroft(q)} style={{ background:C.card, border:`1px solid ${C.accent}44`, borderRadius:7, padding:"6px 12px", cursor:"pointer", color:C.soft, fontSize:11, fontFamily:"'Space Grotesk',sans-serif" }}>
+                    <button key={q} onClick={() => askKroft(q)} style={{ background:C.card, border:`1px solid ${C.accent}44`, borderRadius:7, padding:"6px 12px", cursor:"pointer", color:C.soft, fontSize:11, fontFamily:APP_FONT }}>
                       {q}
                     </button>
                   ))}
@@ -10484,7 +10483,7 @@ ${voiceMode
                   onKeyDown={e => { if (e.key==="Enter" && !e.shiftKey) { e.preventDefault(); askKroft(); } }}
                   placeholder={listening ? "Listening…" : "Message KROFT…"}
                   rows={1}
-                  style={{ width:"100%", fontSize:13, fontFamily:"'Space Grotesk',sans-serif", background:"transparent", border:"none", padding:"4px 6px", color:C.text, outline:"none", resize:"none", maxHeight:120, overflowY:"auto", lineHeight:1.4, boxSizing:"border-box" }}
+                  style={{ width:"100%", fontSize:13, fontFamily:APP_FONT, background:"transparent", border:"none", padding:"4px 6px", color:C.text, outline:"none", resize:"none", maxHeight:120, overflowY:"auto", lineHeight:1.4, boxSizing:"border-box" }}
                   onFocus={() => setAiInputFocused(true)}
                   onBlur={() => setAiInputFocused(false)}
                 />
@@ -10532,7 +10531,7 @@ ${voiceMode
                             { id:"receipt", label:"Scan receipt", ref:aiReceiptInputRef },
                           ].map(o => (
                             <button key={o.id} role="menuitem" className="row" onClick={() => { o.ref.current?.click(); setShowAttachMenu(false); }}
-                              style={{ display:"flex", alignItems:"center", gap:14, padding:"6px 8px", borderRadius:16, background:"none", border:"none", cursor:"pointer", color:C.text, fontSize:15.5, fontWeight:500, fontFamily:"'Space Grotesk',sans-serif", textAlign:"left" }}>
+                              style={{ display:"flex", alignItems:"center", gap:14, padding:"6px 8px", borderRadius:16, background:"none", border:"none", cursor:"pointer", color:C.text, fontSize:15.5, fontWeight:500, fontFamily:APP_FONT, textAlign:"left" }}>
                               <span style={{ width:44, height:44, borderRadius:"50%", background:C.fill, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
                                 <NavIcon id={o.id} size={20} color={C.text} />
                               </span>
@@ -10688,7 +10687,7 @@ ${voiceMode
                 <span key={active ? `${t.id}-on` : t.id} style={{ display:"inline-flex", animation: active ? "tabPop .3s cubic-bezier(.34,1.56,.64,1)" : "none" }}>
                   <NavIcon id={t.id} size={20} color={active ? C.card : C.muted} />
                 </span>
-                <span style={{ fontSize:9, fontWeight:700, color: active ? C.card : C.muted, letterSpacing:.3, fontFamily:"'Space Grotesk',sans-serif" }}>{t.label}</span>
+                <span style={{ fontSize:9, fontWeight:700, color: active ? C.card : C.muted, letterSpacing:.3, fontFamily:APP_FONT }}>{t.label}</span>
               </button>
             );
           })}
