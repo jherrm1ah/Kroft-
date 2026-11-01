@@ -118,9 +118,6 @@ const BRIEF = DARK;
 // visible flash on every cold load.
 const C = { ...LIGHT };
 
-// The one web font the app uses (APP_FONT in charts/format.js), in every weight the UI asks for —
-// headings go up to 800/900, which the browser would otherwise fake by smearing a lighter weight.
-const FONT = `@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');`;
 
 const ANIM = `
 @keyframes fadeUp{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:translateY(0)}}
@@ -1241,7 +1238,7 @@ function SplashScreen({ fading }) {
   return (
     <div style={{ position:"fixed", inset:0, zIndex:9999, opacity:fading?0:1, transition:"opacity .6s ease", pointerEvents:fading?"none":"all" }}>
       <OnboardImageFrame>
-        <img src="/onboarding-screen-1.png" alt="" style={{ width:"100%", height:"100%", display:"block" }} />
+        <img src="/onboarding-screen-1.webp" alt="" style={{ width:"100%", height:"100%", display:"block" }} />
       </OnboardImageFrame>
     </div>
   );
@@ -1376,7 +1373,7 @@ const Spinner = ({ size=14, color=C.white, thickness=2 }) => (
   <div style={{ width:size, height:size, border:`${thickness}px solid ${color}`, borderTopColor:"transparent", borderRadius:"50%", animation:"spin .7s linear infinite", flexShrink:0 }} />
 );
 
-// The robot mascot icon (kroft-robot-badge.png, background removed) used on auth screens and
+// The robot mascot icon (kroft-robot-badge.webp, background removed) used on auth screens and
 // the Ask Kroft empty state. Two small overlay shapes sit exactly over the photo's own eye
 // arcs, colored to match its screen's exact near-black tone (#1c1b1a, sampled from the asset)
 // so at rest they're invisible against it — the robotBlink keyframe (see ANIM) briefly scales
@@ -1385,7 +1382,7 @@ const Spinner = ({ size=14, color=C.white, thickness=2 }) => (
 // dimensions (measured directly from the 512×512 asset), so they stay aligned at any size.
 const RobotIcon = ({ size=48 }) => (
   <div style={{ position:"relative", width:size, height:size, flexShrink:0 }}>
-    <img src="/kroft-robot-badge.png" alt="" style={{ width:"100%", height:"100%", display:"block", objectFit:"contain" }} />
+    <img src="/kroft-robot-badge.webp" alt="" style={{ width:"100%", height:"100%", display:"block", objectFit:"contain" }} />
     <div style={{ position:"absolute", left:"32.6%", top:"45%", width:"15%", height:"8%", background:"#1c1b1a", borderRadius:"40%", transformOrigin:"center", animation:"robotBlink 4.8s ease-in-out infinite" }} />
     <div style={{ position:"absolute", left:"52.4%", top:"45%", width:"15%", height:"8%", background:"#1c1b1a", borderRadius:"40%", transformOrigin:"center", animation:"robotBlink 4.8s ease-in-out infinite" }} />
   </div>
@@ -3230,7 +3227,10 @@ function KroftApp({ onFullReset } = {}) {
   const SPLASH_MIN = 900, SPLASH_MAX = 4000;
   const [showSplash, setShowSplash] = useState(true);
   const [splashFading, setSplashFading] = useState(false);
-  const splashStart = useRef(Date.now());
+  // Measured from when the page started loading, not from this component's mount: index.html
+  // already shows the same splash while the script downloads, so on a slow connection the
+  // minimum has usually passed by the time the app is running.
+  const splashStart = useRef(typeof performance !== "undefined" && performance.timeOrigin ? performance.timeOrigin : Date.now());
   useEffect(() => {
     if (!showSplash) return;
     const dismiss = () => {
@@ -7627,7 +7627,9 @@ ${voiceMode
       .catch(() => {});
   }, [tab, homeSection, locationStatus]);
 
-  const G = `${FONT}${ANIM}
+  // The Inter web font is linked from index.html's <head>, so it starts downloading with the page
+  // instead of only after this script has run.
+  const G = `${ANIM}
     *{box-sizing:border-box;margin:0;padding:0}
     html,body{overflow-x:hidden;max-width:100vw;overscroll-behavior-x:none}
     #root,#app{overflow-x:hidden}
