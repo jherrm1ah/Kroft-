@@ -93,6 +93,72 @@ const tick = (ms = 0) => new Promise(r => setTimeout(r, ms));
   eq("same one already showing is not repeated", scheduled.length, 1);
 }
 
+// ── Location ──
+{
+  let perm = "prompt", asked = 0, fix = { coords: { latitude: 6.5, longitude: 3.4, accuracy: 20 }, timestamp: 1 }, failWith = null;
+  const Geo = {
+    checkPermissions: async () => ({ location: perm, coarseLocation: perm }),
+    requestPermissions: async () => { asked++; return { location: perm, coarseLocation: perm }; },
+    getCurrentPosition: async o => { if (failWith) throw new Error(failWith); Geo.lastOpts = o; return fix; },
+    watchPosition: async () => "w1", clearWatch: async () => {},
+  };
+  _internals.installGeolocation(Geo);
+  const get = o => new Promise(r => navigator.geolocation.getCurrentPosition(p => r({ ok: p }), e => r({ err: e }), o));
+  perm = "denied";
+  let r = await get();
+  eq("denied asks Android, then reports PERMISSION_DENIED", [asked, r.err?.code, r.err?.code === r.err?.PERMISSION_DENIED], [1, 1, true]);
+  perm = "granted";
+  r = await get({ enableHighAccuracy: true, timeout: 5000 });
+  eq("granted returns the native fix, with fallback on", [r.ok?.coords.latitude, Geo.lastOpts.enableHighAccuracy, Geo.lastOpts.enableLocationFallback], [6.5, true, true]);
+  failWith = "Location services are not enabled";
+  r = await get();
+  eq("location switched off maps to POSITION_UNAVAILABLE", [r.err?.code, r.err?.message], [2, "Location is turned off"]);
+  failWith = "Timeout reached";
+  r = await get();
+  eq("timeout maps to TIMEOUT", r.err?.code, 3);
+
+  _internals.installPermissionsQuery({ Geolocation: Geo, SpeechRecognition: { checkPermissions: async () => ({ speechRecognition: "prompt" }) } });
+  eq("permissions.query answers from Android", [(await navigator.permissions.query({ name: "geolocation" })).state, (await navigator.permissions.query({ name: "microphone" })).state], ["granted", "prompt"]);
+}
+
+// ── Mic fallback (phones with no speech recognizer) ──
+{
+  const { createRecorderRecognition, encodeWav } = await import("./voiceRecorder.js");
+  const wav = encodeWav(new Float32Array(48000).fill(0.5), 48000);
+  const dv = new DataView(wav.buffer);
+  eq("WAV is 16 kHz mono PCM", [String.fromCharCode(...wav.slice(0, 4)), dv.getUint32(24, true), dv.getUint16(22, true), wav.length], ["RIFF", 16000, 1, 44 + 16000 * 2]);
+
+  let node = null, tracksStopped = 0;
+  Object.defineProperty(navigator, "mediaDevices", { configurable: true, value: { getUserMedia: async () => ({ getTracks: () => [{ stop: () => tracksStopped++ }] }) } });
+  window.AudioContext = class { constructor() { this.sampleRate = 48000; this.state = "running"; this.destination = {}; }
+    createMediaStreamSource() { return { connect() {}, disconnect() {} }; }
+    createScriptProcessor() { node = { connect() {}, disconnect() {} }; return node; }
+    close() { return Promise.resolve(); } };
+  const frame = level => node.onaudioprocess({ inputBuffer: { getChannelData: () => new Float32Array(4096).fill(level) } });
+
+  let sent = null, allow = true;
+  const Rec = createRecorderRecognition({ ensurePermission: async () => allow, transcribe: async (b64, lang) => { sent = { bytes: atob(b64).length, lang }; return "Remind me to call mum"; } });
+  const log = [];
+  const r = new Rec(); r.lang = "en-NG";
+  r.onstart = () => log.push("start"); r.onresult = e => log.push(`${e.results[0].isFinal ? "final" : "interim"}:${e.results[0][0].transcript}`);
+  r.onerror = e => log.push(`error:${e.error}`); r.onend = () => log.push("end");
+  await r.start();
+  frame(0.2); frame(0.2); frame(0);
+  await r.stop(); await tick();
+  eq("records, transcribes, then gives a final result", [log, sent?.lang, sent?.bytes > 44, tracksStopped], [["start", "final:Remind me to call mum", "end"], "en-NG", true, 1]);
+
+  const log2 = []; const r2 = new Rec();
+  r2.onerror = e => log2.push(`error:${e.error}`); r2.onend = () => log2.push("end");
+  await r2.start(); frame(0.001); await r2.stop(); await tick();
+  eq("silence ends with no-speech, nothing sent", log2, ["error:no-speech", "end"]);
+
+  allow = false;
+  const log3 = []; const r3 = new Rec();
+  r3.onerror = e => log3.push(`error:${e.error}`); r3.onend = () => log3.push("end");
+  await r3.start();
+  eq("mic not allowed reports not-allowed", log3, ["error:not-allowed", "end"]);
+}
+
 eq("ids are stable and positive", [_internals.idFor("appt:1") === _internals.idFor("appt:1"), _internals.idFor("appt:1") > 0], [true, true]);
 
 console.log(fail ? `\n${fail} FAILED` : "\nALL PASSED");

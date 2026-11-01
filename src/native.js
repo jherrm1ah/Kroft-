@@ -4,15 +4,20 @@
 // using the same interfaces the existing code already calls:
 //
 //   speechSynthesis / SpeechSynthesisUtterance -> @capacitor-community/text-to-speech
-//   SpeechRecognition                          -> @capacitor-community/speech-recognition
+//   SpeechRecognition                          -> @capacitor-community/speech-recognition, or a
+//                                                 recorder + server transcription on phones with
+//                                                 no speech service (src/voiceRecorder.js)
+//   navigator.geolocation / permissions.query  -> @capacitor/geolocation
 //   Notification                               -> @capacitor/local-notifications
 //   navigator.share                            -> @capacitor/share
+//   Face ID / fingerprint unlock               -> @capgo/capacitor-native-biometric (verifyBiometric)
 //
 // It also routes sign-in and checkout pages through the system browser (Google refuses to sign in
 // inside a WebView) and brings the result back into the app through the com.orynthra.kroft://
 // deep link. In a normal browser isNativeApp is false and nothing here runs.
 
 import { Capacitor } from "@capacitor/core";
+import { createRecorderRecognition } from "./voiceRecorder.js";
 
 export const isNativeApp = Capacitor.isNativePlatform();
 export const APP_SCHEME = "com.orynthra.kroft";
@@ -27,9 +32,12 @@ const plugins = isNativeApp
       import("@capacitor/share"),
       import("@capacitor-community/text-to-speech"),
       import("@capacitor-community/speech-recognition"),
-    ]).then(([app, browser, ln, share, tts, sr]) => ({
+      import("@capacitor/geolocation"),
+      import("@capgo/capacitor-native-biometric"),
+    ]).then(([app, browser, ln, share, tts, sr, geo, bio]) => ({
       App: app.App, Browser: browser.Browser, LocalNotifications: ln.LocalNotifications,
       Share: share.Share, TextToSpeech: tts.TextToSpeech, SpeechRecognition: sr.SpeechRecognition,
+      Geolocation: geo.Geolocation, NativeBiometric: bio.NativeBiometric,
     }))
   : null;
 
@@ -210,6 +218,13 @@ function installSpeechRecognition(SR) {
   window.webkitSpeechRecognition = NativeRecognition;
 }
 
+// Asks Android for the microphone (RECORD_AUDIO) if it hasn't been granted yet.
+async function askMic(SR) {
+  let perm = await SR.checkPermissions();
+  if (perm.speechRecognition !== "granted") perm = await SR.requestPermissions();
+  return perm.speechRecognition === "granted";
+}
+
 // ── Notifications ──
 async function installNotifications(LocalNotifications) {
   class NativeNotification {
@@ -239,6 +254,145 @@ async function installNotifications(LocalNotifications) {
   window.Notification = NativeNotification;
 }
 
+// ── Location ──
+// A WebView's own geolocation often never gets a fix (and on phones without Google services it
+// has nothing to ask), so navigator.geolocation is answered by the native plugin instead, which
+// asks Android for permission itself and falls back to the phone's GPS/network providers.
+const GEO_ERR = { PERMISSION_DENIED: 1, POSITION_UNAVAILABLE: 2, TIMEOUT: 3 };
+const geoError = (code, message) => ({ code, message, ...GEO_ERR, fromShim: true });
+const toPermState = s => (s === "granted" ? "granted" : s === "denied" ? "denied" : "prompt");
+
+function installGeolocation(Geolocation) {
+  const ensure = async () => {
+    let p = await Geolocation.checkPermissions().catch(() => ({ location: "prompt" }));
+    if (p.location !== "granted" && p.coarseLocation !== "granted") p = await Geolocation.requestPermissions();
+    return p.location === "granted" || p.coarseLocation === "granted";
+  };
+  const toError = err => {
+    const msg = String(err?.message || err || "");
+    if (/denied|permission/i.test(msg)) return geoError(1, "Location permission denied");
+    if (/timeout|timed out/i.test(msg)) return geoError(3, "Timed out");
+    if (/disabled|not enabled|turned off|services/i.test(msg)) return geoError(2, "Location is turned off");
+    return geoError(2, msg || "Position unavailable");
+  };
+  const toPosition = p => ({ coords: { ...p.coords }, timestamp: p.timestamp || Date.now() });
+  const opts = o => ({ enableHighAccuracy: !!o?.enableHighAccuracy, timeout: o?.timeout ?? 15000, maximumAge: o?.maximumAge ?? 0, enableLocationFallback: true });
+  const watches = new Map();
+  let nextWatch = 1;
+
+  const geo = {
+    getCurrentPosition(ok, fail, o) {
+      ensure()
+        .then(granted => {
+          if (!granted) throw geoError(1, "Location permission denied");
+          return Geolocation.getCurrentPosition(opts(o));
+        })
+        .then(p => ok?.(toPosition(p)))
+        .catch(err => fail?.(err?.fromShim ? err : toError(err)));
+    },
+    watchPosition(ok, fail, o) {
+      const id = nextWatch++;
+      ensure().then(async granted => {
+        if (!granted) return fail?.(geoError(1, "Location permission denied"));
+        if (!watches.has(id)) return; // cleared before permission came back
+        const nativeId = await Geolocation.watchPosition(opts(o), (p, err) => (err ? fail?.(toError(err)) : p && ok?.(toPosition(p))));
+        if (watches.has(id)) watches.set(id, nativeId); else Geolocation.clearWatch({ id: nativeId }).catch(() => {});
+      }).catch(err => fail?.(toError(err)));
+      watches.set(id, null);
+      return id;
+    },
+    clearWatch(id) {
+      const nativeId = watches.get(id);
+      watches.delete(id);
+      if (nativeId) Geolocation.clearWatch({ id: nativeId }).catch(() => {});
+    },
+  };
+  try { Object.defineProperty(navigator, "geolocation", { value: geo, configurable: true }); } catch { /* read-only: keep the WebView's */ }
+  return ensure;
+}
+
+// navigator.permissions.query answers for location and the microphone from Android's own
+// permission state, so "already allowed" checks in the app match what the phone says.
+function installPermissionsQuery({ Geolocation, SpeechRecognition }) {
+  const original = navigator.permissions?.query?.bind(navigator.permissions);
+  const status = state => ({ state, onchange: null, addEventListener() {}, removeEventListener() {} });
+  const query = async desc => {
+    if (desc?.name === "geolocation") {
+      const p = await Geolocation.checkPermissions();
+      return status(p.location === "granted" || p.coarseLocation === "granted" ? "granted" : toPermState(p.location));
+    }
+    if (desc?.name === "microphone") return status(toPermState((await SpeechRecognition.checkPermissions()).speechRecognition));
+    if (original) return original(desc);
+    throw new TypeError("Unsupported permission");
+  };
+  if (navigator.permissions) {
+    try { Object.defineProperty(navigator.permissions, "query", { value: query, configurable: true }); } catch { /* keep the WebView's */ }
+  } else {
+    try { Object.defineProperty(navigator, "permissions", { value: { query }, configurable: true }); } catch { /* none */ }
+  }
+}
+
+// ── Permissions overview (Profile > Security) ──
+// The current Android permission state for what KROFT uses, and a way to ask for one.
+export async function getAppPermissions() {
+  if (!isNativeApp) return null;
+  const p = await plugins;
+  const safe = f => f().catch(() => "prompt");
+  const [microphone, location, notifications] = await Promise.all([
+    safe(async () => toPermState((await p.SpeechRecognition.checkPermissions()).speechRecognition)),
+    safe(async () => { const r = await p.Geolocation.checkPermissions(); return r.location === "granted" || r.coarseLocation === "granted" ? "granted" : toPermState(r.location); }),
+    safe(async () => toPermState((await p.LocalNotifications.checkPermissions()).display)),
+  ]);
+  return { microphone, location, notifications };
+}
+
+export async function requestAppPermission(kind) {
+  if (!isNativeApp) return "prompt";
+  const p = await plugins;
+  try {
+    if (kind === "microphone") return toPermState((await p.SpeechRecognition.requestPermissions()).speechRecognition);
+    if (kind === "location") { const r = await p.Geolocation.requestPermissions(); return r.location === "granted" || r.coarseLocation === "granted" ? "granted" : toPermState(r.location); }
+    if (kind === "notifications") {
+      const state = toPermState((await p.LocalNotifications.requestPermissions()).display);
+      if (window.Notification) window.Notification.permission = state === "prompt" ? "default" : state;
+      return state;
+    }
+  } catch { /* fall through */ }
+  return "denied";
+}
+
+// ── Biometric unlock ──
+// Android's own fingerprint / face prompt. WebAuthn (what the website uses) doesn't exist inside
+// an Android WebView. Resolves { ok:true } after a successful check, or { ok:false, reason }.
+export async function biometricStatus() {
+  if (!isNativeApp) return { available: false };
+  const { NativeBiometric } = await plugins;
+  try {
+    const r = await NativeBiometric.isAvailable({ useFallback: false });
+    return { available: !!r.isAvailable, code: r.errorCode };
+  } catch (err) {
+    return { available: false, code: err?.code };
+  }
+}
+
+export async function verifyBiometric(title = "Unlock KROFT") {
+  if (!isNativeApp) return { ok: false, reason: "unsupported" };
+  const status = await biometricStatus();
+  if (!status.available) {
+    // BiometricAuthError: 3 = nothing enrolled, 14 = no screen lock set
+    const c = Number(status.code);
+    return { ok: false, reason: c === 3 || c === 14 ? "not-enrolled" : "unsupported" };
+  }
+  const { NativeBiometric } = await plugins;
+  try {
+    await NativeBiometric.verifyIdentity({ title, subtitle: "Confirm it's you", negativeButtonText: "Cancel", maxAttempts: 5 });
+    return { ok: true };
+  } catch (err) {
+    const c = Number(err?.code);
+    return { ok: false, reason: c === 2 || c === 4 ? "locked-out" : "cancelled" };
+  }
+}
+
 // Sends a deep-link result (sign-in tokens, account-linking or payment outcome) into the page the
 // same way the website receives it, so the existing handlers in Kroft.jsx process it unchanged.
 function handleDeepLink(url, Browser) {
@@ -251,13 +405,23 @@ function handleDeepLink(url, Browser) {
 }
 
 // Exported for tests (src/native.test.mjs); the app only calls installNativeShims().
-export const _internals = { installSpeechSynthesis, installSpeechRecognition, installNotifications, idFor };
+export const _internals = { installSpeechSynthesis, installSpeechRecognition, installNotifications, installGeolocation, installPermissionsQuery, idFor };
 
 export async function installNativeShims() {
   if (!isNativeApp) return;
   const p = await plugins;
   installSpeechSynthesis(p.TextToSpeech);
-  installSpeechRecognition(p.SpeechRecognition);
+  // Phones sold without Google services (Huawei and others) have no speech recognizer for the
+  // plugin to use; there the mic records and KROFT's server transcribes instead.
+  const { available } = await p.SpeechRecognition.available().catch(() => ({ available: false }));
+  if (available) installSpeechRecognition(p.SpeechRecognition);
+  else {
+    const Rec = createRecorderRecognition({ ensurePermission: () => askMic(p.SpeechRecognition) });
+    window.SpeechRecognition = Rec;
+    window.webkitSpeechRecognition = Rec;
+  }
+  installGeolocation(p.Geolocation);
+  installPermissionsQuery(p);
   await installNotifications(p.LocalNotifications);
   navigator.share = async data => { await p.Share.share({ title: data?.title, text: data?.text, url: data?.url, dialogTitle: "Share" }); };
 

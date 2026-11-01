@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import "./storageShim.js";
 import Kroft from "./Kroft.jsx";
 import { isNativeApp, installNativeShims } from "./native.js";
+import { createRecorderRecognition } from "./voiceRecorder.js";
 
 const mount = () => createRoot(document.getElementById("root")).render(
   <StrictMode>
@@ -14,7 +15,14 @@ const mount = () => createRoot(document.getElementById("root")).render(
 // (see native.js) so the app's feature checks see them from its very first render. In a browser
 // this is skipped and the app mounts straight away.
 if (isNativeApp) installNativeShims().catch(() => {}).finally(mount);
-else mount();
+else {
+  // Browsers with no speech recognizer of their own (Firefox) still get working mic buttons: the
+  // clip is recorded and transcribed by KROFT's server (see voiceRecorder.js).
+  if (!window.SpeechRecognition && !window.webkitSpeechRecognition && navigator.mediaDevices?.getUserMedia && (window.AudioContext || window.webkitAudioContext)) {
+    window.SpeechRecognition = createRecorderRecognition();
+  }
+  mount();
+}
 
 // The service worker (public/sw.js) caches the app so it opens offline. Registered after the page
 // has loaded so it never competes with the first load, and only in production builds: during
