@@ -50,7 +50,8 @@ export function bytesToBase64(bytes) {
 // Sends the clip to /api/chat (Gemini understands audio) and returns the words, or "" if nothing
 // was said. Uses the signed-in session like every other AI call.
 export async function transcribeClip(base64Wav, lang) {
-  const headers = { "Content-Type": "application/json", "x-kroft-usage-type": "transcribe" };
+  const { getClientHeader } = await import("./native.js");
+  const headers = { "Content-Type": "application/json", "x-kroft-usage-type": "transcribe", "X-Kroft-Client": getClientHeader() };
   const { supabase, isSupabaseConfigured } = await import("./supabaseClient.js");
   if (isSupabaseConfigured) {
     const { data: { session } = {} } = await supabase.auth.getSession();

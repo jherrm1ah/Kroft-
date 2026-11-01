@@ -21,6 +21,26 @@ import { Capacitor } from "@capacitor/core";
 import { createRecorderRecognition } from "./voiceRecorder.js";
 
 export const isNativeApp = Capacitor.isNativePlatform();
+
+// Which plugins the installed app actually contains. The screens come from the live website, so
+// they can be newer than the app on the phone: an APK from before a plugin was added doesn't
+// have it, and every native feature checks this before using one instead of breaking.
+export const hasPlugin = name => isNativeApp && Capacitor.isPluginAvailable(name);
+
+// Identifies this copy of KROFT on every request to KROFT's own API (X-Kroft-Client), so the
+// server can tell the website from the Android app, and one app version from another:
+//   web;web=<build>
+//   android;shell=1.1.0;build=10100;web=<build>;plugins=app,brw,fs,geo,...
+// Older APKs (built before version tracking) report build=1.
+export const WEB_BUILD = typeof __WEB_BUILD__ !== "undefined" ? __WEB_BUILD__ : "dev";
+const PLUGIN_CODES = {
+  App: "app", Browser: "brw", LocalNotifications: "ln", Share: "shr", TextToSpeech: "tts",
+  SpeechRecognition: "sr", Geolocation: "geo", NativeBiometric: "bio", Filesystem: "fs",
+};
+let clientHeader = `web;web=${WEB_BUILD}`;
+let shellInfo = null;
+export const getClientHeader = () => clientHeader;
+export const getShellInfo = () => shellInfo;
 export const APP_SCHEME = "com.orynthra.kroft";
 export const nativeRedirect = path => `${APP_SCHEME}://${path}`;
 
@@ -53,7 +73,7 @@ const idFor = key => {
 // Opens a sign-in or checkout page in the system browser (a Chrome Custom Tab). Returns false when
 // not in the app, so callers fall back to normal navigation.
 export async function openInSystemBrowser(url) {
-  if (!isNativeApp) return false;
+  if (!hasPlugin("Browser")) return false;
   const { Browser } = await plugins;
   // If the person closes the browser without finishing, tell the app so it can stop its spinners.
   const handle = await Browser.addListener("browserFinished", () => {
@@ -69,7 +89,7 @@ export async function openInSystemBrowser(url) {
 // /api/push/schedule, and reconciles it the same way: everything under `prefix` not in the list
 // is cancelled.
 export async function scheduleDeviceReminders(prefix, items) {
-  if (!isNativeApp) return;
+  if (!hasPlugin("LocalNotifications")) return;
   const { LocalNotifications } = await plugins;
   const perm = await LocalNotifications.checkPermissions();
   if (perm.display !== "granted") return;
@@ -339,11 +359,11 @@ function installPermissionsQuery({ Geolocation, SpeechRecognition }) {
 export async function getAppPermissions() {
   if (!isNativeApp) return null;
   const p = await plugins;
-  const safe = f => f().catch(() => "prompt");
+  const safe = (plugin, f) => (hasPlugin(plugin) ? f().catch(() => "prompt") : Promise.resolve("prompt"));
   const [microphone, location, notifications] = await Promise.all([
-    safe(async () => toPermState((await p.SpeechRecognition.checkPermissions()).speechRecognition)),
-    safe(async () => { const r = await p.Geolocation.checkPermissions(); return r.location === "granted" || r.coarseLocation === "granted" ? "granted" : toPermState(r.location); }),
-    safe(async () => toPermState((await p.LocalNotifications.checkPermissions()).display)),
+    safe("SpeechRecognition", async () => toPermState((await p.SpeechRecognition.checkPermissions()).speechRecognition)),
+    safe("Geolocation", async () => { const r = await p.Geolocation.checkPermissions(); return r.location === "granted" || r.coarseLocation === "granted" ? "granted" : toPermState(r.location); }),
+    safe("LocalNotifications", async () => toPermState((await p.LocalNotifications.checkPermissions()).display)),
   ]);
   return { microphone, location, notifications };
 }
@@ -351,6 +371,8 @@ export async function getAppPermissions() {
 export async function requestAppPermission(kind) {
   if (!isNativeApp) return "prompt";
   const p = await plugins;
+  const needs = { microphone: "SpeechRecognition", location: "Geolocation", notifications: "LocalNotifications" }[kind];
+  if (needs && !hasPlugin(needs)) return "needs-update";
   try {
     if (kind === "microphone") return toPermState((await p.SpeechRecognition.requestPermissions()).speechRecognition);
     if (kind === "location") { const r = await p.Geolocation.requestPermissions(); return r.location === "granted" || r.coarseLocation === "granted" ? "granted" : toPermState(r.location); }
@@ -367,7 +389,7 @@ export async function requestAppPermission(kind) {
 // Android's own fingerprint / face prompt. WebAuthn (what the website uses) doesn't exist inside
 // an Android WebView. Resolves { ok:true } after a successful check, or { ok:false, reason }.
 export async function biometricStatus() {
-  if (!isNativeApp) return { available: false };
+  if (!hasPlugin("NativeBiometric")) return { available: false };
   const { NativeBiometric } = await plugins;
   try {
     const r = await NativeBiometric.isAvailable({ useFallback: false });
@@ -379,6 +401,7 @@ export async function biometricStatus() {
 
 export async function verifyBiometric(title = "Unlock KROFT") {
   if (!isNativeApp) return { ok: false, reason: "unsupported" };
+  if (!hasPlugin("NativeBiometric")) return { ok: false, reason: "needs-update" };
   const status = await biometricStatus();
   if (!status.available) {
     // BiometricAuthError: 3 = nothing enrolled, 14 = no screen lock set
@@ -401,6 +424,7 @@ export async function verifyBiometric(title = "Unlock KROFT") {
 // save them to Files/Drive or send them on. Returns false if they closed the sheet.
 export async function saveFileFromApp(filename, content) {
   if (!isNativeApp) return false;
+  if (!hasPlugin("Filesystem") || !hasPlugin("Share")) throw Object.assign(new Error("This version of the app can't save files"), { code: "needs-update" });
   const { Filesystem, Share } = await plugins;
   const name = String(filename || "kroft-file.txt").replace(/[\\/:*?"<>|]+/g, "_");
   const { uri } = await Filesystem.writeFile({ path: `exports/${name}`, data: String(content ?? ""), directory: "CACHE", encoding: "utf8", recursive: true });
@@ -417,12 +441,12 @@ export async function saveFileFromApp(filename, content) {
 // Android 12+ only fires reminders on the minute if "Alarms & reminders" is allowed for the app
 // (off by default on Android 14). Without it reminders still come, just possibly a few minutes late.
 export async function exactAlarmStatus() {
-  if (!isNativeApp) return "granted";
+  if (!hasPlugin("LocalNotifications")) return "granted";
   const { LocalNotifications } = await plugins;
   try { return toPermState((await LocalNotifications.checkExactNotificationSetting()).exact_alarm); } catch { return "granted"; }
 }
 export async function openExactAlarmSetting() {
-  if (!isNativeApp) return "granted";
+  if (!hasPlugin("LocalNotifications")) return "granted";
   const { LocalNotifications } = await plugins;
   try { return toPermState((await LocalNotifications.changeExactNotificationSetting()).exact_alarm); } catch { return "denied"; }
 }
@@ -439,28 +463,47 @@ function handleDeepLink(url, Browser) {
 }
 
 // Exported for tests (src/native.test.mjs); the app only calls installNativeShims().
-export const _internals = { installSpeechSynthesis, installSpeechRecognition, installNotifications, installGeolocation, installPermissionsQuery, idFor };
+export const _internals = { installSpeechSynthesis, installSpeechRecognition, installNotifications, installGeolocation, installPermissionsQuery, idFor, loadShellInfo };
 
+// The app's version and which plugins it contains, read once at start-up.
+async function loadShellInfo(App) {
+  let version = "unknown", build = 0;
+  if (hasPlugin("App")) {
+    try { const info = await App.getInfo(); version = info.version || version; build = Number(info.build) || 0; } catch { /* keep unknown */ }
+  }
+  const plugins = Object.keys(PLUGIN_CODES).filter(hasPlugin);
+  shellInfo = { version, build, plugins };
+  clientHeader = `android;shell=${version};build=${build};web=${WEB_BUILD};plugins=${plugins.map(n => PLUGIN_CODES[n]).join(",")}`;
+  return shellInfo;
+}
+
+// Each stand-in is installed only when the installed app has its plugin; otherwise the WebView's
+// own behaviour stays (which may simply not work, but no longer breaks what was there before).
 export async function installNativeShims() {
   if (!isNativeApp) return;
   const p = await plugins;
-  installSpeechSynthesis(p.TextToSpeech);
-  // Phones sold without Google services (Huawei and others) have no speech recognizer for the
-  // plugin to use; there the mic records and KROFT's server transcribes instead.
-  const { available } = await p.SpeechRecognition.available().catch(() => ({ available: false }));
-  if (available) installSpeechRecognition(p.SpeechRecognition);
-  else {
-    const Rec = createRecorderRecognition({ ensurePermission: () => askMic(p.SpeechRecognition) });
-    window.SpeechRecognition = Rec;
-    window.webkitSpeechRecognition = Rec;
+  await loadShellInfo(p.App);
+  if (hasPlugin("TextToSpeech")) installSpeechSynthesis(p.TextToSpeech);
+  if (hasPlugin("SpeechRecognition")) {
+    // Phones sold without Google services (Huawei and others) have no speech recognizer for the
+    // plugin to use; there the mic records and KROFT's server transcribes instead.
+    const { available } = await p.SpeechRecognition.available().catch(() => ({ available: false }));
+    if (available) installSpeechRecognition(p.SpeechRecognition);
+    else {
+      const Rec = createRecorderRecognition({ ensurePermission: () => askMic(p.SpeechRecognition) });
+      window.SpeechRecognition = Rec;
+      window.webkitSpeechRecognition = Rec;
+    }
   }
-  installGeolocation(p.Geolocation);
-  installPermissionsQuery(p);
-  await installNotifications(p.LocalNotifications);
-  navigator.share = async data => { await p.Share.share({ title: data?.title, text: data?.text, url: data?.url, dialogTitle: "Share" }); };
+  if (hasPlugin("Geolocation")) installGeolocation(p.Geolocation);
+  if (hasPlugin("Geolocation") && hasPlugin("SpeechRecognition")) installPermissionsQuery(p);
+  if (hasPlugin("LocalNotifications")) await installNotifications(p.LocalNotifications);
+  if (hasPlugin("Share")) navigator.share = async data => { await p.Share.share({ title: data?.title, text: data?.text, url: data?.url, dialogTitle: "Share" }); };
 
-  p.App.addListener("appUrlOpen", ({ url }) => handleDeepLink(url, p.Browser));
-  // Android's back button: go back within KROFT's own pages (e.g. Privacy policy) where possible,
-  // otherwise send the app to the background rather than closing it mid-task.
-  p.App.addListener("backButton", ({ canGoBack }) => { if (canGoBack) window.history.back(); else p.App.minimizeApp(); });
+  if (hasPlugin("App")) {
+    p.App.addListener("appUrlOpen", ({ url }) => handleDeepLink(url, p.Browser));
+    // Android's back button: go back within KROFT's own pages (e.g. Privacy policy) where
+    // possible, otherwise send the app to the background rather than closing it mid-task.
+    p.App.addListener("backButton", ({ canGoBack }) => { if (canGoBack) window.history.back(); else p.App.minimizeApp(); });
+  }
 }

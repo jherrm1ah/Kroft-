@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "node src/markdown/parse.test.mjs && node src/markdown/verify.test.mjs && node src/native.test.mjs",
+    "test": "node src/markdown/parse.test.mjs && node src/markdown/verify.test.mjs && node src/native.test.mjs && node src/webUpdate.test.mjs",
     "android:sync": "npm run build && npx cap sync android",
     "android:apk": "npm run android:sync && cd android && ./gradlew assembleDebug"
   },
