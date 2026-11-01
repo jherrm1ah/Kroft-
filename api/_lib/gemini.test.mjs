@@ -1,6 +1,6 @@
 // Tests that api/_lib/gemini.js reports token usage for cost measurement without changing the
 // reply, using a fake Gemini (global fetch). Run with: npm test
-const { callGemini, usageFrom } = await import("./gemini.js");
+const { callGemini, usageFrom, googleReason } = await import("./gemini.js");
 let fail = 0;
 const eq = (name, got, want) => { if (JSON.stringify(got) !== JSON.stringify(want)) { fail++; console.log("FAIL", name, "\n  got ", JSON.stringify(got), "\n  want", JSON.stringify(want)); } else console.log("ok  ", name); };
 const meta = { promptTokenCount: 5200, candidatesTokenCount: 310, thoughtsTokenCount: 640, cachedContentTokenCount: 4096 };
@@ -55,6 +55,11 @@ eq("usageFrom with nothing", usageFrom(undefined), {});
   const res = await callGemini(JSON.stringify({ messages: [] }), "k");
   eq("works without a logger", res.status, 200);
 }
+
+// Google's reason for a refusal, as codes only.
+const refused = JSON.stringify({ error: { code: 403, message: "Method doesn't allow unregistered callers", status: "PERMISSION_DENIED", details: [{ "@type": "type.googleapis.com/google.rpc.ErrorInfo", reason: "API_KEY_INVALID" }] } });
+eq("Google's refusal reason is kept, as codes", [googleReason(refused), googleReason(JSON.stringify({ error: { status: "PERMISSION_DENIED" } })), googleReason("not json"), googleReason(JSON.stringify({ error: { status: "a message with spaces" } }))],
+  [" PERMISSION_DENIED API_KEY_INVALID", " PERMISSION_DENIED", "", ""]);
 
 console.log(fail ? `\n${fail} FAILED` : "\nALL PASSED");
 if (fail) process.exit(1);

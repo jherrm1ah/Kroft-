@@ -17,6 +17,17 @@
 // pointed at gemini-3.6-flash as its replacement.
 const DEFAULT_MODEL = "gemini-3.6-flash";
 
+// Google's own reason for refusing a request, e.g. " PERMISSION_DENIED API_KEY_INVALID" or
+// " PERMISSION_DENIED SERVICE_DISABLED", so the request log says why (a bad or disabled key, the
+// API switched off, billing) without anyone having to reproduce it. Codes only, never text.
+export function googleReason(body) {
+  try {
+    const e = JSON.parse(body)?.error || {};
+    const reason = (e.details || []).map(d => d?.reason).find(Boolean) || "";
+    return [e.status, reason].filter(x => /^[A-Z_]{2,40}$/.test(x || "")).map(x => ` ${x}`).join("");
+  } catch { return ""; }
+}
+
 function jsonResponse(body, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
@@ -149,7 +160,7 @@ export async function callGemini(rawBody, apiKey, { onUsage } = {}) {
     // with what Kroft.jsx's friendlyError(status) already branches on, so the status passes
     // through unchanged; only the body differs; friendlyError never reads it.
     const detail = await upstream.text().catch(() => "");
-    report({ status: upstream.status, error: `upstream_${upstream.status}` });
+    report({ status: upstream.status, error: `upstream_${upstream.status}${googleReason(detail)}` });
     return jsonResponse({ error: "The AI service rejected the request.", detail }, upstream.status);
   }
 
