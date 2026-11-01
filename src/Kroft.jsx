@@ -5,6 +5,7 @@ import { fmtCur, APP_FONT } from "./charts/format.js";
 import { Markdown } from "./markdown/Markdown.jsx";
 import { toPlainText, toSpeechText } from "./markdown/parse.js";
 import { copyRich, copyPlain } from "./markdown/clipboard.js";
+import { offlineUserId, flushPending, clearOfflineData, hasUnsyncedChanges, unreadableKeys } from "./storageShim.js";
 
 // A lazy chunk fetched over a flaky mobile connection can fail with a plain network error —
 // dynamic import() rejects, and React throws that straight into the nearest error boundary,
@@ -2488,7 +2489,7 @@ function LogoutDialog({ onConfirm, onCancel }) {
         style={{ width:"100%", maxWidth:400, background:C.card, borderRadius:32, padding:"30px 22px 12px", boxShadow:"0 24px 60px rgba(0,0,0,.3)", animation:"pop .22s ease" }}>
         <h2 id="logout-title" style={{ fontSize:24, fontWeight:600, color:C.text, margin:"0 8px 10px", letterSpacing:-.4 }}>Log out?</h2>
         <p id="logout-desc" style={{ fontSize:16, lineHeight:1.5, color:C.muted, margin:"0 8px 24px" }}>You'll need to sign back in to keep using KROFT.</p>
-        <button disabled={busy} onClick={async () => { setBusy(true); await onConfirm(); }}
+        <button disabled={busy} onClick={async () => { setBusy(true); if ((await onConfirm()) === false) setBusy(false); }}
           style={{ width:"100%", height:52, borderRadius:999, border:"none", background:C.white, color:C.black, fontSize:16, fontWeight:700, fontFamily:APP_FONT, cursor:busy?"wait":"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
           {busy ? <Spinner size={18} color={C.black} thickness={2} /> : "Log out"}
         </button>
@@ -3879,7 +3880,9 @@ function KroftApp({ onFullReset } = {}) {
           else returnedFromGoogle = true;
         }
         const { data: { session } = {} } = await supabase.auth.getSession();
-        hasSession = !!session;
+        // Offline with an expired token Supabase can't refresh the session, but this is still the
+        // person last signed in on this device: open their saved copy rather than the welcome screen.
+        hasSession = !!session || !!offlineUserId();
         authUser = session?.user || null;
       }
       const data = await hydrateAllGroups({ freshChat:returnedFromGoogle });
@@ -6274,6 +6277,9 @@ ${voiceMode
   // Streaming matters most here because replies are long enough that a spinner-then-dump feels
   // broken, and because the first sentence can start being read aloud while the rest arrives.
   const runKroftCompletion = async (messages, { onDelta, signal, usageType = "chat", voiceMode = false } = {}) => {
+    if (typeof navigator !== "undefined" && navigator.onLine === false) {
+      throw new KroftError("You're offline. KROFT needs an internet connection to answer, so try again once you're back online.");
+    }
     const recent = messages.slice(-historyLimit());
     const body = {
       model:"gemini-3.6-flash",
@@ -6487,6 +6493,7 @@ ${voiceMode
       try {
         Object.values(STORAGE_KEYS).forEach(k => window.localStorage.removeItem(k));
         sessionStorage.removeItem(OAUTH_RETURN_KEY);
+        clearOfflineData();
       } catch { /* storage unavailable: nothing to wipe */ }
     };
     wipeLocal();
@@ -7142,6 +7149,25 @@ ${voiceMode
     return () => document.removeEventListener("visibilitychange", onVisible);
   }, []);
 
+  // Online/offline. Offline, the app runs from this device's copy of the data (see storageShim.js):
+  // a banner says so, AI features explain they need a connection, and changes are queued. Back
+  // online, queued changes are sent, and anything that couldn't be loaded offline is loaded now.
+  const [online, setOnline] = useState(() => typeof navigator === "undefined" || navigator.onLine !== false);
+  useEffect(() => {
+    const goOffline = () => setOnline(false);
+    const goOnline = async () => {
+      setOnline(true);
+      if (!isSupabaseConfigured) return;
+      const hadQueued = hasUnsyncedChanges();
+      await flushPending();
+      if (unreadableKeys().length) await hydrateAllGroups();
+      if (hadQueued && !hasUnsyncedChanges()) toast("Back online. Your changes are synced.");
+    };
+    window.addEventListener("offline", goOffline);
+    window.addEventListener("online", goOnline);
+    return () => { window.removeEventListener("offline", goOffline); window.removeEventListener("online", goOnline); };
+  }, []);
+
   // Swaps in a saved conversation as the active one — saving whatever's currently active into
   // history first (same as startNewChat), and pulling the opened conversation out of the history
   // list since it's the live one again now, not a saved item.
@@ -7677,11 +7703,30 @@ ${voiceMode
   // undo behind the voice overlay hid it exactly where it mattered most. aria-live so toasts are
   // announced rather than shown only; "polite" waits for a pause instead of cutting across
   // whatever is being read.
+  // Placed where it never sits over a control, and it ignores taps either way: above the bottom
+  // navigation in the app, at the top on the sign-in screens (nothing there to cover), and not at
+  // all in the chat, which shows its own note above the message box instead.
+  const offlineBanner = !online && !(step === "dashboard" && tab === "nova") && (
+    <div role="status" style={{ position:"fixed", left:"50%", transform:"translateX(-50%)", zIndex:1350, pointerEvents:"none",
+      ...(step === "dashboard" ? { bottom:"calc(96px + env(safe-area-inset-bottom))" } : { top:"calc(10px + env(safe-area-inset-top))" }),
+      display:"flex", alignItems:"center", gap:8, maxWidth:"calc(100vw - 32px)", boxSizing:"border-box", padding:"8px 14px", borderRadius:999,
+      background:C.text, color:C.bg, fontSize:13, fontWeight:600, fontFamily:APP_FONT, boxShadow:"0 8px 24px rgba(0,0,0,.18)" }}>
+      <svg viewBox="0 0 24 24" width={15} height={15} aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink:0 }}>
+        <path d="M3 3l18 18M8.5 16.5a5 5 0 0 1 7 0M5 13a10 10 0 0 1 4.3-2.6M19 13a10 10 0 0 0-2.2-1.6M1.5 9.5a15 15 0 0 1 4.6-3M22.5 9.5A15 15 0 0 0 11 5.1M12 20h.01" />
+      </svg>
+      <span style={{ overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+        {step === "dashboard" ? "You're offline. Changes will sync later." : "You're offline. Connect to sign in."}
+      </span>
+    </div>
+  );
+
   const toastStack = (
     <div role="status" aria-live="polite" aria-atomic="false"
-      style={{ position:"fixed", top:14, right:14, zIndex:1400, display:"flex", flexDirection:"column", gap:7, maxWidth:300 }}>
+      style={{ position:"fixed", top:14, right:14, zIndex:1400, display:"flex", flexDirection:"column", gap:7, maxWidth:300, pointerEvents:"none" }}>
+      {/* Toasts sit over the header's buttons, so they let taps through; only one with an Undo
+          button takes taps itself. */}
       {toasts.map(t => (
-        <div key={t.id} style={{ background:C.card, border:`1px solid ${C.accent}44`, borderRadius:14, padding:"9px 14px", animation:"slideIn .3s ease", boxShadow:`0 8px 28px rgba(0,0,0,.7), 0 0 0 1px ${C.accentBg}` }}>
+        <div key={t.id} style={{ pointerEvents:t.onUndo ? "auto" : "none", background:C.card, border:`1px solid ${C.accent}44`, borderRadius:14, padding:"9px 14px", animation:"slideIn .3s ease", boxShadow:`0 8px 28px rgba(0,0,0,.7), 0 0 0 1px ${C.accentBg}` }}>
           <div style={{ display:"flex", alignItems:"center", gap:7 }}>
             <Dot color={C.accent} />
             <div style={{ fontSize:11, color:C.white, lineHeight:1.4, fontFamily:APP_FONT, flex:1 }}>{t.msg}</div>
@@ -7698,6 +7743,7 @@ ${voiceMode
     <div key={themeTick} style={{ fontFamily:APP_FONT, overflowX:"hidden", maxWidth:"100vw", touchAction:"pan-y" }}>
       <style>{G}</style>
       {toastStack}
+      {offlineBanner}
 
       {step === "welcome" && (
         <WelcomeScreen onPhone={openPhoneSignIn} onGoogle={signInWithGoogle} onEmail={() => setStep("signup")} onLogIn={() => setStep("login")} googleLoading={googleLoading} />
@@ -8355,6 +8401,7 @@ ${voiceMode
       )}
 
       {toastStack}
+      {offlineBanner}
 
       {showConfetti && <Confetti onDone={() => setShowConfetti(false)} />}
 
@@ -10980,6 +11027,12 @@ ${voiceMode
                   handleAiAttach(e, "image");
                   if (took) setAiInput(v => v.trim() ? v : "Log this receipt as an expense.");
                 }} />
+                {!online && (
+                  <div role="status" style={{ display:"flex", alignItems:"center", gap:8, margin:"0 4px 8px", fontSize:13, color:C.soft }}>
+                    <span aria-hidden="true" style={{ width:8, height:8, borderRadius:"50%", background:C.warning, flexShrink:0 }} />
+                    You're offline. KROFT can answer again once you're back online.
+                  </div>
+                )}
                 {aiAttachments.length > 0 && (
                   <div style={{ display:"flex", flexWrap:"wrap", gap:6, marginBottom:8, padding:"0 4px" }}>
                     {aiAttachments.map(a => (
@@ -11163,8 +11216,22 @@ ${voiceMode
                 // stop any speech still playing, then fully reset via onFullReset (see Kroft())
                 // rather than clearing state field by field — with real accounts, a different
                 // person can genuinely sign into this same browser next.
+                // Changes made offline live only on this device until they sync, and logging out
+                // clears the device copy, so sync first and don't log out while that's impossible.
+                if (isSupabaseConfigured) {
+                  if (hasUnsyncedChanges() && navigator.onLine === false) {
+                    toast("You have changes that haven't synced yet. Connect to the internet, then log out.");
+                    return false;
+                  }
+                  await flushPending();
+                  if (hasUnsyncedChanges()) {
+                    toast("Couldn't sync your latest changes. Try logging out again in a moment.");
+                    return false;
+                  }
+                }
                 if ("speechSynthesis" in window) window.speechSynthesis.cancel();
                 if (isSupabaseConfigured) await supabase.auth.signOut();
+                clearOfflineData();
                 toast("Signed out.");
                 // Short delay so the toast above is actually visible before onFullReset swaps
                 // this whole component out for a clean instance.
