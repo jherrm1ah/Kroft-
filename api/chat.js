@@ -65,7 +65,7 @@ function usageLogger({ admin, user, plan, usageType, client, ctx }) {
       cached_tokens: info.cachedTokens ?? null,
       latency_ms: info.latencyMs ?? null,
       status: info.status,
-      error: info.error ? String(info.error).slice(0, 60) : null,
+      error: info.error ? String(info.error).slice(0, 80) : null,
       system_chars: info.systemChars ?? null,
       client: client ? client.slice(0, 200) : null,
     };
