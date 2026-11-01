@@ -8,6 +8,7 @@ import { copyRich, copyPlain } from "./markdown/clipboard.js";
 import { offlineUserId, flushPending, clearOfflineData, hasUnsyncedChanges, unreadableKeys } from "./storageShim.js";
 import { DEFAULT_INVOICE_SETTINGS, invoiceTotals, invoiceStatus, invoiceAllowance, quoteAllowance, createInvoice, createQuote, invoiceFromQuote, invoiceProblem, FREE_INVOICES_PER_MONTH, FREE_QUOTES_PER_MONTH, whatsappLink, sendMessage, reminderMessage, quoteMessage, prettyDate, STATUS_LABEL, invoicesForAI, quotesForAI, daysBetween, docStatus, clientSummaries, clientKey } from "./invoices/model.js";
 import { invoicePdf, invoiceFileName } from "./invoices/pdf.js";
+import { saveFile } from "./saveFile.js";
 import { isNativeApp, nativeRedirect, openInSystemBrowser, scheduleDeviceReminders, verifyBiometric, getAppPermissions, requestAppPermission, saveFileFromApp, exactAlarmStatus, openExactAlarmSetting, getClientHeader } from "./native.js";
 
 // What a mic button says when listening fails, by the SpeechRecognition error code. Silence used
@@ -2646,7 +2647,6 @@ function ProfileRow({ label, sub, expanded, onToggle, children, right, icon, glo
 // Free plan: FREE_INVOICES_PER_MONTH invoices and FREE_QUOTES_PER_MONTH quotes a month; KROFT Plus:
 // unlimited, plus payment reminders.
 const DOC_TONE = { draft:null, sent:"accent", overdue:"negative", paid:"positive", cancelled:null, accepted:"positive", declined:"negative", invoiced:null, expired:"warning" };
-const bytesToBase64 = bytes => { let bin = ""; for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000)); return btoa(bin); };
 const sumByCur = (obj, fmt) => Object.entries(obj).filter(([, v]) => v).map(([cur, v]) => fmt(v, cur)).join(" + ");
 
 function InvoiceField({ label, children, style }) {
@@ -2765,23 +2765,9 @@ function InvoicesScreen({ invoices, setInvoices, quotes, setQuotes, settings, se
       const name = invoiceFileName(doc);
       const text = messageFor(doc, false);
       const label = `${doc.kind === "quote" ? "Quote" : "Invoice"} ${doc.number}`;
-      if (isNativeApp) {
-        const shared = await saveFileFromApp(name, null, { base64: bytesToBase64(bytes), text });
-        if (shared) markSent(doc);
-      } else {
-        const file = new File([bytes], name, { type:"application/pdf" });
-        if (navigator.canShare?.({ files:[file] })) {
-          try { await navigator.share({ files:[file], title:label, text }); markSent(doc); }
-          catch (err) { if (err?.name !== "AbortError") throw err; }
-        } else {
-          const url = URL.createObjectURL(file);
-          const a = document.createElement("a"); a.href = url; a.download = name;
-          document.body.appendChild(a); a.click(); a.remove();
-          setTimeout(() => URL.revokeObjectURL(url), 10000);
-          markSent(doc);
-          toast("PDF downloaded. Attach it to your email or WhatsApp.");
-        }
-      }
+      const result = await saveFile({ name, data:bytes, type:"application/pdf", text, title:label });
+      if (result !== "cancelled") markSent(doc);
+      if (result === "downloaded") toast("PDF downloaded. Attach it to your email or WhatsApp.");
     } catch (err) {
       toast(err?.code === "needs-update" ? "Update the KROFT app to share PDFs." : "Couldn't create the PDF. Try again.");
     } finally { setBusy(""); }
@@ -7297,21 +7283,10 @@ ${voiceMode
         groups.profile = { ...groups.profile, user: safeUser };
       }
       const payload = { app:"KROFT", formatVersion:1, exportedAt:new Date().toISOString(), data:groups };
-      // The Android app's WebView ignores <a download>; the file goes to the share sheet instead.
-      if (isNativeApp) {
-        try { await saveFileFromApp(`kroft-backup-${todayISO()}.json`, JSON.stringify(payload, null, 2)); }
-        catch (err) { toast(err?.code === "needs-update" ? "Update the KROFT app to save files." : "Couldn't create the backup. Try again."); }
-        return;
-      }
-      const blob = new Blob([JSON.stringify(payload, null, 2)], { type:"application/json" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url; a.download = `kroft-backup-${todayISO()}.json`;
-      document.body.appendChild(a); a.click(); a.remove();
-      // Revoked on a delay — revoking immediately cancels the download on some browsers.
-      setTimeout(() => URL.revokeObjectURL(url), 10000);
-      toast("Backup downloaded.");
-    } catch { toast("Couldn't create the backup. Try again."); }
+      // Share sheet on phones and in the app, a download on computers (see saveFile.js).
+      const result = await saveFile({ name:`kroft-backup-${todayISO()}.json`, data:JSON.stringify(payload, null, 2), type:"application/json", title:"KROFT backup" });
+      if (result === "downloaded") toast("Backup downloaded. Check your Downloads folder.");
+    } catch (err) { toast(err?.code === "needs-update" ? "Update the KROFT app to save files." : "Couldn't create the backup. Try again."); }
   };
 
   // Permanently deletes the account (see api/account/delete.js), or, without Supabase, everything
@@ -8258,20 +8233,17 @@ ${voiceMode
     }
   };
 
+  // CSV export and document downloads. This used to revoke the file's URL the instant after
+  // clicking, which cancels the download in Chrome on Android while still saying "downloaded".
+  // Now: share sheet on phones and in the app, a download on computers (see saveFile.js).
   const downloadText = async (filename, content, doneMsg) => {
-    if (isNativeApp) {
-      // No downloads in the Android app's WebView: hand the file to the share sheet instead.
-      try { await saveFileFromApp(filename, content); }
-      catch (err) { toast(err?.code === "needs-update" ? "Update the KROFT app to save files." : "Couldn't save that file. Try again."); }
-      return;
+    try {
+      const type = filename.endsWith(".csv") ? "text/csv" : "text/plain";
+      const result = await saveFile({ name:filename, data:content, type });
+      if (result === "downloaded" && doneMsg) toast(`${doneMsg} Check your Downloads folder.`);
+    } catch (err) {
+      toast(err?.code === "needs-update" ? "Update the KROFT app to save files." : "Couldn't save that file. Try again.");
     }
-    const blob = new Blob([content], { type:"text/plain" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url; a.download = filename;
-    document.body.appendChild(a); a.click(); document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    if (doneMsg) toast(doneMsg);
   };
 
   // A field containing a comma, quote or newline has to be quoted, with any internal quote
