@@ -11,6 +11,7 @@
 //   Notification                               -> @capacitor/local-notifications
 //   navigator.share                            -> @capacitor/share
 //   Face ID / fingerprint unlock               -> @capgo/capacitor-native-biometric (verifyBiometric)
+//   file downloads (<a download>)              -> @capacitor/filesystem + share sheet (saveFileFromApp)
 //
 // It also routes sign-in and checkout pages through the system browser (Google refuses to sign in
 // inside a WebView) and brings the result back into the app through the com.orynthra.kroft://
@@ -34,10 +35,11 @@ const plugins = isNativeApp
       import("@capacitor-community/speech-recognition"),
       import("@capacitor/geolocation"),
       import("@capgo/capacitor-native-biometric"),
-    ]).then(([app, browser, ln, share, tts, sr, geo, bio]) => ({
+      import("@capacitor/filesystem"),
+    ]).then(([app, browser, ln, share, tts, sr, geo, bio, fs]) => ({
       App: app.App, Browser: browser.Browser, LocalNotifications: ln.LocalNotifications,
       Share: share.Share, TextToSpeech: tts.TextToSpeech, SpeechRecognition: sr.SpeechRecognition,
-      Geolocation: geo.Geolocation, NativeBiometric: bio.NativeBiometric,
+      Geolocation: geo.Geolocation, NativeBiometric: bio.NativeBiometric, Filesystem: fs.Filesystem,
     }))
   : null;
 
@@ -391,6 +393,38 @@ export async function verifyBiometric(title = "Unlock KROFT") {
     const c = Number(err?.code);
     return { ok: false, reason: c === 2 || c === 4 ? "locked-out" : "cancelled" };
   }
+}
+
+// ── Saving files ──
+// An Android WebView ignores <a download> (nothing happens at all), so backups, CSV exports and
+// documents are written to the app's cache and handed to the share sheet, where the person can
+// save them to Files/Drive or send them on. Returns false if they closed the sheet.
+export async function saveFileFromApp(filename, content) {
+  if (!isNativeApp) return false;
+  const { Filesystem, Share } = await plugins;
+  const name = String(filename || "kroft-file.txt").replace(/[\\/:*?"<>|]+/g, "_");
+  const { uri } = await Filesystem.writeFile({ path: `exports/${name}`, data: String(content ?? ""), directory: "CACHE", encoding: "utf8", recursive: true });
+  try {
+    await Share.share({ title: name, files: [uri], dialogTitle: "Save or send" });
+    return true;
+  } catch (err) {
+    if (/cancel/i.test(String(err?.message || ""))) return false;
+    throw err;
+  }
+}
+
+// ── Exact reminder times ──
+// Android 12+ only fires reminders on the minute if "Alarms & reminders" is allowed for the app
+// (off by default on Android 14). Without it reminders still come, just possibly a few minutes late.
+export async function exactAlarmStatus() {
+  if (!isNativeApp) return "granted";
+  const { LocalNotifications } = await plugins;
+  try { return toPermState((await LocalNotifications.checkExactNotificationSetting()).exact_alarm); } catch { return "granted"; }
+}
+export async function openExactAlarmSetting() {
+  if (!isNativeApp) return "granted";
+  const { LocalNotifications } = await plugins;
+  try { return toPermState((await LocalNotifications.changeExactNotificationSetting()).exact_alarm); } catch { return "denied"; }
 }
 
 // Sends a deep-link result (sign-in tokens, account-linking or payment outcome) into the page the

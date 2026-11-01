@@ -6,12 +6,20 @@ import { Markdown } from "./markdown/Markdown.jsx";
 import { toPlainText, toSpeechText } from "./markdown/parse.js";
 import { copyRich, copyPlain } from "./markdown/clipboard.js";
 import { offlineUserId, flushPending, clearOfflineData, hasUnsyncedChanges, unreadableKeys } from "./storageShim.js";
-import { isNativeApp, nativeRedirect, openInSystemBrowser, scheduleDeviceReminders, verifyBiometric, getAppPermissions, requestAppPermission } from "./native.js";
+import { isNativeApp, nativeRedirect, openInSystemBrowser, scheduleDeviceReminders, verifyBiometric, getAppPermissions, requestAppPermission, saveFileFromApp, exactAlarmStatus, openExactAlarmSetting } from "./native.js";
 
 // What a mic button says when listening fails, by the SpeechRecognition error code. Silence used
 // to show "Mic error — check permissions." too, which sent people hunting through settings for a
 // permission they had already given.
 const MIC_PERMISSION_HINT = isNativeApp ? "Allow it in Profile → Security and login → App permissions." : "Allow it in your browser's site settings.";
+// Android app: biometric unlock is a lock on the app itself, asked for when KROFT opens and
+// when it comes back after a while in the background. (A sign-in button can't work for it:
+// once someone logs out there's no session left on the phone for a fingerprint to unlock.)
+const NATIVE_BIO_KEY = "kroft-native-biometric";
+const APP_LOCK_AFTER_MS = 5 * 60 * 1000;
+function readNativeBio() { try { return localStorage.getItem(NATIVE_BIO_KEY); } catch { return null; } }
+function writeNativeBio(v) { try { if (v) localStorage.setItem(NATIVE_BIO_KEY, v); else localStorage.removeItem(NATIVE_BIO_KEY); } catch { /* storage unavailable */ } }
+
 function micErrorText(code) {
   if (code === "aborted") return "";
   if (code === "no-speech") return "Didn't catch that. Tap the mic and try again.";
@@ -2636,11 +2644,16 @@ const APP_PERMISSIONS = [
   { key:"microphone", label:"Microphone", why:"Voice input, voice mode and voice memos" },
   { key:"location", label:"Location", why:"Around Me (places near you)" },
   { key:"notifications", label:"Notifications", why:"Reminders and daily briefings" },
+  { key:"exact", label:"Alarms & reminders", why:"Reminders on the exact minute (otherwise they can arrive a few minutes late)" },
 ];
 function AppPermissions({ toast }) {
   const [state, setState] = useState(null);
   const [asking, setAsking] = useState("");
-  const refresh = useCallback(() => { getAppPermissions().then(setState).catch(() => {}); }, []);
+  const refresh = useCallback(() => {
+    Promise.all([getAppPermissions(), exactAlarmStatus()])
+      .then(([perms, exact]) => setState({ ...perms, exact }))
+      .catch(() => {});
+  }, []);
   useEffect(() => {
     refresh();
     // Picks up changes made in the phone's Settings while KROFT was in the background.
@@ -2650,7 +2663,9 @@ function AppPermissions({ toast }) {
   }, [refresh]);
   const ask = async key => {
     setAsking(key);
-    const result = await requestAppPermission(key);
+    // "Alarms & reminders" has no prompt: Android opens its settings page for KROFT instead.
+    const result = key === "exact" ? await openExactAlarmSetting() : await requestAppPermission(key);
+    if (key === "exact") { setAsking(""); refresh(); return; }
     setAsking("");
     refresh();
     if (result !== "granted") toast("Android didn't allow it. Open your phone's Settings → Apps → KROFT → Permissions to turn it on.");
@@ -2828,7 +2843,7 @@ function ProfileSection({ nav, onNav, connections, user, onUpdateName, onEditBus
       <ProfileRow label={isNativeApp ? "Fingerprint or face unlock" : "Face ID"} sub={biometricOn ? "Enabled for this device" : "Not set up"} expanded={openRow==="faceid"} onToggle={()=>toggle("faceid")}
         right={<ProfileSwitch value={!!biometricOn} onChange={v => v ? onSetupBiometric() : onRemoveBiometric()} />}>
         <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>{isNativeApp
-          ? "Uses your phone's own fingerprint or face unlock. Turning this on asks you to confirm with it once; after that you can use it to log back in on this phone."
+          ? "Locks KROFT with your phone's own fingerprint or face unlock. It's asked for when you open the app, and when you come back after more than 5 minutes away."
           : "Biometric sign-in uses your device's real WebAuthn platform authenticator (Face ID, Touch ID, or Windows Hello) — turning this on will prompt an actual biometric check on this device, not just a toggle."}</Mono>
       </ProfileRow>
     ),
@@ -4780,15 +4795,73 @@ function KroftApp({ onFullReset } = {}) {
   // leaves the authenticator hardware) in user.webauthnCredentialId.
   // In the Android app the setting is kept on the phone only (it unlocks this phone, and user is
   // synced to every device the account signs in on).
-  const [nativeBioOn, setNativeBioOn] = useState(() => { try { return isNativeApp && localStorage.getItem("kroft-native-biometric") === "1"; } catch { return false; } });
+  // The stored value is the account id it was turned on for, so a different account signing in
+  // on the same phone never inherits it.
+  const [nativeBioOn, setNativeBioOn] = useState(() => isNativeApp && !!readNativeBio());
   const biometricOn = isNativeApp ? nativeBioOn : !!user.webauthnCredentialId;
+
+  // Covers the app from the very first render when the lock is on, so nothing shows before the
+  // check; lifted straight away if there's no signed-in account (or a different one) to protect.
+  const [appLocked, setAppLocked] = useState(() => isNativeApp && !!readNativeBio());
+  const [unlocking, setUnlocking] = useState(false);
+  useEffect(() => {
+    if (!isNativeApp || !readNativeBio()) return;
+    (async () => {
+      if (!isSupabaseConfigured) return;
+      const { data: { session } = {} } = await supabase.auth.getSession();
+      const owner = readNativeBio();
+      if (!session) { setAppLocked(false); return; }
+      if (owner !== "local" && owner !== "1" && owner !== session.user.id) { writeNativeBio(null); setNativeBioOn(false); setAppLocked(false); return; }
+      if (owner === "1") writeNativeBio(session.user.id); // turned on by the first app build
+    })().catch(() => {});
+  }, []);
+  const hiddenAtRef = useRef(0);
+  useEffect(() => {
+    if (!isNativeApp) return;
+    const onVis = () => {
+      if (document.visibilityState === "hidden") { hiddenAtRef.current = Date.now(); return; }
+      if (readNativeBio() && hiddenAtRef.current && Date.now() - hiddenAtRef.current > APP_LOCK_AFTER_MS) setAppLocked(true);
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, []);
+  const unlockApp = async () => {
+    if (unlocking) return;
+    setUnlocking(true);
+    const r = await verifyBiometric("Unlock KROFT");
+    setUnlocking(false);
+    if (r.ok) { setAppLocked(false); return; }
+    // The sensor is gone or every fingerprint was removed: don't trap the person behind a lock
+    // they can no longer open. Their password still protects the account.
+    if (r.reason === "unsupported" || r.reason === "not-enrolled") {
+      writeNativeBio(null); setNativeBioOn(false); setAppLocked(false);
+      toast("Biometric unlock was turned off because this phone no longer has a fingerprint or face set up.");
+    } else if (r.reason === "locked-out") toast("Too many tries. Wait a moment and try again.");
+  };
+  // Asks straight away when the lock appears, so opening the app is one touch of the sensor.
+  useEffect(() => { if (appLocked) { const t = setTimeout(unlockApp, 350); return () => clearTimeout(t); } }, [appLocked]);
+  const lockOutAndSignIn = async () => {
+    try { await flushPending(); } catch { /* best effort */ }
+    if (isSupabaseConfigured) await supabase.auth.signOut().catch(() => {});
+    clearOfflineData(); writeNativeBio(null);
+    window.location.reload();
+  };
+  const appLockOverlay = appLocked && (
+    <div role="dialog" aria-modal="true" aria-label="KROFT is locked" style={{ position:"fixed", inset:0, zIndex:2000, background:LIGHT.bg, color:LIGHT.text, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:14, padding:"24px 24px calc(24px + env(safe-area-inset-bottom))", fontFamily:APP_FONT, textAlign:"center" }}>
+      <div style={{ fontSize:34, fontWeight:600, letterSpacing:"-0.5px" }}>Kroft</div>
+      <div style={{ fontSize:15.5, color:LIGHT.soft, maxWidth:280, lineHeight:1.5 }}>Locked. Use your fingerprint or face to continue.</div>
+      <AuthButton style={{ marginTop:12, maxWidth:320, width:"100%" }} loading={unlocking} onClick={unlockApp}>{unlocking ? "Waiting…" : "Unlock"}</AuthButton>
+      <AuthButton kind="text" onClick={lockOutAndSignIn}>Log out and use password</AuthButton>
+    </div>
+  );
   const setupBiometric = async () => {
     if (isNativeApp) {
       const r = await verifyBiometric("Turn on biometric unlock");
       if (r.ok) {
-        try { localStorage.setItem("kroft-native-biometric", "1"); } catch { /* stays on for this session */ }
+        const { data: { session } = {} } = isSupabaseConfigured ? await supabase.auth.getSession() : { data:{} };
+        writeNativeBio(session?.user?.id || "local");
         setNativeBioOn(true);
-        toast("Biometric unlock is on for this phone.");
+        toast("Biometric unlock is on. KROFT will ask for it when you open the app.");
       } else if (r.reason === "not-enrolled") toast("Add a fingerprint or face in your phone's Settings → Security first.");
       else if (r.reason === "unsupported") toast("This phone doesn't have a fingerprint or face sensor KROFT can use.");
       else if (r.reason === "locked-out") toast("Too many tries. Wait a moment and try again.");
@@ -4818,7 +4891,7 @@ function KroftApp({ onFullReset } = {}) {
   };
   const removeBiometric = () => {
     if (isNativeApp) {
-      try { localStorage.removeItem("kroft-native-biometric"); } catch { /* nothing stored */ }
+      writeNativeBio(null);
       setNativeBioOn(false);
       toast("Biometric unlock removed for this phone.");
       return;
@@ -6603,6 +6676,8 @@ ${voiceMode
         groups.profile = { ...groups.profile, user: safeUser };
       }
       const payload = { app:"KROFT", formatVersion:1, exportedAt:new Date().toISOString(), data:groups };
+      // The Android app's WebView ignores <a download>; the file goes to the share sheet instead.
+      if (isNativeApp) { await saveFileFromApp(`kroft-backup-${todayISO()}.json`, JSON.stringify(payload, null, 2)); return; }
       const blob = new Blob([JSON.stringify(payload, null, 2)], { type:"application/json" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -6642,6 +6717,7 @@ ${voiceMode
         Object.values(STORAGE_KEYS).forEach(k => window.localStorage.removeItem(k));
         sessionStorage.removeItem(OAUTH_RETURN_KEY);
         clearOfflineData();
+        writeNativeBio(null);
       } catch { /* storage unavailable: nothing to wipe */ }
     };
     wipeLocal();
@@ -7548,13 +7624,19 @@ ${voiceMode
     }
   };
 
-  const downloadText = (filename, content) => {
+  const downloadText = async (filename, content, doneMsg) => {
+    if (isNativeApp) {
+      // No downloads in the Android app's WebView: hand the file to the share sheet instead.
+      try { await saveFileFromApp(filename, content); } catch { toast("Couldn't save that file. Try again."); }
+      return;
+    }
     const blob = new Blob([content], { type:"text/plain" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url; a.download = filename;
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
     URL.revokeObjectURL(url);
+    if (doneMsg) toast(doneMsg);
   };
 
   // A field containing a comma, quote or newline has to be quoted, with any internal quote
@@ -7576,8 +7658,7 @@ ${voiceMode
         .map(r => [r.date||"", r.type, r.label, r.cat, r.amount, r.cur||user.currency, (r.repeat&&r.repeat!=="none")?r.repeat:""]),
     ];
     const csv = rows.map(row => row.map(csvField).join(",")).join("\r\n");
-    downloadText(`kroft-finance-${todayISO()}.csv`, csv);
-    toast("CSV downloaded.");
+    downloadText(`kroft-finance-${todayISO()}.csv`, csv, "CSV downloaded.");
   };
   // Frees a blob: URL's browser memory after a deleted item's Undo window has fully closed —
   // NOT immediately on delete, since the "Undo" toast can restore the item, and an object URL
@@ -7922,6 +8003,7 @@ ${voiceMode
       <style>{G}</style>
       {toastStack}
       {offlineBanner}
+      {appLockOverlay}
 
       {step === "welcome" && (
         <WelcomeScreen onPhone={openPhoneSignIn} onGoogle={signInWithGoogle} onEmail={() => setStep("signup")} onLogIn={() => setStep("login")} googleLoading={googleLoading} />
@@ -7994,7 +8076,7 @@ ${voiceMode
                 onChange={e => { setLoginPw(e.target.value); setLoginError(""); }} onKeyDown={e => e.key === "Enter" && doLogin()} />
             </div>
             {loginError && !locked && <AuthAlert>{loginError}{loginAttempts > 0 && <span style={{ color:LIGHT.muted }}> {5 - loginAttempts} attempt{5 - loginAttempts !== 1 ? "s" : ""} left.</span>}</AuthAlert>}
-            {biometricOn && (
+            {biometricOn && !isNativeApp && (
               <AuthButton kind="secondary" style={{ marginTop:18 }} loading={fpLoading} disabled={fpSuccess || locked} onClick={doFingerprint}>
                 {fpLoading ? "Verifying…" : fpSuccess ? "Verified" : "Log in with Face ID or fingerprint"}
               </AuthButton>
@@ -8584,6 +8666,7 @@ ${voiceMode
 
       {toastStack}
       {offlineBanner}
+      {appLockOverlay}
 
       {showConfetti && <Confetti onDone={() => setShowConfetti(false)} />}
 
@@ -9876,7 +9959,7 @@ ${voiceMode
                 <div style={{ display:"flex", gap:7, marginTop:12, flexWrap:"wrap" }}>
                   <Btn sm v="outline" onClick={() => setEditingDocument({...d})}>Edit</Btn>
                   <Btn sm v="outline" onClick={() => shareContent({ title:d.title, text:`${d.title}\n\n${d.body}` })}>Share</Btn>
-                  <Btn sm v="outline" onClick={() => { downloadText(`${d.title.replace(/[^a-z0-9]+/gi,"_")||"document"}.txt`, `${d.title}\n\n${d.body}`); toast("Downloaded."); }}>Download</Btn>
+                  <Btn sm v="outline" onClick={() => { downloadText(`${d.title.replace(/[^a-z0-9]+/gi,"_")||"document"}.txt`, `${d.title}\n\n${d.body}`, "Downloaded."); }}>{isNativeApp ? "Save" : "Download"}</Btn>
                 </div>
               </Card>
               )
@@ -11418,6 +11501,7 @@ ${voiceMode
                 if ("speechSynthesis" in window) window.speechSynthesis.cancel();
                 if (isSupabaseConfigured) await supabase.auth.signOut();
                 clearOfflineData();
+                writeNativeBio(null);
                 toast("Signed out.");
                 // Short delay so the toast above is actually visible before onFullReset swaps
                 // this whole component out for a clean instance.
