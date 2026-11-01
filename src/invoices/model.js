@@ -107,9 +107,12 @@ function withPayments(inv, payments, today) {
   return { ...next, status: inv.status === "draft" && !payments.length ? "draft" : "sent", sentAt: inv.sentAt || today, paidDate: null, incomeId: null };
 }
 
+// Each payment gets the next receipt number on its invoice (n), which it keeps even if an
+// earlier payment is removed; lastReceipt remembers the highest given.
 export function recordPayment(inv, { id, amount, date, incomeId }, today) {
   const amt = round2(amount);
-  return withPayments(inv, [...paymentsOf(inv), { id, amount: amt, date: date || today, incomeId: incomeId || null }], today);
+  const n = Math.max(Number(inv.lastReceipt) || 0, ...paymentsOf(inv).map((p, i) => Number(p.n) || i + 1)) + 1;
+  return withPayments({ ...inv, lastReceipt: n }, [...paymentsOf(inv), { id, amount: amt, date: date || today, incomeId: incomeId || null, n }], today);
 }
 
 export function removePayment(inv, paymentId, today) {

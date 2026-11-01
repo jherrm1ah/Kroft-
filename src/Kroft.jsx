@@ -6,8 +6,9 @@ import { Markdown } from "./markdown/Markdown.jsx";
 import { toPlainText, toSpeechText } from "./markdown/parse.js";
 import { copyRich, copyPlain } from "./markdown/clipboard.js";
 import { offlineUserId, flushPending, clearOfflineData, hasUnsyncedChanges, unreadableKeys } from "./storageShim.js";
-import { DEFAULT_INVOICE_SETTINGS, taxName, userLocale, invoiceTotals, invoiceStatus, invoiceAllowance, quoteAllowance, createInvoice, createQuote, invoiceFromQuote, invoiceProblem, FREE_INVOICES_PER_MONTH, FREE_QUOTES_PER_MONTH, whatsappLink, sendMessage, reminderMessage, quoteMessage, prettyDate, STATUS_LABEL, invoicesForAI, quotesForAI, daysBetween, docStatus, clientSummaries, clientKey, recordPayment, removePayment, amountPaid, balanceDue, paymentsOf, hasPayments, syncInvoicesWithIncome, quoteStatus } from "./invoices/model.js";
-import { invoicePdf, invoiceFileName } from "./invoices/pdf.js";
+import { DEFAULT_INVOICE_SETTINGS, taxName, userLocale, invoiceTotals, invoiceStatus, invoiceAllowance, quoteAllowance, createInvoice, createQuote, invoiceFromQuote, invoiceProblem, FREE_INVOICES_PER_MONTH, FREE_QUOTES_PER_MONTH, whatsappLink, sendMessage, reminderMessage, quoteMessage, prettyDate, STATUS_LABEL, invoicesForAI, quotesForAI, daysBetween, docStatus, clientSummaries, clientKey, recordPayment, removePayment, amountPaid, balanceDue, paymentsOf, hasPayments, syncInvoicesWithIncome, quoteStatus, fromName } from "./invoices/model.js";
+import { invoicePdf, invoiceFileName, receiptPdf, statementPdf } from "./invoices/pdf.js";
+import { receiptFor, receiptMessage, receiptFileName, statementCurrencies, statementFor, statementMessage, statementFileName, periodStart } from "./invoices/documents.js";
 import { saveFile } from "./saveFile.js";
 import { contactRecords, contactMoney, contactSummary, initials, relativeDay } from "./contacts/profile.js";
 import { isNativeApp, nativeRedirect, openInSystemBrowser, scheduleDeviceReminders, verifyBiometric, getAppPermissions, requestAppPermission, saveFileFromApp, exactAlarmStatus, openExactAlarmSetting, getClientHeader, scheduleReminderAt, cancelReminderAt, appPlaysNotificationSound } from "./native.js";
@@ -2842,6 +2843,7 @@ function InvoicesScreen({ invoices, setInvoices, quotes, setQuotes, settings, se
   const [preview, setPreview] = useState(null);
   const [returnTo, setReturnTo] = useState("list");     // where Back goes from a document
   const [payForm, setPayForm] = useState(null);         // { amount, date } while recording a payment
+  const [stmt, setStmt] = useState({ period: "all", currency: null });  // the client statement's choices
 
   const listFor = kind => (kind === "quote" ? quotes : invoices);
   const setListFor = kind => (kind === "quote" ? setQuotes : setInvoices);
@@ -2852,6 +2854,7 @@ function InvoicesScreen({ invoices, setInvoices, quotes, setQuotes, settings, se
   const needsDetails = !settings.bankName && !settings.accountNumber && !settings.otherPayment?.trim();
 
   useEffect(() => {
+    if (view === "statement") return;
     if (view !== "view" || !current) { setPreview(null); return; }
     let cancelled = false;
     invoicePdf(current, settings, user, fmt, { font: APP_FONT, today })
@@ -2859,6 +2862,20 @@ function InvoicesScreen({ invoices, setInvoices, quotes, setQuotes, settings, se
       .catch(() => { if (!cancelled) setPreview(null); });
     return () => { cancelled = true; };
   }, [view, current, settings, user]);
+
+  // The client statement, for the chosen currency and period.
+  const stmtCurrencies = clientKeySel ? statementCurrencies(invoices, clientKeySel) : [];
+  const stmtCurrency = stmtCurrencies.includes(stmt.currency) ? stmt.currency : stmtCurrencies[0] || user.currency || "NGN";
+  const stmtArgs = { invoices, key: clientKeySel, currency: stmtCurrency, from: periodStart(stmt.period, today), to: today, name: clients.find(x => x.key === clientKeySel)?.name || "" };
+  useEffect(() => {
+    if (view !== "statement" || !clientKeySel) return;
+    let cancelled = false;
+    setPreview(null);
+    statementPdf(stmtArgs, settings, user, fmt, { font: APP_FONT })
+      .then(r => { if (!cancelled) setPreview(r.preview); })
+      .catch(() => { if (!cancelled) setPreview(null); });
+    return () => { cancelled = true; };
+  }, [view, clientKeySel, stmtCurrency, stmt.period, invoices, settings, user]);
 
   const statusOf = doc => docStatus(doc, today);
   const update = (kind, id, patch) => setListFor(kind)(list => list.map(d => d.id === id ? { ...d, ...patch } : d));
@@ -2944,6 +2961,30 @@ function InvoicesScreen({ invoices, setInvoices, quotes, setQuotes, settings, se
       if (result === "downloaded") toast("PDF downloaded. Attach it to your email or WhatsApp.");
     } catch (err) {
       toast(err?.code === "needs-update" ? "Update the KROFT app to share PDFs." : "Couldn't create the PDF. Try again.");
+    } finally { setBusy(""); }
+  };
+
+  const shareReceipt = async (inv, p) => {
+    setBusy(`receipt-${p.id}`);
+    try {
+      const r = receiptFor(inv, p.id);
+      const { bytes } = await receiptPdf(inv, p.id, settings, user, fmt, { font: APP_FONT });
+      const result = await saveFile({ name: receiptFileName(r), data:bytes, type:"application/pdf", text: receiptMessage(r, fmt, fromName(settings, user)), title:`Receipt ${r.number}` });
+      if (result !== "cancelled") playSound("sent");
+      if (result === "downloaded") toast("Receipt downloaded. Attach it to your email or WhatsApp.");
+    } catch (err) {
+      toast(err?.code === "needs-update" ? "Update the KROFT app to share PDFs." : "Couldn't create the receipt. Try again.");
+    } finally { setBusy(""); }
+  };
+  const shareStatement = async () => {
+    setBusy("statement");
+    try {
+      const { bytes, statement } = await statementPdf(stmtArgs, settings, user, fmt, { font: APP_FONT });
+      const result = await saveFile({ name: statementFileName(stmtArgs.name, today), data:bytes, type:"application/pdf", text: statementMessage(statement, fmt, stmtArgs.name, fromName(settings, user)), title:`Statement for ${stmtArgs.name}` });
+      if (result !== "cancelled") playSound("sent");
+      if (result === "downloaded") toast("Statement downloaded. Attach it to your email or WhatsApp.");
+    } catch (err) {
+      toast(err?.code === "needs-update" ? "Update the KROFT app to share PDFs." : "Couldn't create the statement. Try again.");
     } finally { setBusy(""); }
   };
 
@@ -3257,11 +3298,12 @@ function InvoicesScreen({ invoices, setInvoices, quotes, setQuotes, settings, se
                     <Mono style={{ color:C.text }}>{prettyDate(p.date)}</Mono>
                     <div style={{ display:"flex", alignItems:"center", gap:6 }}>
                       <span style={{ fontSize:13, fontWeight:600, color:C.positive }}>{fmt(p.amount, current.currency)}</span>
+                      <button aria-label={`Receipt for the payment of ${prettyDate(p.date)}`} disabled={!!busy} onClick={() => shareReceipt(current, p)} style={{ background:"none", border:`1px solid ${C.cardB}`, borderRadius:99, color:C.accent, cursor:"pointer", fontSize:11, fontWeight:600, padding:"3px 9px", fontFamily:APP_FONT }}>{busy === `receipt-${p.id}` ? "…" : "Receipt"}</button>
                       <button aria-label={`Remove payment of ${prettyDate(p.date)}`} onClick={() => undoPayment(current, p)} style={{ background:"none", border:"none", color:C.muted, cursor:"pointer", fontSize:15, padding:"2px 6px" }}>✕</button>
                     </div>
                   </div>
                 ))}
-                <Mono style={{ display:"block", color:C.muted, marginTop:6, lineHeight:1.6 }}>Each payment is in your income too. To change the invoice itself, remove its payments first.</Mono>
+                <Mono style={{ display:"block", color:C.muted, marginTop:6, lineHeight:1.6 }}>Each payment is in your income too. Send a receipt to confirm you've been paid. To change the invoice itself, remove its payments first.</Mono>
               </Card>
             )}
           </div>
@@ -3275,6 +3317,36 @@ function InvoicesScreen({ invoices, setInvoices, quotes, setQuotes, settings, se
             <Btn sm v="outline" style={{ flex:1 }} onClick={() => duplicate(current)}>Duplicate</Btn>
             <Btn sm v="outline" style={{ flex:1 }} onClick={() => setView("settings")}>Invoice details</Btn>
             <Btn sm v="ghost" style={{ flex:1, color:C.negative }} onClick={() => remove(current)}>Delete</Btn>
+          </div>
+        </div>
+      </>
+    );
+  } else if (view === "statement" && clientKeySel) {
+    const st = statementFor(stmtArgs);
+    body = (
+      <>
+        {header(`Statement · ${stmtArgs.name}`, () => setView("client"))}
+        <div style={{ flex:1, minHeight:0, overflowY:"auto", padding:16, display:"flex", flexDirection:"column", gap:12 }}>
+          <div>
+            {chips([["all", "All time"], ["year", "This year"], ["90", "Last 90 days"]], stmt.period, period => setStmt(v => ({ ...v, period })), "Period")}
+            {stmtCurrencies.length > 1 && chips(stmtCurrencies.map(cur => [cur, cur]), stmtCurrency, currency => setStmt(v => ({ ...v, currency })), "Currency")}
+          </div>
+          <Card level="raised">
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+              {[["Opening balance", st.opening], ["Invoiced", st.invoiced], ["Paid", st.paid], ["Balance due", st.closing]].map(([l, v], i) => (
+                <div key={l}>
+                  <Mono style={{ display:"block", color:C.muted, marginBottom:3 }}>{l}</Mono>
+                  <div style={{ fontSize: i === 3 ? 18 : 15, fontWeight:700, color: i === 3 ? (v > 0 ? C.white : C.positive) : i === 2 ? C.positive : C.text }}>{fmt(v, stmtCurrency)}</div>
+                </div>
+              ))}
+            </div>
+            {st.overdue > 0 && <Mono style={{ display:"block", color:C.negative, marginTop:10 }}>{fmt(st.overdue, stmtCurrency)} overdue</Mono>}
+          </Card>
+          <Mono style={{ color:C.soft, lineHeight:1.6 }}>Every invoice and payment {stmt.period === "all" ? "so far" : "in this period"}, with the balance after each, and which invoices are still unpaid. Drafts and cancelled invoices aren't included.</Mono>
+          <Btn full disabled={busy === "statement"} onClick={shareStatement}>{busy === "statement" ? "Preparing…" : "Share or download PDF"}</Btn>
+          <div style={{ fontSize:12, fontWeight:600, color:C.muted, marginTop:6 }}>Preview</div>
+          <div style={{ background:"#fff", borderRadius:12, border:`1px solid ${C.cardB}`, overflow:"hidden", minHeight:120, flexShrink:0, display:"flex", alignItems:"center", justifyContent:"center" }}>
+            {preview ? <img src={preview} alt={`Preview of the statement for ${stmtArgs.name}`} style={{ width:"100%", display:"block" }} /> : <Spinner size={16} color={C.muted} />}
           </div>
         </div>
       </>
@@ -3307,6 +3379,7 @@ function InvoicesScreen({ invoices, setInvoices, quotes, setQuotes, settings, se
                 <Btn sm style={{ flex:1 }} onClick={() => startNew("invoice", c)}>New invoice</Btn>
                 <Btn sm v="outline" style={{ flex:1 }} onClick={() => startNew("quote", c)}>New quote</Btn>
               </div>
+              {c.invoiceCount > 0 && <Btn sm v="outline" full onClick={() => { setStmt({ period: "all", currency: null }); setView("statement"); }}>Statement of account</Btn>}
               <div style={{ fontSize:12, fontWeight:600, color:C.muted, marginTop:6 }}>History</div>
               <div style={{ display:"flex", flexDirection:"column", gap:9 }}>{docs.map(d => docRow(d, "client"))}</div>
             </>

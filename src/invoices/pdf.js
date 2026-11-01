@@ -6,6 +6,7 @@
 // fonts can't show ₦ at all, and embedding a font would mean shipping a large library.
 
 import { invoiceTotals, lineTotal, prettyDate, paymentLines, fromName, taxName, taxIdLine, docStatus, STATUS_LABEL, amountPaid, balanceDue } from "./model.js";
+import { receiptFor, statementFor } from "./documents.js";
 
 const PAGE_W = 595.28, PAGE_H = 841.89;  // A4 in PDF points
 const SCALE = 2;                          // canvas pixels per point: sharp on phones and in print
@@ -253,3 +254,193 @@ export async function invoicePdf(inv, settings, user, fmt, { font = "Inter, sans
 export const invoiceFileName = inv => `${inv.number}${inv.client?.name ? ` ${inv.client.name}` : ""}`
   .normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^\x20-\x7e]/g, "")
   .replace(/[\\/:*?"<>|]+/g, "_").replace(/\s+/g, " ").trim() + ".pdf";
+
+// ── Receipts and statements ──────────────────────────────────────────────────────────────────
+// The business's details on the left, the document's title, number and dates on the right.
+// Returns the y below the header.
+function docHeader(page, settings, user, { title, number, meta = [] }) {
+  const { ctx, text, setFont } = page;
+  setFont(20, 700);
+  const fromLines = wrap(ctx, fromName(settings, user) || title, 300).slice(0, 2);
+  let y = 72;
+  fromLines.forEach((l, i) => text(l, M, y + i * 24, { size: 20, weight: 700 }));
+  y += fromLines.length * 24 - 6;
+  for (const l of [settings.address, settings.email || user?.email, settings.phone || user?.phone, taxIdLine(settings)].filter(Boolean)) {
+    setFont(9.5);
+    for (const w of wrap(ctx, l, 300).slice(0, 3)) { y += 13; text(w, M, y, { size: 9.5, color: SOFT }); }
+  }
+  text(title, PAGE_W - M, 72, { size: 24, weight: 700, color: ACCENT, align: "right" });
+  if (number) text(number, PAGE_W - M, 92, { size: 11, weight: 600, align: "right" });
+  meta.forEach((m, i) => text(m, PAGE_W - M, (number ? 110 : 94) + i * 14, { size: 9.5, color: SOFT, align: "right" }));
+  return Math.max(y, 140) + 34;
+}
+
+function footer(pages) {
+  pages.forEach((p, i) => {
+    p.text(pages.length > 1 ? `Page ${i + 1} of ${pages.length}` : "", M, PAGE_H - 32, { size: 8, color: MUTED });
+    p.text("Created with KROFT", PAGE_W - M, PAGE_H - 32, { size: 8, color: MUTED, align: "right" });
+  });
+}
+
+function stamp(page, label, color, top) {
+  const { ctx, text, setFont } = page;
+  setFont(12, 700);
+  const w = ctx.measureText(label).width + 20;
+  ctx.strokeStyle = color; ctx.lineWidth = 1.5;
+  ctx.strokeRect(PAGE_W - M - w, top, w, 24);
+  text(label, PAGE_W - M - w / 2, top + 16, { size: 12, weight: 700, color, align: "center" });
+}
+
+export function drawReceiptPage(inv, paymentId, settings, user, fmt, { font = "Inter, sans-serif" } = {}) {
+  const r = receiptFor(inv, paymentId);
+  const page = newPage(font);
+  const { ctx, text } = page;
+  const money = n => fmt(n, r.currency);
+  let y = docHeader(page, settings, user, { title: "RECEIPT", number: r.number, meta: [`Received ${prettyDate(r.date)}`] });
+  if (r.paidInFull) stamp(page, "PAID IN FULL", "#2f7d4f", 122);
+
+  text("RECEIVED FROM", M, y, { size: 8.5, weight: 600, color: MUTED });
+  y += 16;
+  text(r.client.name || "", M, y, { size: 12, weight: 600 });
+  for (const l of [r.client.email, r.client.phone].filter(Boolean)) { y += 14; text(l, M, y, { size: 9.5, color: SOFT }); }
+
+  // The amount, large.
+  y += 30;
+  ctx.fillStyle = BAND; ctx.fillRect(M - 8, y, PAGE_W - 2 * M + 16, 64);
+  text("AMOUNT RECEIVED", M + 8, y + 24, { size: 8.5, weight: 600, color: SOFT });
+  text(money(r.amount), M + 8, y + 50, { size: 22, weight: 700 });
+  text(`For invoice ${r.invoiceNumber}`, PAGE_W - M - 8, y + 24, { size: 9.5, color: SOFT, align: "right" });
+  text(`issued ${prettyDate(r.invoiceDate)}`, PAGE_W - M - 8, y + 40, { size: 9.5, color: SOFT, align: "right" });
+  y += 64 + 30;
+
+  const rows = [["Invoice total", r.total], ...(r.paidBefore ? [["Paid before", -r.paidBefore]] : []), ["This payment", -r.amount]];
+  const labelX = 372 - 70, right = PAGE_W - M;
+  for (const [label, value] of rows) {
+    text(label, labelX, y, { size: 10, color: SOFT });
+    text(money(value), right, y, { size: 10, align: "right" });
+    y += 18;
+  }
+  ctx.fillStyle = r.paidInFull ? "#2f7d4f" : ACCENT; ctx.fillRect(labelX - 12, y - 6, right - labelX + 20, 32);
+  text(r.paidInFull ? "Paid in full" : "Still due", labelX, y + 15, { size: 11, weight: 600, color: "#ffffff" });
+  text(money(r.balanceAfter), right, y + 15, { size: 13, weight: 700, color: "#ffffff", align: "right" });
+  y += 70;
+  const pay = r.paidInFull ? [] : paymentLines(settings);
+  if (pay.length) {
+    text("PAYMENT DETAILS", M, y, { size: 8.5, weight: 600, color: MUTED });
+    for (const l of pay) { y += 15; text(l, M, y, { size: 10 }); }
+    y += 34;
+  }
+  text("Thank you for your payment.", M, y, { size: 10, color: SOFT });
+  footer([page]);
+  return [page.canvas];
+}
+
+export function drawStatementPages(st, settings, user, fmt, { font = "Inter, sans-serif", name = "" } = {}) {
+  const pages = [];
+  let page = newPage(font);
+  pages.push(page);
+  let { ctx, text, setFont } = page;
+  const money = n => fmt(n, st.currency);
+  const BOTTOM = PAGE_H - 70;
+  const meta = [`Date ${prettyDate(st.to)}`, ...(st.from ? [`Period ${prettyDate(st.from)} to ${prettyDate(st.to)}`] : [])];
+  let y = docHeader(page, settings, user, { title: "STATEMENT", number: "", meta });
+
+  text("TO", M, y, { size: 8.5, weight: 600, color: MUTED });
+  y += 16;
+  text(name || st.client.name || "", M, y, { size: 12, weight: 600 });
+  for (const l of [st.client.email, st.client.phone].filter(Boolean)) { y += 14; text(l, M, y, { size: 9.5, color: SOFT }); }
+
+  // Summary: four boxes.
+  y += 24;
+  const boxes = [["Opening balance", st.opening], ["Invoiced", st.invoiced], ["Paid", st.paid], ["Balance due", st.closing]];
+  const bw = (PAGE_W - 2 * M + 16) / 4;
+  boxes.forEach(([label, v], i) => {
+    const x = M - 8 + i * bw;
+    const last = i === 3;
+    ctx.fillStyle = last ? ACCENT : BAND; ctx.fillRect(x + (i ? 4 : 0), y, bw - (i ? 4 : 0), 52);
+    text(label.toUpperCase(), x + (i ? 14 : 10), y + 20, { size: 7.5, weight: 600, color: last ? "#ffffff" : SOFT });
+    text(money(v), x + (i ? 14 : 10), y + 40, { size: 12, weight: 700, color: last ? "#ffffff" : INK });
+  });
+  y += 52 + 26;
+
+  // Activity: date, details, invoiced, paid, balance.
+  const COL = { date: M, details: M + 74, charge: 372, paid: 452, balance: PAGE_W - M };
+  const head = top => {
+    ctx.fillStyle = BAND; ctx.fillRect(M - 8, top, PAGE_W - 2 * M + 16, 24);
+    [["DATE", COL.date, "left"], ["DETAILS", COL.details, "left"], ["INVOICED", COL.charge, "right"], ["PAID", COL.paid, "right"], ["BALANCE", COL.balance, "right"]]
+      .forEach(([l, x, align]) => text(l, x, top + 16, { size: 8.5, weight: 600, color: SOFT, align }));
+    return top + 24;
+  };
+  const newSheet = () => {
+    text("Continued on the next page", PAGE_W - M, BOTTOM + 20, { size: 8.5, color: MUTED, align: "right" });
+    page = newPage(font); pages.push(page); ({ ctx, text, setFont } = page);
+    text(`Statement for ${name || st.client.name || ""} (continued)`, M, 60, { size: 10, weight: 600, color: SOFT });
+  };
+  y = head(y);
+  const row = (date, details, charge, paid, balance, bold) => {
+    if (y + 26 > BOTTOM) { newSheet(); y = head(76); }
+    text(date, COL.date, y + 17, { size: 9.5, color: SOFT });
+    setFont(9.5);
+    text(wrap(ctx, details, COL.charge - 70 - COL.details)[0], COL.details, y + 17, { size: 9.5, weight: bold ? 600 : 400 });
+    if (charge) text(money(charge), COL.charge, y + 17, { size: 9.5, align: "right" });
+    if (paid) text(money(paid), COL.paid, y + 17, { size: 9.5, color: "#2f7d4f", align: "right" });
+    text(money(balance), COL.balance, y + 17, { size: 9.5, weight: 600, align: "right" });
+    y += 26;
+    ctx.strokeStyle = LINE; ctx.lineWidth = 0.75;
+    ctx.beginPath(); ctx.moveTo(M - 8, y); ctx.lineTo(PAGE_W - M + 8, y); ctx.stroke();
+  };
+  if (st.from) row(prettyDate(st.from), "Opening balance", 0, 0, st.opening, true);
+  for (const l of st.lines) row(prettyDate(l.date), l.details, l.charge, l.paid, l.balance);
+  if (!st.lines.length) row(prettyDate(st.to), "No invoices or payments in this period", 0, 0, st.closing);
+
+  // Unpaid invoices.
+  if (st.unpaid.length) {
+    if (y + 60 > BOTTOM) { newSheet(); y = 70; }
+    y += 30;
+    text("UNPAID INVOICES", M, y, { size: 8.5, weight: 600, color: MUTED });
+    for (const u of st.unpaid) {
+      if (y + 18 > BOTTOM) { newSheet(); y = 76; }
+      y += 17;
+      text(u.number, M, y, { size: 9.5, weight: 600 });
+      text(`due ${prettyDate(u.dueDate)}`, M + 90, y, { size: 9.5, color: SOFT });
+      if (u.daysOverdue > 0) text(`${u.daysOverdue} day${u.daysOverdue === 1 ? "" : "s"} overdue`, M + 220, y, { size: 9.5, weight: 600, color: "#a23b3b" });
+      text(money(u.due), PAGE_W - M, y, { size: 9.5, weight: 600, align: "right" });
+    }
+  }
+
+  // How to pay.
+  const pay = st.closing > 0 ? paymentLines(settings) : [];
+  if (pay.length) {
+    if (y + 40 + pay.length * 15 > BOTTOM) { newSheet(); y = 70; }
+    y += 34;
+    text("PAYMENT DETAILS", M, y, { size: 8.5, weight: 600, color: MUTED });
+    for (const l of pay) { y += 15; text(l, M, y, { size: 10 }); }
+  }
+  footer(pages);
+  return pages.map(p => p.canvas);
+}
+
+async function toPdf(canvases, title, author) {
+  const pages = canvases.map(c => ({ jpeg: dataUrlBytes(c.toDataURL("image/jpeg", 0.9)), width: c.width, height: c.height }));
+  return { bytes: buildPdf(pages, { title, author }), preview: canvases[0].toDataURL("image/jpeg", 0.85), pageCount: canvases.length };
+}
+
+async function loadFonts(font, parts) {
+  try {
+    const sample = [...parts, "RECEIPT STATEMENT 0123456789 ₦$€£,.-()%"].filter(Boolean).join(" ");
+    await Promise.all([400, 600, 700].map(w => document.fonts?.load(`${w} 16px ${font}`, sample)));
+    await document.fonts?.ready;
+  } catch { /* draw with whatever is loaded */ }
+}
+
+export async function receiptPdf(inv, paymentId, settings, user, fmt, { font = "Inter, sans-serif" } = {}) {
+  await loadFonts(font, [fromName(settings, user), settings.address, settings.email, settings.phone, taxIdLine(settings), inv.client?.name, inv.client?.email, ...paymentLines(settings)]);
+  const r = receiptFor(inv, paymentId);
+  return toPdf(drawReceiptPage(inv, paymentId, settings, user, fmt, { font }), `Receipt ${r.number}`, fromName(settings, user));
+}
+
+export async function statementPdf({ invoices, key, currency, from, to, name }, settings, user, fmt, { font = "Inter, sans-serif" } = {}) {
+  const st = statementFor({ invoices, key, currency, from, to });
+  await loadFonts(font, [fromName(settings, user), settings.address, settings.email, settings.phone, taxIdLine(settings), name, st.client.email, ...paymentLines(settings)]);
+  return { ...(await toPdf(drawStatementPages(st, settings, user, fmt, { font, name }), `Statement ${name || ""}`.trim(), fromName(settings, user))), statement: st };
+}
