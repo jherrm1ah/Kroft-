@@ -1289,6 +1289,10 @@ function WelcomeScreen({ onPhone, onGoogle, onEmail, onLogIn, googleLoading }) {
         <button onClick={onLogIn} style={{ marginTop:4, padding:"8px", background:"none", border:"none", cursor:"pointer", fontFamily:APP_FONT, fontSize:14.5, color:LIGHT.muted }}>
           Already have an account? <span style={{ color:LIGHT.accent, fontWeight:700, textDecoration:"underline" }}>Log in</span>
         </button>
+        <p style={{ margin:"2px 8px 0", textAlign:"center", fontSize:12.5, lineHeight:1.5, color:LIGHT.muted }}>
+          By continuing, you agree to KROFT's <a href="/terms.html" target="_blank" rel="noopener" style={{ color:LIGHT.soft, textDecoration:"underline" }}>Terms</a> and
+          {" "}<a href="/privacy.html" target="_blank" rel="noopener" style={{ color:LIGHT.soft, textDecoration:"underline" }}>Privacy Policy</a>.
+        </p>
       </div>
     </div>
   );
@@ -2897,6 +2901,10 @@ function ProfileSection({ nav, onNav, connections, user, onUpdateName, onEditBus
         <SettingsRow icon="logout" label="Log out" tone="danger" onClick={() => setConfirmLogout(true)} isLast />
       </SettingsGroup>
       <Mono style={{ display:"block", textAlign:"center", color:C.muted, marginTop:-8 }}>KROFT by Orynthra</Mono>
+      <div style={{ display:"flex", justifyContent:"center", gap:18, marginTop:10 }}>
+        <a href="/terms.html" target="_blank" rel="noopener" style={{ fontSize:13, color:C.muted, textDecoration:"underline" }}>Terms</a>
+        <a href="/privacy.html" target="_blank" rel="noopener" style={{ fontSize:13, color:C.muted, textDecoration:"underline" }}>Privacy</a>
+      </div>
 
       {confirmLogout && createPortal(<LogoutDialog onCancel={() => setConfirmLogout(false)} onConfirm={onSignOut} />, document.body)}
     </div>
