@@ -109,6 +109,23 @@ export async function scheduleDeviceReminders(prefix, items) {
   });
 }
 
+// A single notification at a set time, used as a backup for a Quick Reset ending while the
+// phone's screen is off (the app's own timer and sound pause then). Cancelled when the app ends
+// the countdown itself. Does nothing without notification permission or on the website.
+const ONE_SHOT_ID = 2100000001;
+export async function scheduleReminderAt(at, title, body) {
+  if (!hasPlugin("LocalNotifications")) return;
+  try {
+    const { LocalNotifications } = await plugins;
+    if ((await LocalNotifications.checkPermissions()).display !== "granted") return;
+    await LocalNotifications.schedule({ notifications: [{ id: ONE_SHOT_ID, title, body, schedule: { at: new Date(at), allowWhileIdle: true } }] });
+  } catch { /* the countdown still works in the app */ }
+}
+export async function cancelReminderAt() {
+  if (!hasPlugin("LocalNotifications")) return;
+  try { const { LocalNotifications } = await plugins; await LocalNotifications.cancel({ notifications: [{ id: ONE_SHOT_ID }] }); } catch { /* nothing scheduled */ }
+}
+
 // ── Text to speech ──
 function installSpeechSynthesis(TextToSpeech) {
   let voices = [];

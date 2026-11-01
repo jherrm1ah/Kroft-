@@ -9,7 +9,8 @@ import { offlineUserId, flushPending, clearOfflineData, hasUnsyncedChanges, unre
 import { DEFAULT_INVOICE_SETTINGS, invoiceTotals, invoiceStatus, invoiceAllowance, quoteAllowance, createInvoice, createQuote, invoiceFromQuote, invoiceProblem, FREE_INVOICES_PER_MONTH, FREE_QUOTES_PER_MONTH, whatsappLink, sendMessage, reminderMessage, quoteMessage, prettyDate, STATUS_LABEL, invoicesForAI, quotesForAI, daysBetween, docStatus, clientSummaries, clientKey, recordPayment, removePayment, amountPaid, balanceDue, paymentsOf, hasPayments, syncInvoicesWithIncome } from "./invoices/model.js";
 import { invoicePdf, invoiceFileName } from "./invoices/pdf.js";
 import { saveFile } from "./saveFile.js";
-import { isNativeApp, nativeRedirect, openInSystemBrowser, scheduleDeviceReminders, verifyBiometric, getAppPermissions, requestAppPermission, saveFileFromApp, exactAlarmStatus, openExactAlarmSetting, getClientHeader } from "./native.js";
+import { isNativeApp, nativeRedirect, openInSystemBrowser, scheduleDeviceReminders, verifyBiometric, getAppPermissions, requestAppPermission, saveFileFromApp, exactAlarmStatus, openExactAlarmSetting, getClientHeader, scheduleReminderAt, cancelReminderAt } from "./native.js";
+import { unlockAudio, playTick, playDone, resetSoundOn, setResetSoundOn, keepScreenOn } from "./resetSounds.js";
 
 // What a mic button says when listening fails, by the SpeechRecognition error code. Silence used
 // to show "Mic error — check permissions." too, which sent people hunting through settings for a
@@ -2082,11 +2083,20 @@ function UberModal({ dest, onClose }) {
 // The guided countdown for an in-progress Quick Reset session. `session` is Kroft.jsx's own
 // activeReset state ({ key, label, guide, seconds, total }); the countdown itself lives there too
 // (ticked once a second by an effect in KroftApp) so this component stays a pure display of it.
-function QuickResetModal({ session, onCancel }) {
+function QuickResetModal({ session, onCancel, soundOn, onToggleSound }) {
   const pct = 1 - session.seconds / session.total;
   const mm = Math.floor(session.seconds / 60), ss = session.seconds % 60;
   return (
     <div role="dialog" aria-modal="true" aria-label={session.label} style={{ position:"fixed", inset:0, zIndex:1300, background:C.bg, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:24 }}>
+      {/* Ticks each second and chimes at the end, so the reset can be followed eyes closed. */}
+      <button onClick={onToggleSound} aria-pressed={soundOn} aria-label={soundOn ? "Turn countdown sound off" : "Turn countdown sound on"}
+        style={{ position:"absolute", top:"calc(16px + env(safe-area-inset-top))", right:16, background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:99, padding:"8px 14px", color:soundOn ? C.white : C.muted, fontSize:13, fontWeight:600, fontFamily:APP_FONT, cursor:"pointer", display:"flex", alignItems:"center", gap:7 }}>
+        <svg viewBox="0 0 24 24" width={16} height={16} aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M11 5 6 9H3v6h3l5 4z" />
+          {soundOn ? <path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13" /> : <path d="m16 9 6 6M22 9l-6 6" />}
+        </svg>
+        {soundOn ? "Sound on" : "Sound off"}
+      </button>
       <Mono style={{ color:C.muted, letterSpacing:.8, marginBottom:22, animation:"fadeUp .3s ease" }}>{session.label}</Mono>
       <div style={{ position:"relative", width:180, height:180, marginBottom:26, animation:"pop .35s cubic-bezier(.34,1.56,.64,1)" }}>
         {/* A slow ambient glow behind the ring, not tied to the second-by-second countdown —
@@ -5212,31 +5222,55 @@ function KroftApp({ onFullReset } = {}) {
     toast("Nice reset. Wellness score up.");
   };
 
+  const [resetSound, setResetSound] = useState(resetSoundOn);
   const startQuickReset = kindKey => {
     const cfg = QUICK_RESET_KINDS.find(k => k.key === kindKey);
     if (!cfg) return;
     haptic(8);
-    setActiveReset({ key: cfg.key, label: cfg.label, guide: cfg.guide, seconds: cfg.seconds, total: cfg.seconds });
+    // Sound is only allowed after a tap, and this is that tap.
+    unlockAudio();
+    const endsAt = Date.now() + cfg.seconds * 1000;
+    setActiveReset({ key: cfg.key, label: cfg.label, guide: cfg.guide, seconds: cfg.seconds, total: cfg.seconds, endsAt });
+    // In the Android app: a notification at the end time, in case the screen goes off anyway.
+    scheduleReminderAt(endsAt + 1500, `${cfg.label} done`, "Your Quick Reset is over.");
   };
-  const cancelQuickReset = () => setActiveReset(null);
+  const cancelQuickReset = () => { cancelReminderAt(); setActiveReset(null); };
+  const toggleResetSound = () => setResetSound(on => { setResetSoundOn(!on); if (!on) unlockAudio(); return !on; });
 
   // Ticks the active Quick Reset countdown once a second, same setInterval-in-an-effect shape as
   // the login lockout timer above — a dedicated 1s timer rather than the shared 30s heartbeat,
   // since this needs to visibly count down while its screen is open, not just wake periodically.
+  //
+  // The time left is worked out from the end time rather than counted down, so it stays right
+  // even if the phone slows the timer down. Each new second ticks; the end chimes. The screen is
+  // kept on while it runs, since a locked phone would pause the timer and the final sound.
+  const resetSoundRef = useRef(resetSound);
+  resetSoundRef.current = resetSound;
+  const activeResetKey = activeReset ? `${activeReset.key}:${activeReset.endsAt}` : null;
   useEffect(() => {
-    if (!activeReset || activeReset.seconds <= 0) return;
+    if (!activeReset) return;
+    const { key, total, endsAt } = activeReset;
+    let lastShown = activeReset.seconds;
+    let releaseScreen = () => {};
+    let stopped = false;
+    keepScreenOn().then(release => { if (stopped) release(); else releaseScreen = release; });
     const iv = setInterval(() => {
-      setActiveReset(prev => {
-        if (!prev) return prev;
-        if (prev.seconds <= 1) {
-          logQuickReset(prev.key, prev.total);
-          return null;
-        }
-        return { ...prev, seconds: prev.seconds - 1 };
-      });
-    }, 1000);
-    return () => clearInterval(iv);
-  }, [activeReset]);
+      const left = Math.max(0, Math.ceil((endsAt - Date.now()) / 1000));
+      if (left === lastShown) return;
+      lastShown = left;
+      if (left <= 0) {
+        clearInterval(iv);
+        if (resetSoundRef.current) playDone();
+        cancelReminderAt();
+        logQuickReset(key, total);
+        setActiveReset(null);
+        return;
+      }
+      if (resetSoundRef.current) playTick(left <= 3);
+      setActiveReset(prev => (prev && prev.endsAt === endsAt ? { ...prev, seconds: left } : prev));
+    }, 250);
+    return () => { stopped = true; clearInterval(iv); releaseScreen(); };
+  }, [activeResetKey]);
 
   // True only once an account actually exists on this device. Local-only-mode fallback only —
   // with Supabase configured, doLogin asks the server instead of checking anything local, since
@@ -9323,7 +9357,7 @@ ${voiceMode
           </div>
         </>
       )}
-      {activeReset && <QuickResetModal session={activeReset} onCancel={cancelQuickReset} />}
+      {activeReset && <QuickResetModal session={activeReset} onCancel={cancelQuickReset} soundOn={resetSound} onToggleSound={toggleResetSound} />}
       {patternDetail && <PatternDetailModal pattern={patternDetail} onClose={() => setPatternDetail(null)} />}
       {contactActivity && (
         <ContactActivityModal
