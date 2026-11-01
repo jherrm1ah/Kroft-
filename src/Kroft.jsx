@@ -6,7 +6,20 @@ import { Markdown } from "./markdown/Markdown.jsx";
 import { toPlainText, toSpeechText } from "./markdown/parse.js";
 import { copyRich, copyPlain } from "./markdown/clipboard.js";
 import { offlineUserId, flushPending, clearOfflineData, hasUnsyncedChanges, unreadableKeys } from "./storageShim.js";
-import { isNativeApp, nativeRedirect, openInSystemBrowser, scheduleDeviceReminders } from "./native.js";
+import { isNativeApp, nativeRedirect, openInSystemBrowser, scheduleDeviceReminders, verifyBiometric, getAppPermissions, requestAppPermission } from "./native.js";
+
+// What a mic button says when listening fails, by the SpeechRecognition error code. Silence used
+// to show "Mic error — check permissions." too, which sent people hunting through settings for a
+// permission they had already given.
+const MIC_PERMISSION_HINT = isNativeApp ? "Allow it in Profile → Security and login → App permissions." : "Allow it in your browser's site settings.";
+function micErrorText(code) {
+  if (code === "aborted") return "";
+  if (code === "no-speech") return "Didn't catch that. Tap the mic and try again.";
+  if (code === "not-allowed" || code === "service-not-allowed") return `KROFT can't use the microphone. ${MIC_PERMISSION_HINT}`;
+  if (code === "audio-capture") return "No working microphone found on this device.";
+  if (code === "network") return "Couldn't turn your speech into text. Check your connection and try again.";
+  return "The microphone stopped unexpectedly. Try again.";
+}
 
 // A lazy chunk fetched over a flaky mobile connection can fail with a plain network error —
 // dynamic import() rejects, and React throws that straight into the nearest error boundary,
@@ -2616,6 +2629,54 @@ function ProfileRow({ label, sub, expanded, onToggle, children, right, icon, glo
   );
 }
 
+// Android app only: what KROFT is allowed to use on this phone, with a button to ask for anything
+// that's still off. Android stops showing its prompt after someone taps "Don't allow" twice; from
+// then on only the phone's Settings can turn it back on, which the hint below says.
+const APP_PERMISSIONS = [
+  { key:"microphone", label:"Microphone", why:"Voice input, voice mode and voice memos" },
+  { key:"location", label:"Location", why:"Around Me (places near you)" },
+  { key:"notifications", label:"Notifications", why:"Reminders and daily briefings" },
+];
+function AppPermissions({ toast }) {
+  const [state, setState] = useState(null);
+  const [asking, setAsking] = useState("");
+  const refresh = useCallback(() => { getAppPermissions().then(setState).catch(() => {}); }, []);
+  useEffect(() => {
+    refresh();
+    // Picks up changes made in the phone's Settings while KROFT was in the background.
+    const onVisible = () => { if (document.visibilityState === "visible") refresh(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [refresh]);
+  const ask = async key => {
+    setAsking(key);
+    const result = await requestAppPermission(key);
+    setAsking("");
+    refresh();
+    if (result !== "granted") toast("Android didn't allow it. Open your phone's Settings → Apps → KROFT → Permissions to turn it on.");
+  };
+  if (!state) return <Mono style={{ display:"block", color:C.muted }}>Checking…</Mono>;
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+      {APP_PERMISSIONS.map(p => {
+        const on = state[p.key] === "granted";
+        return (
+          <div key={p.key} style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:12 }}>
+            <div style={{ minWidth:0 }}>
+              <div style={{ fontSize:13, fontWeight:600, color:C.white }}>{p.label}</div>
+              <Mono style={{ display:"block", color:C.muted, marginTop:2 }}>{p.why}</Mono>
+            </div>
+            {on
+              ? <Mono style={{ color:C.positive, fontWeight:600, flexShrink:0 }}>Allowed</Mono>
+              : <Btn v="outline" sm onClick={() => ask(p.key)} disabled={!!asking} style={{ flexShrink:0 }}>{asking === p.key ? "Asking…" : "Allow"}</Btn>}
+          </div>
+        );
+      })}
+      <Mono style={{ display:"block", color:C.muted, lineHeight:1.7 }}>If Allow doesn't bring up a prompt, Android has stopped asking: turn it on in your phone's Settings → Apps → KROFT → Permissions.</Mono>
+    </div>
+  );
+}
+
 function ProfileSwitch({ value, onChange }) {
   return (
     <button onClick={e => { e.stopPropagation(); onChange(!value); }} style={{ width:38, height:22, borderRadius:99, border:`1px solid ${value?C.accent:C.muted}`, background:value?C.accentBg:"transparent", position:"relative", cursor:"pointer", flexShrink:0, transition:"all .16s" }}>
@@ -2624,7 +2685,7 @@ function ProfileSwitch({ value, onChange }) {
   );
 }
 
-function ProfileSection({ nav, onNav, connections, user, onUpdateName, onEditBusinessDetails, onSignOut, theme, onToggleTheme, toast, subscribed, subscriptionStatus, autoRenews, billingLoading, onUpgrade, onManageBilling, usageStats, voiceReplies, onSetVoiceReplies, proactiveInsights, onSetProactiveInsights, wellnessAiContext, onSetWellnessAiContext, voicePref, onSetVoicePref, voiceSpeed, onSetVoiceSpeed, onSetupBiometric, onRemoveBiometric, onExportData, onImportData, onDeleteAccount, notifPermission, notifPrefs, onEnableNotifications, onSetNotifPref, onTestNotification, voiceTurnsCount, voiceLimit }) {
+function ProfileSection({ nav, onNav, connections, user, onUpdateName, onEditBusinessDetails, onSignOut, theme, onToggleTheme, toast, subscribed, subscriptionStatus, autoRenews, billingLoading, onUpgrade, onManageBilling, usageStats, voiceReplies, onSetVoiceReplies, proactiveInsights, onSetProactiveInsights, wellnessAiContext, onSetWellnessAiContext, voicePref, onSetVoicePref, voiceSpeed, onSetVoiceSpeed, onSetupBiometric, onRemoveBiometric, biometricOn, onExportData, onImportData, onDeleteAccount, notifPermission, notifPrefs, onEnableNotifications, onSetNotifPref, onTestNotification, voiceTurnsCount, voiceLimit }) {
   // nav.screen is null for the main hub, otherwise a key of SCREENS below. Held in KroftApp (see
   // profileNav there) so it survives the remount a theme change triggers.
   const { screen, openRow } = nav;
@@ -2764,9 +2825,16 @@ function ProfileSection({ nav, onNav, connections, user, onUpdateName, onEditBus
       </ProfileRow>
     ),
     faceid: (
-      <ProfileRow label="Face ID" sub={user.webauthnCredentialId ? "Enabled for this device" : "Not set up"} expanded={openRow==="faceid"} onToggle={()=>toggle("faceid")}
-        right={<ProfileSwitch value={!!user.webauthnCredentialId} onChange={v => v ? onSetupBiometric() : onRemoveBiometric()} />}>
-        <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>Biometric sign-in uses your device's real WebAuthn platform authenticator (Face ID, Touch ID, or Windows Hello) — turning this on will prompt an actual biometric check on this device, not just a toggle.</Mono>
+      <ProfileRow label={isNativeApp ? "Fingerprint or face unlock" : "Face ID"} sub={biometricOn ? "Enabled for this device" : "Not set up"} expanded={openRow==="faceid"} onToggle={()=>toggle("faceid")}
+        right={<ProfileSwitch value={!!biometricOn} onChange={v => v ? onSetupBiometric() : onRemoveBiometric()} />}>
+        <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>{isNativeApp
+          ? "Uses your phone's own fingerprint or face unlock. Turning this on asks you to confirm with it once; after that you can use it to log back in on this phone."
+          : "Biometric sign-in uses your device's real WebAuthn platform authenticator (Face ID, Touch ID, or Windows Hello) — turning this on will prompt an actual biometric check on this device, not just a toggle."}</Mono>
+      </ProfileRow>
+    ),
+    perms: (
+      <ProfileRow label="App permissions" sub="Microphone, location, notifications" expanded={openRow==="perms"} onToggle={()=>toggle("perms")}>
+        <AppPermissions toast={toast} />
       </ProfileRow>
     ),
     privacy: (
@@ -2988,7 +3056,7 @@ function ProfileSection({ nav, onNav, connections, user, onUpdateName, onEditBus
     notifications:   { title:"Notifications", rows:["notifs"] },
     voice:           { title:"Voice", rows:["voice"] },
     automations:     { title:"Automations", rows:["auto"] },
-    security:        { title:"Security and login", rows:["faceid"] },
+    security:        { title:"Security and login", rows: isNativeApp ? ["faceid", "perms"] : ["faceid"] },
     privacy:         { title:"Privacy center", rows:["privacy", "memory", "wellnessai"], bottom:(
       <div style={{ marginTop:26 }}>
         <SettingsGroup>
@@ -3041,7 +3109,7 @@ function ProfileSection({ nav, onNav, connections, user, onUpdateName, onEditBus
       { key:"notifications", icon:"reminders", label:"Notifications", value:{ granted:"On", denied:"Blocked", unsupported:"Unavailable" }[notifPermission] || "Off" },
       { key:"voice", icon:"mic", label:"Voice", value:voiceReplies ? VOICE_PROFILES[resolveVoiceId(voicePref)].name : "Off" },
       { key:"automations", icon:"wand", label:"Automations", value:proactiveInsights ? "On" : "Off" },
-      { key:"security", icon:"lock", label:"Security and login", value:user.webauthnCredentialId ? "Face ID on" : "" },
+      { key:"security", icon:"lock", label:"Security and login", value:biometricOn ? (isNativeApp ? "Biometrics on" : "Face ID on") : "" },
       { key:"privacy", icon:"eye", label:"Privacy center" },
       { key:"data", icon:"cloud", label:"History and data", value:isSupabaseConfigured ? "Synced" : "This device" },
       { key:"report", icon:"flag", label:"Report a problem" },
@@ -4654,10 +4722,19 @@ function KroftApp({ onFullReset } = {}) {
     // button. Requires a secure context (HTTPS or localhost); some sandboxed preview iframes
     // block WebAuthn outright, in which case this will fail with an error rather than silently
     // granting access.
-    if (!user.webauthnCredentialId) { toast("Set up biometric unlock in Profile first."); return; }
-    if (!window.PublicKeyCredential) { toast("Biometrics not supported on this device."); return; }
+    if (isNativeApp) {
+      if (!nativeBioOn) { toast("Set up biometric unlock in Profile first."); return; }
+    } else {
+      if (!user.webauthnCredentialId) { toast("Set up biometric unlock in Profile first."); return; }
+      if (!window.PublicKeyCredential) { toast("Biometrics not supported on this device."); return; }
+    }
     setFpLoading(true);
     try {
+      if (isNativeApp) {
+        // Android's own fingerprint / face prompt (WebAuthn doesn't exist in the app's WebView).
+        const r = await verifyBiometric("Log in to KROFT");
+        if (!r.ok) throw new Error(r.reason);
+      } else {
       const challenge = crypto.getRandomValues(new Uint8Array(32));
       const assertion = await navigator.credentials.get({
         publicKey: {
@@ -4668,6 +4745,7 @@ function KroftApp({ onFullReset } = {}) {
         },
       });
       if (!assertion) throw new Error("No assertion returned");
+      }
       // WebAuthn only proves this is the same device/person that registered biometrics — it
       // doesn't and can't restore a Supabase session by itself; there's no server-side piece
       // here that verifies the assertion and mints one. Skipping straight to the dashboard
@@ -4700,7 +4778,22 @@ function KroftApp({ onFullReset } = {}) {
   // this device, called from Profile settings. Stores only the credential's public ID (safe to
   // persist — it can't be used to impersonate without the matching private key, which never
   // leaves the authenticator hardware) in user.webauthnCredentialId.
+  // In the Android app the setting is kept on the phone only (it unlocks this phone, and user is
+  // synced to every device the account signs in on).
+  const [nativeBioOn, setNativeBioOn] = useState(() => { try { return isNativeApp && localStorage.getItem("kroft-native-biometric") === "1"; } catch { return false; } });
+  const biometricOn = isNativeApp ? nativeBioOn : !!user.webauthnCredentialId;
   const setupBiometric = async () => {
+    if (isNativeApp) {
+      const r = await verifyBiometric("Turn on biometric unlock");
+      if (r.ok) {
+        try { localStorage.setItem("kroft-native-biometric", "1"); } catch { /* stays on for this session */ }
+        setNativeBioOn(true);
+        toast("Biometric unlock is on for this phone.");
+      } else if (r.reason === "not-enrolled") toast("Add a fingerprint or face in your phone's Settings → Security first.");
+      else if (r.reason === "unsupported") toast("This phone doesn't have a fingerprint or face sensor KROFT can use.");
+      else if (r.reason === "locked-out") toast("Too many tries. Wait a moment and try again.");
+      return;
+    }
     if (!window.PublicKeyCredential) { toast("Biometric unlock isn't supported on this device."); return; }
     try {
       const challenge = crypto.getRandomValues(new Uint8Array(32));
@@ -4724,6 +4817,12 @@ function KroftApp({ onFullReset } = {}) {
     }
   };
   const removeBiometric = () => {
+    if (isNativeApp) {
+      try { localStorage.removeItem("kroft-native-biometric"); } catch { /* nothing stored */ }
+      setNativeBioOn(false);
+      toast("Biometric unlock removed for this phone.");
+      return;
+    }
     setUser(u => { const { webauthnCredentialId, ...rest } = u; return rest; });
     toast("Biometric unlock removed for this device.");
   };
@@ -5486,7 +5585,7 @@ function KroftApp({ onFullReset } = {}) {
       listeningRef.current = false;
       if (ev.error === "not-allowed" || ev.error === "service-not-allowed") {
         setVoiceState("idle");
-        setVoiceError("Microphone access was blocked. Allow it in your browser settings to use voice mode.");
+        setVoiceError(`Microphone access is off. ${MIC_PERMISSION_HINT}`);
         return;
       }
       if (ev.error === "aborted") { setVoiceState("idle"); return; }
@@ -5809,7 +5908,7 @@ function KroftApp({ onFullReset } = {}) {
         if (pending.trim()) { if (wantsSend) askKroft(pending); else { setAiInput(pending); setTab("nova"); } }
       }
     };
-    r.onerror = () => { setListening(false); sendAfterStopRef.current = false; toast("Mic error — check permissions."); };
+    r.onerror = e => { setListening(false); sendAfterStopRef.current = false; const msg = micErrorText(e?.error); if (msg) toast(msg); };
     recRef.current = r; r.start();
   }, [listening]);
 
@@ -5846,7 +5945,7 @@ function KroftApp({ onFullReset } = {}) {
       const t = Array.from(e.results).map(x => x[0].transcript).join("");
       if (t) setJournalDraft(p => (p ? p.replace(/\s+$/, "") + " " : "") + t);
     };
-    r.onerror = () => { setJournalListening(false); toast("Mic error — check permissions."); };
+    r.onerror = e => { setJournalListening(false); const msg = micErrorText(e?.error); if (msg) toast(msg); };
     journalRecRef.current = r; r.start();
   }, [journalListening]);
 
@@ -5902,7 +6001,7 @@ function KroftApp({ onFullReset } = {}) {
       mr.start();
       setRecordingMemo(true);
     } catch {
-      toast("Couldn't access microphone — check permissions.");
+      toast(`Couldn't use the microphone. ${MIC_PERMISSION_HINT}`);
     }
   }, [recordingMemo]);
 
@@ -7548,7 +7647,9 @@ ${voiceMode
     if (locationStatus === "requesting") return;
     if (!navigator.geolocation) { setLocationStatus("error"); setAroundError("Geolocation isn't supported on this device."); return; }
     setLocationStatus("requesting"); setAroundError("");
-    navigator.geolocation.getCurrentPosition(
+    // A precise GPS fix often can't be had indoors within the time limit; the second attempt
+    // accepts a rougher network-based position, which is plenty for "places near me".
+    const attempt = precise => navigator.geolocation.getCurrentPosition(
       pos => {
         const { latitude, longitude } = pos.coords;
         setUserCoords({ lat:latitude, lng:longitude });
@@ -7560,12 +7661,22 @@ ${voiceMode
         }
       },
       err => {
-        setLocationStatus("denied");
-        if (err.code === err.PERMISSION_DENIED) setAroundError("Location access was denied. KROFT needs this to find places near you — you can enable it later in your device Settings.");
-        else setAroundError("Couldn't determine your location right now. Try again in a moment.");
+        if (err.code === err.PERMISSION_DENIED) {
+          setLocationStatus("denied");
+          setAroundError(isNativeApp
+            ? "KROFT needs location access to find places near you. Allow it in Profile → Security and login → App permissions."
+            : "Location access was denied. KROFT needs this to find places near you — you can enable it later in your device Settings.");
+          return;
+        }
+        if (precise) { attempt(false); return; }
+        setLocationStatus("error");
+        setAroundError(/turned off|not enabled|disabled/i.test(err.message || "")
+          ? "Location is turned off on your phone. Switch it on from the quick settings panel, then tap Retry."
+          : "Couldn't determine your location right now. Make sure location is switched on, then tap Retry.");
       },
-      { enableHighAccuracy:true, timeout:10000, maximumAge:60000 }
+      precise ? { enableHighAccuracy:true, timeout:12000, maximumAge:60000 } : { enableHighAccuracy:false, timeout:20000, maximumAge:300000 }
     );
+    attempt(true);
   };
 
   const reverseGeocode = async (lat, lng) => {
@@ -7883,7 +7994,7 @@ ${voiceMode
                 onChange={e => { setLoginPw(e.target.value); setLoginError(""); }} onKeyDown={e => e.key === "Enter" && doLogin()} />
             </div>
             {loginError && !locked && <AuthAlert>{loginError}{loginAttempts > 0 && <span style={{ color:LIGHT.muted }}> {5 - loginAttempts} attempt{5 - loginAttempts !== 1 ? "s" : ""} left.</span>}</AuthAlert>}
-            {user.webauthnCredentialId && (
+            {biometricOn && (
               <AuthButton kind="secondary" style={{ marginTop:18 }} loading={fpLoading} disabled={fpSuccess || locked} onClick={doFingerprint}>
                 {fpLoading ? "Verifying…" : fpSuccess ? "Verified" : "Log in with Face ID or fingerprint"}
               </AuthButton>
@@ -11332,6 +11443,7 @@ ${voiceMode
               voiceSpeed={voiceSpeed}
               onSetVoiceSpeed={setVoiceSpeed}
               onSetupBiometric={setupBiometric}
+              biometricOn={biometricOn}
               onRemoveBiometric={removeBiometric}
               usageStats={{
                 totalMessages: aiMessages.filter(m => m.role === "user").length,

@@ -32,7 +32,9 @@ function toGeminiParts(content) {
   if (!Array.isArray(content)) return [{ text: String(content) }];
   return content
     .map((block) => {
-      if (block.type === "image" && block.source?.data) {
+      // Audio clips come from the mic fallback in src/voiceRecorder.js, for phones and browsers
+      // with no speech recognizer of their own; Gemini transcribes them.
+      if ((block.type === "image" || block.type === "audio") && block.source?.data) {
         return { inlineData: { mimeType: block.source.media_type || "application/octet-stream", data: block.source.data } };
       }
       if (block.type === "text" || typeof block.text === "string") return { text: block.text || "" };

@@ -45,6 +45,7 @@
          RECORD_AUDIO + MODIFY_AUDIO_SETTINGS: voice input, voice mode, voice memos.
          CAMERA: profile photo and receipt scanning.
          ACCESS_COARSE/FINE_LOCATION: Around Me, only while you search.
+         USE_BIOMETRIC: fingerprint / face unlock, if you turn it on in Profile > Security.
          Notification and alarm permissions come from the local-notifications plugin (reminders). -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
@@ -52,6 +53,7 @@
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.USE_BIOMETRIC" />
 
     <!-- Not required: the app still installs on devices without these. -->
     <uses-feature android:name="android.hardware.camera" android:required="false" />
