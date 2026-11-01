@@ -1,0 +1,50 @@
+name: Production check
+
+# Runs after every production deploy on Vercel (Vercel reports each deploy back to GitHub as a
+# deployment status). Checks the live site with tests/smoke/production.mjs. If it fails, GitHub
+# emails you and the run's summary says how to roll back. Nothing here changes the site or data.
+on:
+  deployment_status:
+
+permissions:
+  contents: read
+
+jobs:
+  live-site:
+    if: github.event.deployment_status.state == 'success' && startsWith(github.event.deployment.environment, 'Production')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Install the test browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Check the live site
+        env:
+          SITE: https://kroft-pied.vercel.app
+          EXPECT_BUILD: ${{ github.event.deployment.sha }}
+        run: node tests/smoke/production.mjs
+
+      - name: How to roll back
+        if: failure()
+        run: |
+          {
+            echo "## The live site failed its check after this deploy"
+            echo
+            echo "To put the previous version back (takes seconds, no rebuild):"
+            echo
+            echo "1. Open https://vercel.com/virt-technologies/kroft/deployments"
+            echo "2. Find the previous deployment marked Production, open its menu (⋯)"
+            echo "3. Choose **Instant Rollback** and confirm"
+            echo
+            echo "Then fix the problem in a new pull request. See docs/RELEASE.md."
+          } >> "$GITHUB_STEP_SUMMARY"

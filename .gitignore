@@ -6,3 +6,4 @@ dist
 .env.*
 !.env.example
 .vercel
+dist-e2e
