@@ -14,6 +14,7 @@ on:
       - "capacitor.config.json"
       - "src/native.js"
       - "src/main.jsx"
+      - "vite.config.js"
       - "package.json"
       - "package-lock.json"
       - ".github/workflows/android.yml"
@@ -99,6 +100,11 @@ jobs:
           } | tee out/BUILD-INFO.txt
           grep -q "package: name='com.orynthra.kroft'" out/BUILD-INFO.txt
           grep -q "application-label:'KROFT'" out/BUILD-INFO.txt
+          # The version numbers come from android/version.properties (MAJOR*10000+MINOR*100+PATCH).
+          NAME=$(sed -n 's/^VERSION_NAME=//p' android/version.properties)
+          IFS=. read -r MA MI PA <<< "$NAME"
+          CODE=$((MA * 10000 + MI * 100 + PA))
+          grep -q "versionCode='$CODE' versionName='$NAME'" out/BUILD-INFO.txt
           grep -q "^Verifies" out/BUILD-INFO.txt
 
       - uses: actions/upload-artifact@v4

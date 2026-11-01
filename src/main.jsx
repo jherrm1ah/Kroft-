@@ -4,6 +4,7 @@ import "./storageShim.js";
 import Kroft from "./Kroft.jsx";
 import { isNativeApp, installNativeShims } from "./native.js";
 import { createRecorderRecognition } from "./voiceRecorder.js";
+import { watchForNewVersion } from "./webUpdate.js";
 
 const mount = () => createRoot(document.getElementById("root")).render(
   <StrictMode>
@@ -23,6 +24,9 @@ else {
   }
   mount();
 }
+
+// A copy left open for days picks up the newest deployed version when someone comes back to it.
+if (import.meta.env.PROD) watchForNewVersion();
 
 // The service worker (public/sw.js) caches the app so it opens offline. Registered after the page
 // has loaded so it never competes with the first load, and only in production builds: during

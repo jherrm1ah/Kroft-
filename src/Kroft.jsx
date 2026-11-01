@@ -6,7 +6,7 @@ import { Markdown } from "./markdown/Markdown.jsx";
 import { toPlainText, toSpeechText } from "./markdown/parse.js";
 import { copyRich, copyPlain } from "./markdown/clipboard.js";
 import { offlineUserId, flushPending, clearOfflineData, hasUnsyncedChanges, unreadableKeys } from "./storageShim.js";
-import { isNativeApp, nativeRedirect, openInSystemBrowser, scheduleDeviceReminders, verifyBiometric, getAppPermissions, requestAppPermission, saveFileFromApp, exactAlarmStatus, openExactAlarmSetting } from "./native.js";
+import { isNativeApp, nativeRedirect, openInSystemBrowser, scheduleDeviceReminders, verifyBiometric, getAppPermissions, requestAppPermission, saveFileFromApp, exactAlarmStatus, openExactAlarmSetting, getClientHeader } from "./native.js";
 
 // What a mic button says when listening fails, by the SpeechRecognition error code. Silence used
 // to show "Mic error — check permissions." too, which sent people hunting through settings for a
@@ -2668,7 +2668,8 @@ function AppPermissions({ toast }) {
     if (key === "exact") { setAsking(""); refresh(); return; }
     setAsking("");
     refresh();
-    if (result !== "granted") toast("Android didn't allow it. Open your phone's Settings → Apps → KROFT → Permissions to turn it on.");
+    if (result === "needs-update") toast("Update the KROFT app to turn this on from here.");
+    else if (result !== "granted") toast("Android didn't allow it. Open your phone's Settings → Apps → KROFT → Permissions to turn it on.");
   };
   if (!state) return <Mono style={{ display:"block", color:C.muted }}>Checking…</Mono>;
   return (
@@ -4831,6 +4832,9 @@ function KroftApp({ onFullReset } = {}) {
     const r = await verifyBiometric("Unlock KROFT");
     setUnlocking(false);
     if (r.ok) { setAppLocked(false); return; }
+    // An older copy of the app without the fingerprint plugin can't check it; the account's
+    // password still protects it, so don't keep the person out.
+    if (r.reason === "needs-update") { setAppLocked(false); return; }
     // The sensor is gone or every fingerprint was removed: don't trap the person behind a lock
     // they can no longer open. Their password still protects the account.
     if (r.reason === "unsupported" || r.reason === "not-enrolled") {
@@ -4864,6 +4868,7 @@ function KroftApp({ onFullReset } = {}) {
         toast("Biometric unlock is on. KROFT will ask for it when you open the app.");
       } else if (r.reason === "not-enrolled") toast("Add a fingerprint or face in your phone's Settings → Security first.");
       else if (r.reason === "unsupported") toast("This phone doesn't have a fingerprint or face sensor KROFT can use.");
+      else if (r.reason === "needs-update") toast("Update the KROFT app to use fingerprint or face unlock.");
       else if (r.reason === "locked-out") toast("Too many tries. Wait a moment and try again.");
       return;
     }
@@ -4922,6 +4927,7 @@ function KroftApp({ onFullReset } = {}) {
         signal: controller.signal,
         headers: {
           ...(opts.body ? { "Content-Type": "application/json" } : {}),
+          "X-Kroft-Client": getClientHeader(),
           ...opts.headers,
           Authorization: `Bearer ${session.access_token}`,
         },
@@ -4936,7 +4942,7 @@ function KroftApp({ onFullReset } = {}) {
   // open in local-only mode — so unlike authedFetch, this never throws. It attaches a session
   // token opportunistically when one exists, and otherwise sends the request exactly as before.
   const aiFetch = async (path, opts = {}) => {
-    const headers = { ...(opts.body ? { "Content-Type": "application/json" } : {}), ...opts.headers };
+    const headers = { ...(opts.body ? { "Content-Type": "application/json" } : {}), "X-Kroft-Client": getClientHeader(), ...opts.headers };
     if (isSupabaseConfigured) {
       try {
         const { data: { session } = {} } = await supabase.auth.getSession();
@@ -6677,7 +6683,11 @@ ${voiceMode
       }
       const payload = { app:"KROFT", formatVersion:1, exportedAt:new Date().toISOString(), data:groups };
       // The Android app's WebView ignores <a download>; the file goes to the share sheet instead.
-      if (isNativeApp) { await saveFileFromApp(`kroft-backup-${todayISO()}.json`, JSON.stringify(payload, null, 2)); return; }
+      if (isNativeApp) {
+        try { await saveFileFromApp(`kroft-backup-${todayISO()}.json`, JSON.stringify(payload, null, 2)); }
+        catch (err) { toast(err?.code === "needs-update" ? "Update the KROFT app to save files." : "Couldn't create the backup. Try again."); }
+        return;
+      }
       const blob = new Blob([JSON.stringify(payload, null, 2)], { type:"application/json" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -7627,7 +7637,8 @@ ${voiceMode
   const downloadText = async (filename, content, doneMsg) => {
     if (isNativeApp) {
       // No downloads in the Android app's WebView: hand the file to the share sheet instead.
-      try { await saveFileFromApp(filename, content); } catch { toast("Couldn't save that file. Try again."); }
+      try { await saveFileFromApp(filename, content); }
+      catch (err) { toast(err?.code === "needs-update" ? "Update the KROFT app to save files." : "Couldn't save that file. Try again."); }
       return;
     }
     const blob = new Blob([content], { type:"text/plain" });
