@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo, Component, Fragment, lazy, Suspense } from "react";
+import { createPortal } from "react-dom";
 import { supabase, isSupabaseConfigured, supabaseUrl, supabaseAnonKey } from "./supabaseClient.js";
 import { fmtCur, APP_FONT } from "./charts/format.js";
 
@@ -1453,6 +1454,8 @@ const NavIcon = ({ id, size=20, color="currentColor" }) => {
       return <svg viewBox="0 0 24 24" style={s}><path d="M5.5 21V4" {...p} /><path d="M5.5 4.5h11l-2 4 2 4h-11" {...p} /></svg>;
     case "phone":
       return <svg viewBox="0 0 24 24" style={s}><path d="M6.6 3.5h2.6l1.3 4-1.9 1.4a12 12 0 0 0 6.5 6.5l1.4-1.9 4 1.3v2.6a2 2 0 0 1-2 2A16 16 0 0 1 4.6 5.5a2 2 0 0 1 2-2z" {...p} /></svg>;
+    case "trash":
+      return <svg viewBox="0 0 24 24" style={s}><path d="M4.5 6.5h15M9.5 6.5V4.5h5v2M6.5 6.5l.8 12.2a2 2 0 0 0 2 1.8h5.4a2 2 0 0 0 2-1.8l.8-12.2M10 10.5v6M14 10.5v6" {...p} /></svg>;
     case "logout":
       return <svg viewBox="0 0 24 24" style={s}><path d="M10 4.5H6.5a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2H10" {...p} /><path d="M14.5 8 18.5 12l-4 4M18.5 12H9.5" {...p} /></svg>;
     case "smile": // Mood log
@@ -2330,6 +2333,51 @@ function LogoutDialog({ onConfirm, onCancel }) {
   );
 }
 
+// Permanent account deletion. Deliberately harder to reach than log out: the user has to type
+// DELETE, because unlike log out there is no way back.
+function DeleteAccountDialog({ onConfirm, onCancel, synced, subscribed }) {
+  const [busy, setBusy] = useState(false);
+  const [typed, setTyped] = useState("");
+  const ref = useModalA11y(busy ? () => {} : onCancel);
+  const ready = typed.trim().toUpperCase() === "DELETE";
+  const confirm = async () => {
+    if (!ready || busy) return;
+    setBusy(true);
+    const ok = await onConfirm();
+    if (!ok) setBusy(false);
+  };
+  return (
+    <div onClick={busy ? undefined : onCancel} style={{ position:"fixed", inset:0, zIndex:1300, background:"rgba(0,0,0,.45)", display:"flex", alignItems:"center", justifyContent:"center", padding:20, animation:"fadeIn .18s ease" }}>
+      <div ref={ref} role="alertdialog" aria-modal="true" aria-labelledby="delete-title" aria-describedby="delete-desc" onClick={e => e.stopPropagation()}
+        style={{ width:"100%", maxWidth:400, background:C.card, borderRadius:32, padding:"30px 22px 12px", boxShadow:"0 24px 60px rgba(0,0,0,.3)", animation:"pop .22s ease" }}>
+        <h2 id="delete-title" style={{ fontSize:24, fontWeight:600, color:C.text, margin:"0 8px 10px", letterSpacing:-.4 }}>Delete account?</h2>
+        <div id="delete-desc" style={{ fontSize:15.5, lineHeight:1.5, color:C.muted, margin:"0 8px 18px" }}>
+          <p style={{ margin:"0 0 10px" }}>
+            {synced
+              ? "This permanently deletes your KROFT account and everything in it: chats, finances, contacts, notes, wellness entries and files. Linked Google or Microsoft accounts are disconnected."
+              : "This permanently erases everything KROFT has stored on this device: chats, finances, contacts, notes, wellness entries and files."}
+          </p>
+          {subscribed && <p style={{ margin:"0 0 10px" }}>Your KROFT Plus subscription will be cancelled.</p>}
+          <p style={{ margin:0 }}>This can't be undone. Download a backup first if you want to keep a copy.</p>
+        </div>
+        <label htmlFor="delete-confirm" style={{ display:"block", fontSize:14, color:C.text, margin:"0 8px 8px" }}>Type <b>DELETE</b> to confirm</label>
+        <input id="delete-confirm" value={typed} onChange={e => setTyped(e.target.value)} disabled={busy}
+          onKeyDown={e => { if (e.key === "Enter") confirm(); }}
+          autoComplete="off" autoCapitalize="characters" spellCheck={false}
+          style={{ width:"100%", boxSizing:"border-box", height:48, borderRadius:14, border:`1px solid ${C.cardB}`, background:C.surface, color:C.text, fontSize:16, fontFamily:APP_FONT, padding:"0 14px", marginBottom:16, outline:"none" }} />
+        <button disabled={!ready || busy} onClick={confirm}
+          style={{ width:"100%", height:52, borderRadius:999, border:"none", background:C.negative, color:"#fff", fontSize:16, fontWeight:700, fontFamily:APP_FONT, cursor:busy?"wait":ready?"pointer":"not-allowed", opacity:ready||busy?1:.45, display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
+          {busy ? <Spinner size={18} color="#fff" thickness={2} /> : "Delete account"}
+        </button>
+        <button disabled={busy} onClick={onCancel}
+          style={{ width:"100%", height:52, marginTop:4, borderRadius:999, border:"none", background:"none", color:C.text, fontSize:16, fontWeight:700, fontFamily:APP_FONT, cursor:"pointer" }}>
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // Header bar for a Profile drill-down screen: back button + screen title.
 function ProfileScreenHeader({ title, onBack }) {
   return (
@@ -2384,13 +2432,14 @@ function ProfileSwitch({ value, onChange }) {
   );
 }
 
-function ProfileSection({ nav, onNav, connections, user, onUpdateName, onEditBusinessDetails, onSignOut, theme, onToggleTheme, toast, subscribed, subscriptionStatus, autoRenews, billingLoading, onUpgrade, onManageBilling, usageStats, voiceReplies, onSetVoiceReplies, proactiveInsights, onSetProactiveInsights, wellnessAiContext, onSetWellnessAiContext, voicePref, onSetVoicePref, voiceSpeed, onSetVoiceSpeed, onSetupBiometric, onRemoveBiometric, onExportData, onImportData, notifPermission, notifPrefs, onEnableNotifications, onSetNotifPref, onTestNotification, voiceTurnsCount, voiceLimit }) {
+function ProfileSection({ nav, onNav, connections, user, onUpdateName, onEditBusinessDetails, onSignOut, theme, onToggleTheme, toast, subscribed, subscriptionStatus, autoRenews, billingLoading, onUpgrade, onManageBilling, usageStats, voiceReplies, onSetVoiceReplies, proactiveInsights, onSetProactiveInsights, wellnessAiContext, onSetWellnessAiContext, voicePref, onSetVoicePref, voiceSpeed, onSetVoiceSpeed, onSetupBiometric, onRemoveBiometric, onExportData, onImportData, onDeleteAccount, notifPermission, notifPrefs, onEnableNotifications, onSetNotifPref, onTestNotification, voiceTurnsCount, voiceLimit }) {
   // nav.screen is null for the main hub, otherwise a key of SCREENS below. Held in KroftApp (see
   // profileNav there) so it survives the remount a theme change triggers.
   const { screen, openRow } = nav;
   const setOpenRow = row => onNav(n => ({ ...n, openRow:row }));
   const fileInputRef = useRef(null);
   const [confirmLogout, setConfirmLogout] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const toggle = k => setOpenRow(openRow===k ? null : k);
   const initials = user.name ? user.name.split(" ").map(n=>n[0]).join("").toUpperCase().slice(0,2) : "?";
   const goBack = () => onNav({ screen:null, openRow:null });
@@ -2748,7 +2797,14 @@ function ProfileSection({ nav, onNav, connections, user, onUpdateName, onEditBus
     voice:           { title:"Voice", rows:["voice"] },
     automations:     { title:"Automations", rows:["auto"] },
     security:        { title:"Security and login", rows:["faceid"] },
-    privacy:         { title:"Privacy center", rows:["privacy", "memory", "wellnessai"] },
+    privacy:         { title:"Privacy center", rows:["privacy", "memory", "wellnessai"], bottom:(
+      <div style={{ marginTop:26 }}>
+        <SettingsGroup>
+          <SettingsRow icon="trash" label="Delete account" tone="danger" onClick={() => setConfirmDelete(true)} isLast />
+        </SettingsGroup>
+        <Mono style={{ display:"block", color:C.muted, lineHeight:1.7, margin:"-14px 18px 0" }}>Permanently removes your account and all of its data.</Mono>
+      </div>
+    ) },
     data:            { title:"History and data", rows:["data"] },
     report:          { title:"Report a problem", rows:["report"] },
     feedback:        { title:"Send feedback", rows:["feature"] },
@@ -2767,6 +2823,9 @@ function ProfileSection({ nav, onNav, connections, user, onUpdateName, onEditBus
             {s.rows.map(k => <Fragment key={k}>{rows[k]}</Fragment>)}
           </Card>
         )}
+        {s.bottom}
+        {confirmDelete && createPortal(<DeleteAccountDialog synced={isSupabaseConfigured} subscribed={subscribed}
+          onCancel={() => setConfirmDelete(false)} onConfirm={onDeleteAccount} />, document.body)}
       </div>
     );
   }
@@ -2839,7 +2898,7 @@ function ProfileSection({ nav, onNav, connections, user, onUpdateName, onEditBus
       </SettingsGroup>
       <Mono style={{ display:"block", textAlign:"center", color:C.muted, marginTop:-8 }}>KROFT by Orynthra</Mono>
 
-      {confirmLogout && <LogoutDialog onCancel={() => setConfirmLogout(false)} onConfirm={onSignOut} />}
+      {confirmLogout && createPortal(<LogoutDialog onCancel={() => setConfirmLogout(false)} onConfirm={onSignOut} />, document.body)}
     </div>
   );
 }
@@ -6153,6 +6212,41 @@ ${voiceMode
       setTimeout(() => URL.revokeObjectURL(url), 10000);
       toast("Backup downloaded.");
     } catch { toast("Couldn't create the backup. Try again."); }
+  };
+
+  // Permanently deletes the account (see api/account/delete.js), or, without Supabase, everything
+  // stored on this device. Returns false when nothing was deleted so the dialog stays open.
+  const deleteAccount = async () => {
+    if (isSupabaseConfigured) {
+      try {
+        const res = await authedFetch("/api/account/delete", { method: "POST" });
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          toast(body.error === "subscription_cancel_failed"
+            ? "Couldn't cancel your KROFT Plus subscription, so your account wasn't deleted. Try again."
+            : "Couldn't delete your account. Try again.");
+          return false;
+        }
+      } catch {
+        toast("Couldn't delete your account. Check your connection and try again.");
+        return false;
+      }
+      // The account is gone on the server, so only the local session needs clearing.
+      await supabase.auth.signOut({ scope: "local" }).catch(() => {});
+    }
+    if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+    // Pending saves can still land in the pre-sign-in localStorage fallback until this app
+    // unmounts, so local data is wiped once now and again at the moment of the reset.
+    const wipeLocal = () => {
+      try {
+        Object.values(STORAGE_KEYS).forEach(k => window.localStorage.removeItem(k));
+        sessionStorage.removeItem(OAUTH_RETURN_KEY);
+      } catch { /* storage unavailable: nothing to wipe */ }
+    };
+    wipeLocal();
+    toast("Your account has been deleted.");
+    setTimeout(() => { wipeLocal(); onFullReset?.(); setTimeout(wipeLocal, 1500); }, 400);
+    return true;
   };
 
   // Restores from a file produced above. Replaces rather than merges: merging two ledgers
@@ -10804,6 +10898,7 @@ ${voiceMode
               // claims to edit.
               onEditBusinessDetails={() => { setEditingFromProfile(true); setStep("business"); }}
               onExportData={exportData}
+              onDeleteAccount={deleteAccount}
               onImportData={importData}
               notifPermission={notifPermission}
               notifPrefs={notifPrefs}
