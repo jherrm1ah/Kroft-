@@ -7,9 +7,19 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "node src/markdown/parse.test.mjs && node src/markdown/verify.test.mjs"
+    "test": "node src/markdown/parse.test.mjs && node src/markdown/verify.test.mjs && node src/native.test.mjs",
+    "android:sync": "npm run build && npx cap sync android",
+    "android:apk": "npm run android:sync && cd android && ./gradlew assembleDebug"
   },
   "dependencies": {
+    "@capacitor-community/speech-recognition": "^7.0.1",
+    "@capacitor-community/text-to-speech": "^8.0.2",
+    "@capacitor/android": "^8.6.0",
+    "@capacitor/app": "^8.1.2",
+    "@capacitor/browser": "^8.0.5",
+    "@capacitor/core": "^8.6.0",
+    "@capacitor/local-notifications": "^8.3.1",
+    "@capacitor/share": "^8.0.3",
     "@supabase/supabase-js": "^2.45.4",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
@@ -17,6 +27,8 @@
     "web-push": "^3.6.7"
   },
   "devDependencies": {
+    "@capacitor/assets": "^4.0.0",
+    "@capacitor/cli": "^8.6.0",
     "@vitejs/plugin-react": "^4.3.1",
     "vite": "^5.4.8"
   }

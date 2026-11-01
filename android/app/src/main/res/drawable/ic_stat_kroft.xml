@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Status-bar icon for KROFT notifications (capacitor.config.json LocalNotifications.smallIcon).
+     Android tints status-bar icons itself, so this is the two-bar KROFT mark in plain white. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M6.75,5L17.25,5A3.375,3.375 0,0 1,17.25 11.75L6.75,11.75A3.375,3.375 0,0 1,6.75 5Z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M6.75,12.875L17.25,12.875A3.375,3.375 0,0 1,17.25 19.625L6.75,19.625A3.375,3.375 0,0 1,6.75 12.875Z" />
+</vector>

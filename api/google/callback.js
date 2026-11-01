@@ -12,12 +12,17 @@ export default async function handler(req) {
   const code = url.searchParams.get("code");
   const state = url.searchParams.get("state");
   const oauthError = url.searchParams.get("error"); // e.g. "access_denied" if they clicked Cancel
+  // Started from the Android app (see ../google/start.js)? Then every outcome, including a cancel,
+  // returns to the app through its deep link rather than to the website. Read from the signed
+  // state, so a forged flag is ignored.
+  const fromApp = state ? (await verifyState(state))?.app === true : false;
+  const dest = fromApp ? "com.orynthra.kroft://oauth-return" : origin;
 
-  if (oauthError) return redirectTo(origin, "error", oauthError);
-  if (!code || !state) return redirectTo(origin, "error", "missing_code_or_state");
+  if (oauthError) return redirectTo(dest, "error", oauthError);
+  if (!code || !state) return redirectTo(dest, "error", "missing_code_or_state");
 
   const payload = await verifyState(state);
-  if (!payload?.uid) return redirectTo(origin, "error", "invalid_or_expired_state");
+  if (!payload?.uid) return redirectTo(dest, "error", "invalid_or_expired_state");
 
   const redirectUri = `${origin}/api/google/callback`; // must exactly match the one used in start.js
   let tokens;
@@ -33,10 +38,10 @@ export default async function handler(req) {
         redirect_uri: redirectUri,
       }),
     });
-    if (!tokenRes.ok) return redirectTo(origin, "error", "token_exchange_failed");
+    if (!tokenRes.ok) return redirectTo(dest, "error", "token_exchange_failed");
     tokens = await tokenRes.json(); // { access_token, refresh_token?, expires_in, scope, token_type }
   } catch {
-    return redirectTo(origin, "error", "token_exchange_failed");
+    return redirectTo(dest, "error", "token_exchange_failed");
   }
 
   const admin = supabaseAdmin();
@@ -68,9 +73,9 @@ export default async function handler(req) {
     },
     { onConflict: "user_id,provider" }
   );
-  if (upsertError) return redirectTo(origin, "error", "storage_failed");
+  if (upsertError) return redirectTo(dest, "error", "storage_failed");
 
-  return redirectTo(origin, "success", "google");
+  return redirectTo(dest, "success", "google");
 }
 
 function redirectTo(origin, status, detail) {

@@ -6,6 +6,7 @@ import { Markdown } from "./markdown/Markdown.jsx";
 import { toPlainText, toSpeechText } from "./markdown/parse.js";
 import { copyRich, copyPlain } from "./markdown/clipboard.js";
 import { offlineUserId, flushPending, clearOfflineData, hasUnsyncedChanges, unreadableKeys } from "./storageShim.js";
+import { isNativeApp, nativeRedirect, openInSystemBrowser, scheduleDeviceReminders } from "./native.js";
 
 // A lazy chunk fetched over a flaky mobile connection can fail with a plain network error —
 // dynamic import() rejects, and React throws that straight into the nearest error boundary,
@@ -4807,14 +4808,24 @@ function KroftApp({ onFullReset } = {}) {
   const rememberOAuthReturn = returnTo => {
     try { if (returnTo) sessionStorage.setItem(OAUTH_RETURN_KEY, returnTo); else sessionStorage.removeItem(OAUTH_RETURN_KEY); } catch { /* hint only */ }
   };
+  // Android app: sign-in, account linking and checkout run in the system browser (see native.js).
+  // Closing it without finishing leaves no redirect to reset the loading states, so reset them here.
+  useEffect(() => {
+    if (!isNativeApp) return;
+    const reset = () => { setGoogleLinking(false); setMicrosoftLinking(false); setBillingLoading(false); setGoogleLoading(false); };
+    window.addEventListener("kroft:browser-closed", reset);
+    return () => window.removeEventListener("kroft:browser-closed", reset);
+  }, []);
+
   const connectGoogle = async (returnTo) => {
     setGoogleLinking(true);
     try {
-      const res = await authedFetch("/api/google/start");
+      // ?app=1 makes the callback return to the Android app instead of the website.
+      const res = await authedFetch(`/api/google/start${isNativeApp ? "?app=1" : ""}`);
       if (!res.ok) { toast("Couldn't start Google sign-in. Try again."); setGoogleLinking(false); return; }
       const { url } = await res.json();
       rememberOAuthReturn(returnTo);
-      window.location.href = url;
+      if (!(await openInSystemBrowser(url))) window.location.href = url;
     } catch {
       toast("Couldn't start Google sign-in. Try again.");
       setGoogleLinking(false);
@@ -4859,11 +4870,12 @@ function KroftApp({ onFullReset } = {}) {
   const connectMicrosoft = async (returnTo) => {
     setMicrosoftLinking(true);
     try {
-      const res = await authedFetch("/api/microsoft/start");
+      // ?app=1 makes the callback return to the Android app instead of the website.
+      const res = await authedFetch(`/api/microsoft/start${isNativeApp ? "?app=1" : ""}`);
       if (!res.ok) { toast("Couldn't start Microsoft sign-in. Try again."); setMicrosoftLinking(false); return; }
       const { url } = await res.json();
       rememberOAuthReturn(returnTo);
-      window.location.href = url;
+      if (!(await openInSystemBrowser(url))) window.location.href = url;
     } catch {
       toast("Couldn't start Microsoft sign-in. Try again.");
       setMicrosoftLinking(false);
@@ -4994,7 +5006,7 @@ function KroftApp({ onFullReset } = {}) {
     if (!isSupabaseConfigured) { toast("Sign in with a real account to upgrade."); return; }
     setBillingLoading(true);
     try {
-      const res = await authedFetch("/api/billing/checkout", { method: "POST" });
+      const res = await authedFetch("/api/billing/checkout", { method: "POST", body: JSON.stringify({ app: isNativeApp }) });
       if (!res.ok) {
         // 409 means the server already sees an active subscription (e.g. a stale second tab) —
         // "try again" would be actively wrong advice there, since starting another checkout is
@@ -5005,7 +5017,10 @@ function KroftApp({ onFullReset } = {}) {
         return;
       }
       const { url } = await res.json();
-      window.location.href = url; // full navigation — Flutterwave's checkout page won't render in a fetch response
+      // Full navigation (Flutterwave's checkout page won't render in a fetch response). In the
+      // Android app it opens in the system browser and returns through the app's deep link.
+      if (await openInSystemBrowser(url)) { setBillingLoading(false); return; }
+      window.location.href = url;
     } catch {
       toast("Couldn't start checkout. Try again.");
       setBillingLoading(false);
@@ -5164,6 +5179,16 @@ function KroftApp({ onFullReset } = {}) {
     if (settings && !settings.external?.google) { setGoogleLoading(false); toast("Google sign-in isn't set up yet. Use your phone number or email for now."); return; }
     // Leaves the app for Google; the return trip (tokens in the URL hash) is picked up by the
     // mount-time effect, since supabaseClient.js has detectSessionInUrl turned off.
+    // In the Android app Google refuses to sign in inside the app's WebView, so the Google page
+    // opens in the system browser and comes back through the app's deep link (see native.js),
+    // which hands the same tokens to this page as the website's own redirect would.
+    if (isNativeApp) {
+      const { data, error } = await supabase.auth.signInWithOAuth({ provider:"google", options:{ redirectTo: nativeRedirect("auth-callback"), skipBrowserRedirect:true } });
+      if (error || !data?.url) { setGoogleLoading(false); toast("Couldn't start Google sign-in. Try again."); return; }
+      await openInSystemBrowser(data.url);
+      setGoogleLoading(false);
+      return;
+    }
     const { error } = await supabase.auth.signInWithOAuth({ provider:"google", options:{ redirectTo: window.location.origin } });
     if (error) { setGoogleLoading(false); toast("Couldn't start Google sign-in. Try again."); }
   };
@@ -6719,7 +6744,8 @@ ${voiceMode
   // api/push/schedule.js). See the reminders version of this same idea just below, which needs one
   // extra wrinkle for the same push-only-when-closed behavior.
   useEffect(() => {
-    if (!dataLoaded || !isSupabaseConfigured) return;
+    // In the Android app reminders are scheduled on the phone itself (no account needed).
+    if (!dataLoaded || (!isSupabaseConfigured && !isNativeApp)) return;
     const now = Date.now();
     const items = appts
       .map(a => {
@@ -6736,7 +6762,7 @@ ${voiceMode
       })
       .filter(Boolean);
     const t = setTimeout(() => {
-      authedFetch("/api/push/schedule", { method:"POST", body:JSON.stringify({ prefix:"appt:", items }) }).catch(() => {
+      (isNativeApp ? scheduleDeviceReminders("appt:", items) : authedFetch("/api/push/schedule", { method:"POST", body:JSON.stringify({ prefix:"appt:", items }) })).catch(() => {
         // Best-effort — the in-app/OS notification path above (while the app is open) is
         // unaffected either way, and the next appts change retries this automatically.
       });
@@ -6757,7 +6783,8 @@ ${voiceMode
   // the same real limitation any reminder app has without a server that also owns the reminder's
   // own done-state, which this one deliberately doesn't take on.
   useEffect(() => {
-    if (!dataLoaded || !isSupabaseConfigured) return;
+    // In the Android app reminders are scheduled on the phone itself (no account needed).
+    if (!dataLoaded || (!isSupabaseConfigured && !isNativeApp)) return;
     const now = new Date();
     const items = smartReminders
       .map(r => {
@@ -6771,7 +6798,7 @@ ${voiceMode
       })
       .filter(Boolean);
     const t = setTimeout(() => {
-      authedFetch("/api/push/schedule", { method:"POST", body:JSON.stringify({ prefix:"reminder:", items }) }).catch(() => {
+      (isNativeApp ? scheduleDeviceReminders("reminder:", items) : authedFetch("/api/push/schedule", { method:"POST", body:JSON.stringify({ prefix:"reminder:", items }) })).catch(() => {
         // Best-effort — the in-app/OS notification path above (while the app is open) is
         // unaffected either way, and the next smartReminders change retries this automatically.
       });

@@ -32,12 +32,16 @@ export default async function handler(req) {
   }
 
   const origin = new URL(req.url).origin;
+  // Optional body { app: true } from the Android app (see src/native.js).
+  let fromApp = false;
+  try { fromApp = (await req.json())?.app === true; } catch { /* no body: started from the website */ }
   const result = await initializeCheckout(secretKey, {
     planId,
     email: user.email,
     name: user.user_metadata?.name || user.email,
     userId: user.id,
     redirectUrl: `${origin}/api/billing/callback`,
+    fromApp,
   });
   if (!result.ok) return jsonResponse({ error: "Could not start checkout.", detail: result.detail }, 502);
 
