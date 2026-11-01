@@ -1429,30 +1429,30 @@ const NavIcon = ({ id, size=20, color="currentColor" }) => {
     case "receipt":
       return <svg viewBox="0 0 24 24" style={s}><path d="M6.5 3.5h11v17l-2.2-1.5-2.2 1.5-2.2-1.5-2.2 1.5-2.2-1.5z" {...p} /><path d="M9 8h6M9 11.5h6M9 15h3.5" {...p} /></svg>;
     // ---- Profile settings icons ----
-    case "apps":
-      return <svg viewBox="0 0 24 24" style={s}><circle cx="7.5" cy="7.5" r="3" {...p} /><circle cx="16.5" cy="7.5" r="3" {...p} /><circle cx="7.5" cy="16.5" r="3" {...p} /><circle cx="16.5" cy="16.5" r="3" {...p} /></svg>;
-    case "briefcase":
-      return <svg viewBox="0 0 24 24" style={s}><rect x="3.5" y="7.5" width="17" height="12" rx="2.5" {...p} /><path d="M9 7.5V6a1.5 1.5 0 0 1 1.5-1.5h3A1.5 1.5 0 0 1 15 6v1.5" {...p} /></svg>;
-    case "sparkle":
-      return <svg viewBox="0 0 24 24" style={s}><path d="M12 3.5c.6 4.4 2.6 7 8.5 8.5-5.9 1.5-7.9 4.1-8.5 8.5-.6-4.4-2.6-7-8.5-8.5 5.9-1.5 7.9-4.1 8.5-8.5z" {...p} /></svg>;
-    case "chart":
-      return <svg viewBox="0 0 24 24" style={s}><rect x="4" y="11" width="4.5" height="9" rx="1" {...p} /><rect x="9.75" y="4" width="4.5" height="16" rx="1" {...p} /><rect x="15.5" y="8" width="4.5" height="12" rx="1" {...p} /></svg>;
+    case "store":
+      return <svg viewBox="0 0 24 24" style={s}><path d="M4 9.5 5.5 4.5h13L20 9.5" {...p} /><path d="M4 9.5a2.7 2.7 0 0 0 5.3 0 2.7 2.7 0 0 0 5.4 0 2.7 2.7 0 0 0 5.3 0" {...p} /><path d="M5.5 12v7.5h13V12M10 19.5v-4.5h4v4.5" {...p} /></svg>;
+    case "crown":
+      return <svg viewBox="0 0 24 24" style={s}><path d="M4 8l4 3.5L12 5l4 6.5L20 8l-1.5 9.5h-13z" {...p} /><path d="M6 20.5h12" {...p} /></svg>;
+    case "gauge":
+      return <svg viewBox="0 0 24 24" style={s}><path d="M4.5 17a8 8 0 1 1 15 0" {...p} /><path d="M12 13.5l3.5-4" {...p} /><circle cx="12" cy="14" r="1.2" {...p} /></svg>;
+    case "at":
+      return <svg viewBox="0 0 24 24" style={s}><circle cx="12" cy="12" r="3.5" {...p} /><path d="M15.5 12v1.5a2.5 2.5 0 0 0 5 0V12a8.5 8.5 0 1 0-3.3 6.7" {...p} /></svg>;
+    case "link":
+      return <svg viewBox="0 0 24 24" style={s}><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1" {...p} /><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1" {...p} /></svg>;
+    case "contrast":
+      return <svg viewBox="0 0 24 24" style={s}><circle cx="12" cy="12" r="8.5" {...p} /><path d="M12 3.5a8.5 8.5 0 0 1 0 17z" fill={color} stroke="none" /></svg>;
+    case "wand":
+      return <svg viewBox="0 0 24 24" style={s}><path d="M5 19 15.5 8.5M14 7l3 3" {...p} /><path d="M18 3.5v3M16.5 5h3M20 10.5v2M19 11.5h2M8.5 4v2M7.5 5h2" {...p} /></svg>;
+    case "lock":
+      return <svg viewBox="0 0 24 24" style={s}><rect x="5" y="10.5" width="14" height="10" rx="2.5" {...p} /><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5M12 14.5v2" {...p} /></svg>;
+    case "eye":
+      return <svg viewBox="0 0 24 24" style={s}><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z" {...p} /><circle cx="12" cy="12" r="3" {...p} /></svg>;
+    case "cloud":
+      return <svg viewBox="0 0 24 24" style={s}><path d="M7 18.5a4.5 4.5 0 0 1-.6-9 6 6 0 0 1 11.5 1.6A3.7 3.7 0 0 1 17.5 18.5z" {...p} /><path d="M12 16v-5M9.8 13.2 12 11l2.2 2.2" {...p} /></svg>;
+    case "flag":
+      return <svg viewBox="0 0 24 24" style={s}><path d="M5.5 21V4" {...p} /><path d="M5.5 4.5h11l-2 4 2 4h-11" {...p} /></svg>;
     case "phone":
       return <svg viewBox="0 0 24 24" style={s}><path d="M6.6 3.5h2.6l1.3 4-1.9 1.4a12 12 0 0 0 6.5 6.5l1.4-1.9 4 1.3v2.6a2 2 0 0 1-2 2A16 16 0 0 1 4.6 5.5a2 2 0 0 1 2-2z" {...p} /></svg>;
-    case "gear":
-      return <svg viewBox="0 0 24 24" style={s}><circle cx="12" cy="12" r="3" {...p} /><path d="M12 3.5l1.6 2.2 2.7-.5.9 2.6 2.5 1.2-.8 2.6 1.6 2.2-2.2 1.6.1 2.7-2.7.4-1.4 2.3-2.4-1.3-2.4 1.3-1.4-2.3-2.7-.4.1-2.7-2.2-1.6 1.6-2.2-.8-2.6 2.5-1.2.9-2.6 2.7.5z" {...p} /></svg>;
-    case "bolt":
-      return <svg viewBox="0 0 24 24" style={s}><path d="M13 3.5 5.5 13.5H12l-1 7 7.5-10H12z" {...p} /></svg>;
-    case "shieldUser":
-      return <svg viewBox="0 0 24 24" style={s}><path d="M12 3.5 5 6v5.5c0 4.3 2.9 7.6 7 9 4.1-1.4 7-4.7 7-9V6z" {...p} /><circle cx="12" cy="10.5" r="2.4" {...p} /><path d="M8.3 16.5c.8-1.6 2.1-2.4 3.7-2.4s2.9.8 3.7 2.4" {...p} /></svg>;
-    case "shieldCheck":
-      return <svg viewBox="0 0 24 24" style={s}><path d="M12 3.5 5 6v5.5c0 4.3 2.9 7.6 7 9 4.1-1.4 7-4.7 7-9V6z" {...p} /><path d="m9 12 2.2 2.2L15.5 10" {...p} /></svg>;
-    case "database":
-      return <svg viewBox="0 0 24 24" style={s}><ellipse cx="12" cy="6" rx="7" ry="2.5" {...p} /><path d="M5 6v12c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5V6M5 12c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5" {...p} /></svg>;
-    case "bug":
-      return <svg viewBox="0 0 24 24" style={s}><rect x="7.5" y="7.5" width="9" height="12" rx="4.5" {...p} /><path d="M9.5 7.5a2.5 2.5 0 0 1 5 0M12 11v8.5M4 12.5h3.5M16.5 12.5H20M5 18l2.7-1.5M19 18l-2.7-1.5M5 7.5l2.7 1.5M19 7.5l-2.7 1.5" {...p} /></svg>;
-    case "megaphone":
-      return <svg viewBox="0 0 24 24" style={s}><path d="M4 10v4a1.5 1.5 0 0 0 1.5 1.5H8l7.5 4V4.5L8 8.5H5.5A1.5 1.5 0 0 0 4 10z" {...p} /><path d="M8 15.5 9.5 20M18.5 9.5a3 3 0 0 1 0 5" {...p} /></svg>;
     case "logout":
       return <svg viewBox="0 0 24 24" style={s}><path d="M10 4.5H6.5a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2H10" {...p} /><path d="M14.5 8 18.5 12l-4 4M18.5 12H9.5" {...p} /></svg>;
     case "smile": // Mood log
@@ -2175,18 +2175,29 @@ function Briefing({ user, income, expenses, emails, appts, onClose }) {
 }
 
 // ── PROFILE PAGE ───────────────────────────────────────────────────────────────
-// A single row in a profile section. Tapping expands an inline detail area so every
-// item does something real — no dead placeholder rows.
+// Each Profile icon sits in its own tinted circle — the same badge language as the Wellness
+// rows (WELLNESS_ROW_GLOW) and the Breaks/Water tiles — rather than a bare line icon, so the
+// list reads as KROFT's own design. RGB triplets for rgba() tints, like the other glow maps.
+const PROFILE_ICON_TINT = {
+  store:"200,140,50", crown:"140,105,200", gauge:"56,150,140", at:"70,120,200", phone:"70,150,95",
+  link:"70,120,200", contrast:"110,115,130", reminders:"200,140,50", mic:"210,95,120", wand:"140,105,200",
+  lock:"70,150,95", eye:"56,150,140", cloud:"70,120,200", flag:"210,95,120", nova:"99,102,170",
+};
+
 // One row on the Profile hub: icon, label, and an optional current value on the right or detail
 // line underneath. Without onClick it's a read-only row (e.g. the account's email address).
 function SettingsRow({ icon, label, value, detail, onClick, tone, isLast }) {
   const color = tone === "accent" ? C.accent : tone === "danger" ? C.negative : C.text;
+  const iconColor = tone === "danger" ? C.negative : `rgb(${PROFILE_ICON_TINT[icon] || "110,115,130"})`;
+  const iconBg = tone === "danger" ? C.negativeBg : `rgba(${PROFILE_ICON_TINT[icon] || "110,115,130"},.14)`;
   const interactive = !!onClick;
   return (
     <div {...(interactive ? { role:"button", tabIndex:0, onClick, onKeyDown:e => { if (e.key==="Enter"||e.key===" ") { e.preventDefault(); onClick(); } } } : {})}
       className={interactive ? "row" : undefined}
       style={{ display:"flex", alignItems:"center", gap:14, padding:"15px 18px", minHeight:56, boxSizing:"border-box", cursor:interactive?"pointer":"default", borderBottom:isLast?"none":`1px solid ${C.div}`, transition:"background .15s ease" }}>
-      <NavIcon id={icon} size={22} color={color} />
+      <div style={{ width:34, height:34, borderRadius:"50%", background:iconBg, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+        <NavIcon id={icon} size={18} color={iconColor} />
+      </div>
       <div style={{ flex:1, minWidth:0 }}>
         <div style={{ fontSize:16, fontWeight:500, color, letterSpacing:-.1 }}>{label}</div>
         {detail && <div style={{ fontSize:14, color:C.muted, marginTop:2, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{detail}</div>}
@@ -2732,7 +2743,7 @@ function ProfileSection({ nav, onNav, connections, user, onUpdateName, onEditBus
     connected:       { title:"Connected apps", body:<ConnectedApps google={connections.google} microsoft={connections.microsoft} />, rows:[] },
     plan:            { title:subscribed ? "KROFT Plus" : "Upgrade plan", top:planSummary, rows:["plus", "billing", "paymethods", "managesub"] },
     usage:           { title:"Usage and limits", rows:["usage"] },
-    general:         { title:"General", rows:["appearance"] },
+    appearance:      { title:"Appearance", rows:["appearance"] },
     notifications:   { title:"Notifications", rows:["notifs"] },
     voice:           { title:"Voice", rows:["voice"] },
     automations:     { title:"Automations", rows:["auto"] },
@@ -2765,25 +2776,25 @@ function ProfileSection({ nav, onNav, connections, user, onUpdateName, onEditBus
   const connectedCount = [g.gmail || g.calendar, m.mail || m.calendar].filter(Boolean).length;
   const GROUPS = [
     { title:"Account", items:[
-      { icon:"briefcase", label:"Business", value:`${user.businessName || "Personal"} · ${user.currency}`, onClick:onEditBusinessDetails },
+      { icon:"store", label:"Business", value:`${user.businessName || "Personal"} · ${user.currency}`, onClick:onEditBusinessDetails },
       subscribed
-        ? { key:"plan", icon:"sparkle", label:"KROFT Plus", value:"Active" }
-        : { key:"plan", icon:"sparkle", label:"Upgrade plan", tone:"accent", value:subscriptionStatus === "past_due" ? "Renewal failed" : "" },
-      { key:"usage", icon:"chart", label:"Usage and limits" },
-      user.email && { icon:"email", label:"Email", detail:user.email },
+        ? { key:"plan", icon:"crown", label:"KROFT Plus", value:"Active" }
+        : { key:"plan", icon:"crown", label:"Upgrade plan", tone:"accent", value:subscriptionStatus === "past_due" ? "Renewal failed" : "" },
+      { key:"usage", icon:"gauge", label:"Usage and limits" },
+      user.email && { icon:"at", label:"Email", detail:user.email },
       user.phone && { icon:"phone", label:"Phone", detail:user.phone },
     ].filter(Boolean) },
     { items:[
-      { key:"connected", icon:"apps", label:"Connected apps", value:connectedCount ? `${connectedCount} connected` : "" },
-      { key:"general", icon:"gear", label:"General", value:theme === "dark" ? "Dark" : "Light" },
+      { key:"connected", icon:"link", label:"Connected apps", value:connectedCount ? `${connectedCount} connected` : "" },
+      { key:"appearance", icon:"contrast", label:"Appearance", value:theme === "dark" ? "Dark" : "Light" },
       { key:"notifications", icon:"reminders", label:"Notifications", value:{ granted:"On", denied:"Blocked", unsupported:"Unavailable" }[notifPermission] || "Off" },
-      { key:"voice", icon:"waveform", label:"Voice", value:voiceReplies ? VOICE_PROFILES[resolveVoiceId(voicePref)].name : "Off" },
-      { key:"automations", icon:"bolt", label:"Automations", value:proactiveInsights ? "On" : "Off" },
-      { key:"security", icon:"shieldUser", label:"Security and login", value:user.webauthnCredentialId ? "Face ID on" : "" },
-      { key:"privacy", icon:"shieldCheck", label:"Privacy center" },
-      { key:"data", icon:"database", label:"History and data", value:isSupabaseConfigured ? "Synced" : "This device" },
-      { key:"report", icon:"bug", label:"Report a problem" },
-      { key:"feedback", icon:"megaphone", label:"Send feedback" },
+      { key:"voice", icon:"mic", label:"Voice", value:voiceReplies ? VOICE_PROFILES[resolveVoiceId(voicePref)].name : "Off" },
+      { key:"automations", icon:"wand", label:"Automations", value:proactiveInsights ? "On" : "Off" },
+      { key:"security", icon:"lock", label:"Security and login", value:user.webauthnCredentialId ? "Face ID on" : "" },
+      { key:"privacy", icon:"eye", label:"Privacy center" },
+      { key:"data", icon:"cloud", label:"History and data", value:isSupabaseConfigured ? "Synced" : "This device" },
+      { key:"report", icon:"flag", label:"Report a problem" },
+      { key:"feedback", icon:"nova", label:"Send feedback" },
     ] },
   ];
 
