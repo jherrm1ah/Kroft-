@@ -1220,27 +1220,13 @@ const Tag = ({ children, hi, tone, style, light }) => {
   );
 };
 
-// The splash image is cropped to the phone's screen content only (status bar/notch and home
-// indicator removed), at a fixed 531:949 pixel ratio. This wrapper reproduces object-fit:contain
-// sizing manually (max-width driven by height*ratio, max-height driven by width/ratio) so the
-// rendered box keeps that exact ratio at any viewport size.
-const ONBOARD_RATIO = 531 / 949;
-const OnboardImageFrame = ({ children }) => (
-  <div style={{ position:"fixed", inset:0, background:"#f4f2ee", display:"flex", alignItems:"center", justifyContent:"center" }}>
-    <div style={{ position:"relative", width:"100%", height:"100%", maxWidth:`calc(100vh * ${ONBOARD_RATIO})`, maxHeight:`calc(100vw / ${ONBOARD_RATIO})` }}>
-      {children}
-    </div>
-  </div>
-);
-
-// Screen 1 of the onboarding reference, used as-is (the exact provided image, cropped to just the
-// phone's screen content) rather than recreated in code.
+// The launch splash: "Kroft" set in type on KROFT's cream background. Its styles (the
+// .boot-splash and .kroft-wordmark classes, and the embedded wordmark font) live in index.html,
+// which draws this same splash before the app's script has loaded, so the hand-over is seamless.
 function SplashScreen({ fading }) {
   return (
-    <div style={{ position:"fixed", inset:0, zIndex:9999, opacity:fading?0:1, transition:"opacity .6s ease", pointerEvents:fading?"none":"all" }}>
-      <OnboardImageFrame>
-        <img src="/onboarding-screen-1.webp" alt="" style={{ width:"100%", height:"100%", display:"block" }} />
-      </OnboardImageFrame>
+    <div className="boot-splash" aria-hidden="true" style={{ zIndex:9999, opacity:fading?0:1, transition:"opacity .6s ease", pointerEvents:fading?"none":"all" }}>
+      <span className="kroft-wordmark">Kroft</span>
     </div>
   );
 }
