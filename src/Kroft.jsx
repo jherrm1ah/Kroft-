@@ -2,6 +2,9 @@ import { useState, useEffect, useRef, useCallback, useMemo, Component, Fragment,
 import { createPortal } from "react-dom";
 import { supabase, isSupabaseConfigured, supabaseUrl, supabaseAnonKey } from "./supabaseClient.js";
 import { fmtCur, APP_FONT } from "./charts/format.js";
+import { Markdown } from "./markdown/Markdown.jsx";
+import { toPlainText, toSpeechText } from "./markdown/parse.js";
+import { copyRich, copyPlain } from "./markdown/clipboard.js";
 
 // A lazy chunk fetched over a flaky mobile connection can fail with a plain network error —
 // dynamic import() rejects, and React throws that straight into the nearest error boundary,
@@ -370,7 +373,13 @@ const stripFiguresForSpeech = text => String(text)
   .replace(/\s{2,}/g, " ")
   .trim();
 
-const speechText = raw => String(raw)
+// Markdown is turned into spoken prose by toSpeechText (tables read row by row, copy-ready blocks
+// read as their content, result figures as "label: value"). Streamed speech arrives in sentence
+// fragments, so a fence can be split across two of them: whole code blocks are dropped first and
+// any lone fence line is removed, so a stray closing fence is never read as a new code block.
+const speechText = raw => toSpeechText(String(raw)
+    .replace(/```(?!copy|result)[\w+#-]*\n[\s\S]*?```/gi, " Code block omitted. ")
+    .replace(/^\s*```.*$/gm, ""))
   .replace(/```[\s\S]*?```/g, " Code block omitted. ")   // don't read code out character by character
   .replace(/`([^`]+)`/g, "$1")
   .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")             // links/images -> just their label
@@ -1283,7 +1292,7 @@ const matchSnippet = (text, terms, before = 36, after = 90) => {
 // result can jump there), otherwise its title.
 const findChatMatch = (title, messages, terms) => {
   const idx = (messages || []).findIndex(m => textMatches(m.content, terms));
-  if (idx >= 0) return { msgIndex: idx, role: messages[idx].role, snippet: matchSnippet(messages[idx].content, terms) };
+  if (idx >= 0) return { msgIndex: idx, role: messages[idx].role, snippet: matchSnippet(messages[idx].role === "assistant" ? toPlainText(messages[idx].content) : messages[idx].content, terms) };
   if (textMatches(title, terms)) return { msgIndex: null, role: null, snippet: null };
   return null;
 };
@@ -1910,7 +1919,7 @@ function VoiceMode({ state, transcript, reply, error, onStart, onStop, onClose, 
         <div style={{ minHeight:96, maxHeight:170, overflowY:"auto", width:"100%", maxWidth:460, textAlign:"center", padding:"0 4px" }}>
           {error && <div style={{ fontSize:14, color:C.negative, lineHeight:1.6 }}>{error}</div>}
           {!error && subtitles && transcript && <div style={{ fontSize:17, color:C.text, lineHeight:1.5, fontWeight:500 }}>{transcript}</div>}
-          {!error && subtitles && !transcript && reply && <div ref={replyEndRef} style={{ fontSize:15, color:C.soft, lineHeight:1.7, textAlign:"left" }}>{reply}</div>}
+          {!error && subtitles && !transcript && reply && <div ref={replyEndRef} style={{ fontSize:15, color:C.soft, lineHeight:1.7, textAlign:"left", whiteSpace:"pre-wrap" }}>{toPlainText(reply)}</div>}
           {!error && !transcript && !reply && state === "idle" && (
             <div style={{ fontSize:14, color:C.muted, lineHeight:1.7 }}>
               {!supported
@@ -4279,11 +4288,16 @@ function KroftApp({ onFullReset } = {}) {
   useEffect(() => {
     if (aiInput === "" && aiInputRef.current) aiInputRef.current.style.height = "auto";
   }, [aiInput]);
+  // Whether to keep following new text is decided by where the person left the scroll (updated
+  // in the list's onScroll), not re-measured after the content grows: a reply can grow by a whole
+  // table or card at once, which would otherwise look like "scrolled up" and stop the follow.
+  // Sending a message always jumps back to the bottom.
+  const chatStickToBottom = useRef(true);
   useEffect(() => {
     const box = chatScrollRef.current;
     if (!box) { chatEnd.current?.scrollIntoView({ behavior:"smooth" }); return; }
-    const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 120;
-    if (!nearBottom) return;
+    if (aiMessages[aiMessages.length - 1]?.role === "user") chatStickToBottom.current = true;
+    if (!chatStickToBottom.current) return;
     // "auto" rather than "smooth": at streaming speed, queued smooth animations stutter.
     const streaming = aiMessages.some(m => m.streaming);
     chatEnd.current?.scrollIntoView({ behavior: streaming ? "auto" : "smooth" });
@@ -5934,7 +5948,39 @@ ${wellnessSection}
 Wellness rules: only reference a wellness signal that actually appears above — never invent or assume sleep, energy, stress, mood, or other data that isn't listed, and if something isn't there (e.g. no sleep logged), say so plainly and suggest logging it rather than guessing. When answering a wellness question, ground it in the real numbers above and any listed pattern, phrased as an observation about their own data ("your data shows...", "you tend to...") — never as a medical diagnosis, clinical assessment, or professional health advice. If a question sounds medical (symptoms, a condition, treatment), share what their own data shows if relevant, but say plainly that a real diagnosis needs a qualified healthcare professional.
 
 STYLE
-Talk like a sharp, genuinely warm human assistant who knows this person well — never like an AI describing itself. Never say things like "As an AI," "I don't have personal experiences," or any other AI-disclaimer or meta-commentary about what you are — just answer, the way a person would. Use contractions and plain, natural sentences; vary how you open a reply instead of starting the same way every time. Address ${firstName||"them"} by their first name every so often — a greeting, good news, a heads-up — not stapled onto every single reply, which reads as scripted rather than natural. Keep answers tight — a couple of short paragraphs unless asked for depth. Prefer plain sentences over headings and bullet lists; replies are often read aloud.
+Talk like a sharp, genuinely warm human assistant who knows this person well — never like an AI describing itself. Never say things like "As an AI," "I don't have personal experiences," or any other AI-disclaimer or meta-commentary about what you are — just answer, the way a person would. Use contractions and plain, natural sentences; vary how you open a reply instead of starting the same way every time. Address ${firstName||"them"} by their first name every so often — a greeting, good news, a heads-up — not stapled onto every single reply, which reads as scripted rather than natural. Get straight to the answer: no warm-up lines like "Great question!", "Sure! Here's…" or "Certainly", and no closing summary that repeats what you just said.
+
+${voiceMode ? `FORMAT (voice)
+This reply will be spoken aloud. Use plain spoken sentences only: no Markdown, no symbols, no tables, no lists, no code blocks. Say figures the way a person would. Keep it to a few sentences.` : `FORMAT
+Your reply is rendered as Markdown in the KROFT app, so formatting shows up as real headings, bold, lists and tables, never as symbols. Choose the presentation that fits the question, and use the least formatting that does the job:
+- Casual chat or a simple question: one to three natural sentences. No headings, lists or bold.
+- An explanation with several parts: short paragraphs, with a few "##" headings only if it's long enough to need them.
+- Step-by-step instructions: a numbered list, one action per step.
+- A set of items, options or tips: a bullet list.
+- A comparison of two or more things across several attributes: a table.
+- A recommendation: the recommendation first in one sentence, then the reasoning.
+- Research or a detailed question: a one-or-two sentence summary first, then the key points, then detail if it helps.
+- Business documents (proposals, plans, reports): clear "##" sections.
+- Code: a fenced block with its language, e.g. \`\`\`python. Explanation goes outside the block.
+Formatting rules: use **bold** sparingly, only for a key figure or term, never whole sentences or every label. Never use "***" or "___". Don't put headings on short answers. Tables need a header row and a divider row (| --- |), at most about 5 columns, and only when the data really is tabular; never use a table for one or two values. Separate blocks with a blank line.
+
+COPY-READY CONTENT
+When ${firstName||"they"} asks you to write something they'll use elsewhere (a message, text, email, letter, caption, social post, bio, prompt, speech, script, cover letter, application, proposal, announcement, or similar), put exactly that content, and nothing else, inside a copy block, so the app can show it on its own with a Copy button:
+\`\`\`copy Short label, e.g. Message or Email
+The content itself, with its own line breaks and paragraphs. Markdown inside is fine (lists, bold) if the content needs it.
+\`\`\`
+Rules: no greeting to ${firstName||"them"}, explanation or sign-off from you inside the block, only the content. For an email, put "Subject: …" as the first line inside the block. Keep anything you say about it short and outside the block (at most one line before, and an optional one-line offer after, like offering a shorter version). If they say "only the text", "just the message" or similar, reply with only the copy block and nothing outside it. For several alternatives, use one copy block each. Code uses a normal fenced code block with its language, not a copy block. Don't use copy blocks for your own answers or explanations.
+
+CALCULATIONS
+For any calculation with money or several steps (balances, totals, percentages, splits, fees, interest, profit), work it out carefully step by step, then double-check every figure before you reply. Use ${cur} and its symbol (${money(0).replace(/[\d.,\s]/g, "") || cur}) unless they named another currency, with thousands separators and two decimals for money. Present it as:
+1. The final answer first, in a result block:
+\`\`\`result
+What it is, e.g. Final balance
+The figure, e.g. ${money(1234.5)}
+\`\`\`
+2. Then a table of the steps: a description column and an amount column, with deductions shown with a leading "−" and additions with "+", ending with a final row labelled like the result (e.g. "Final balance").
+3. Optionally one short sentence on anything notable (e.g. which order a percentage was applied in).
+Percentages apply to the running balance at that point unless the person said otherwise; if it's genuinely ambiguous, say which way you took it in one short line. Never invent an amount, date or transaction that wasn't given; if something needed is missing, ask for it. If they ask for "only the final amount" or "just the answer", reply with only the figure (or only the result block), no table and no explanation. For a single simple sum ("what's 15% of 4,000?") just give the answer in a sentence.`}
 
 LIMITS
 You are a bookkeeping and organisation assistant, not a licensed financial adviser. You can describe what is in their records, do arithmetic on it, and point out patterns. Do not recommend investments, tax positions, borrowing, insurance or financial products, and do not tell them what to do with their money. If asked for that, say plainly that it needs a qualified accountant or adviser, then offer what you can — the relevant figures from their own records.
@@ -7173,13 +7219,16 @@ ${voiceMode
     toast(val==="up" ? "Thanks for the feedback." : "Thanks — KROFT will keep improving.");
   };
 
-  const copyMsg = async text => {
-    try { await navigator.clipboard.writeText(text); toast("Copied to clipboard."); }
-    catch { toast("Couldn't copy — try selecting the text manually."); }
+  // KROFT's replies are Markdown: copy them as clean text (and rich text for apps that accept it)
+  // rather than with their ** and | symbols. A person's own message is copied exactly as typed.
+  const copyMsg = async (text, { markdown = true } = {}) => {
+    const ok = await (markdown ? copyRich(text) : copyPlain(text));
+    toast(ok ? "Copied to clipboard." : "Couldn't copy. Try selecting the text manually.");
   };
 
   const shareMsg = async text => {
-    if (navigator.share) { try { await navigator.share({ text }); } catch {} }
+    const plain = toPlainText(text);
+    if (navigator.share) { try { await navigator.share({ text: plain }); } catch {} }
     else copyMsg(text);
   };
 
@@ -8271,7 +8320,7 @@ ${voiceMode
         <>
           <div onClick={() => setCopyPopup(null)} style={{ position:"fixed", inset:0, zIndex:960 }} />
           <button
-            onClick={() => { copyMsg(copyPopup.content); setCopyPopup(null); }}
+            onClick={() => { copyMsg(copyPopup.content, { markdown:false }); setCopyPopup(null); }}
             style={{
               position:"fixed", zIndex:961,
               left: Math.min(Math.max(copyPopup.x - 55, 12), window.innerWidth - 122),
@@ -10730,7 +10779,13 @@ ${voiceMode
             <div style={{ flex:1, minHeight:0, position:"relative" }}>
               <div ref={chatScrollRef} onScroll={e => {
                 const box = e.currentTarget;
-                setChatNearBottom(box.scrollHeight - box.scrollTop - box.clientHeight < 120);
+                const near = box.scrollHeight - box.scrollTop - box.clientHeight < 120;
+                // Only an upward scroll (the person reading back) stops the follow; the app's own
+                // smooth scroll down passes through "not near the bottom" on its way there.
+                if (near) chatStickToBottom.current = true;
+                else if (box.scrollTop < (box.dataset.lastTop ? +box.dataset.lastTop : 0) - 2) chatStickToBottom.current = false;
+                box.dataset.lastTop = box.scrollTop;
+                setChatNearBottom(near);
               }} style={{ position:"absolute", inset:0, overflowY:"auto", padding:"16px", display:"flex", flexDirection:"column", gap:12,
                 // Top-aligned once a real conversation exists (messages stack down, scroll takes
                 // over), but centered while it's just the one welcome message — top-aligning that
@@ -10776,12 +10831,18 @@ ${voiceMode
                           ))}
                         </div>
                       )}
-                      <div style={{ fontSize:13, lineHeight:1.75, color:m.failed?C.negative:(m.role==="user"?C.black:C.text), whiteSpace:"pre-wrap" }}>
-                        {displayContent}
-                        {/* Blinking caret while tokens are still arriving, so a paused stream
-                            reads as "still writing" rather than as a finished short answer. */}
-                        {m.streaming && <span style={{ display:"inline-block", width:7, height:14, marginLeft:2, verticalAlign:"text-bottom", background:C.muted, animation:"pulse 1s ease-in-out infinite" }} />}
-                      </div>
+                      {m.role === "assistant" && !m.failed ? (
+                        // KROFT's replies are Markdown, rendered as real headings, lists, tables,
+                        // code and copy-ready blocks (see src/markdown). The blinking caret marks
+                        // a reply still arriving, so a paused stream doesn't read as finished.
+                        <Markdown text={displayContent} theme={C} font={APP_FONT} streaming={!!m.streaming}
+                          onCopy={ok => toast(ok ? "Copied to clipboard." : "Couldn't copy. Try selecting the text manually.")}
+                          caret={m.streaming ? <span aria-hidden="true" style={{ display:"inline-block", width:7, height:15, marginLeft:3, verticalAlign:"text-bottom", background:C.muted, animation:"pulse 1s ease-in-out infinite" }} /> : null} />
+                      ) : (
+                        <div style={{ fontSize:15, lineHeight:1.6, color:m.failed?C.negative:(m.role==="user"?C.black:C.text), whiteSpace:"pre-wrap", overflowWrap:"anywhere" }}>
+                          {displayContent}
+                        </div>
+                      )}
                       {isLongUserMsg && (
                         <button onClick={() => setExpandedUserMsgs(p => { const next = new Set(p); if (isExpanded) next.delete(msgKey); else next.add(msgKey); return next; })}
                           style={{ background:"none", border:"none", padding:0, marginTop:4, cursor:"pointer", color:C.accent, fontSize:12.5, fontWeight:700, fontFamily:APP_FONT }}>
