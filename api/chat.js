@@ -47,7 +47,35 @@ function jsonError(body, status) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
 
-export default async function handler(req) {
+// One row per AI request in ai_request_log (supabase/migrations/202611011900_ai_request_log.sql):
+// tokens, model, timing, plan. Never the message text. Saved after the reply has gone out, so it
+// adds no delay, and a failure to save (e.g. the table not created yet) is ignored.
+function usageLogger({ admin, user, plan, usageType, client, ctx }) {
+  return info => {
+    if (!admin) return;
+    const row = {
+      user_id: user?.id || null,
+      plan,
+      usage_type: usageType.slice(0, 40),
+      model: String(info.model || "").slice(0, 80),
+      streamed: !!info.streamed,
+      input_tokens: info.inputTokens ?? null,
+      output_tokens: info.outputTokens ?? null,
+      thinking_tokens: info.thinkingTokens ?? null,
+      cached_tokens: info.cachedTokens ?? null,
+      latency_ms: info.latencyMs ?? null,
+      status: info.status,
+      error: info.error ? String(info.error).slice(0, 60) : null,
+      system_chars: info.systemChars ?? null,
+      client: client ? client.slice(0, 200) : null,
+    };
+    const saving = Promise.resolve(admin.from("ai_request_log").insert(row)).catch(() => {});
+    // Keeps the function alive until the row is saved, without holding up the reply.
+    if (ctx?.waitUntil) ctx.waitUntil(saving);
+  };
+}
+
+export default async function handler(req, ctx) {
   if (req.method !== "POST") {
     return new Response(JSON.stringify({ error: "Method not allowed" }), {
       status: 405,
@@ -64,6 +92,8 @@ export default async function handler(req) {
   // itself as having no real authentication anywhere (see supabaseClient.js's console.warn), so
   // AI chat is left working there — and unmetered, for the same reason — rather than breaking
   // that deployment shape entirely.
+  const usageType = req.headers.get("x-kroft-usage-type") || "chat";
+  let logUsage;
   if (process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY) {
     const user = await getAuthedUser(req);
     if (!user) return jsonError({ error: "Not authenticated" }, 401);
@@ -71,13 +101,13 @@ export default async function handler(req) {
     const admin = supabaseAdmin();
     const { data: subscription } = await admin.from("subscriptions").select("status").eq("user_id", user.id).maybeSingle();
     const isSubscribed = subscription?.status === "active";
+    logUsage = usageLogger({ admin, user, plan: isSubscribed ? "plus" : "free", usageType, client: req.headers.get("x-kroft-client"), ctx });
 
     if (!isSubscribed) {
       // Kroft.jsx tags each call site with which pool it draws from via this header (see
       // runKroftCompletion, searchNearby). Anything missing, or naming a usage_type with no
       // configured limit (including "chat"/"extra"/"report", which have none by design), is
       // simply unlimited — there's nothing to count or check.
-      const usageType = req.headers.get("x-kroft-usage-type") || "chat";
       const limit = await getLimitConfig(admin, usageType);
 
       if (limit) {
@@ -123,5 +153,5 @@ export default async function handler(req) {
     });
   }
 
-  return callGemini(rawBody, geminiKey);
+  return callGemini(rawBody, geminiKey, { onUsage: logUsage });
 }

@@ -63,7 +63,22 @@ function extractText(geminiChunk) {
   return geminiChunk?.candidates?.[0]?.content?.parts?.map((p) => p.text || "").join("") || "";
 }
 
-export async function callGemini(rawBody, apiKey) {
+// Token counts from a Gemini response's usageMetadata.
+export function usageFrom(meta) {
+  if (!meta) return {};
+  return {
+    inputTokens: meta.promptTokenCount ?? null,
+    outputTokens: meta.candidatesTokenCount ?? null,
+    thinkingTokens: meta.thoughtsTokenCount ?? null,
+    cachedTokens: meta.cachedContentTokenCount ?? null,
+  };
+}
+
+// onUsage, if given, is called once per request when it finishes (successfully or not) with
+// { model, streamed, status, error, latencyMs, systemChars, inputTokens, outputTokens,
+// thinkingTokens, cachedTokens }, for cost measurement (api/chat.js). It must never throw into
+// the reply, so any error it raises is swallowed here.
+export async function callGemini(rawBody, apiKey, { onUsage } = {}) {
   let anthropicBody;
   try {
     anthropicBody = JSON.parse(rawBody);
@@ -72,6 +87,11 @@ export async function callGemini(rawBody, apiKey) {
   }
 
   const model = process.env.GEMINI_MODEL || DEFAULT_MODEL;
+  const report = info => {
+    if (!onUsage) return;
+    try { onUsage({ model, streamed: !!anthropicBody.stream, systemChars: (anthropicBody.system || "").length, latencyMs: Date.now() - startedAt, ...info }); }
+    catch { /* measurement never breaks a reply */ }
+  };
   const isStreaming = !!anthropicBody.stream;
   const geminiBody = toGeminiRequest(anthropicBody);
   const method = isStreaming ? "streamGenerateContent" : "generateContent";
@@ -106,6 +126,7 @@ export async function callGemini(rawBody, apiKey) {
       } catch (e) {
         if (abortController.signal.aborted) throw e; // handled by the outer catch below
         if (attempt === 0) { await new Promise(r => setTimeout(r, 500)); continue; }
+        report({ status: 502, error: "unreachable" });
         return jsonResponse({ error: "Could not reach the AI service." }, 502);
       }
       // Only worth retrying a 503 if there's still real time left in the 20s budget — no point
@@ -117,6 +138,7 @@ export async function callGemini(rawBody, apiKey) {
       break;
     }
   } catch {
+    report({ status: 504, error: "timeout" });
     return jsonResponse({ error: "The AI service is taking too long to respond. Try again in a moment." }, 504);
   } finally {
     clearTimeout(abortTimer);
@@ -127,12 +149,14 @@ export async function callGemini(rawBody, apiKey) {
     // with what Kroft.jsx's friendlyError(status) already branches on, so the status passes
     // through unchanged; only the body differs; friendlyError never reads it.
     const detail = await upstream.text().catch(() => "");
+    report({ status: upstream.status, error: `upstream_${upstream.status}` });
     return jsonResponse({ error: "The AI service rejected the request.", detail }, upstream.status);
   }
 
   if (!isStreaming) {
     const geminiJson = await upstream.json();
     const text = extractText(geminiJson);
+    report({ status: 200, ...usageFrom(geminiJson.usageMetadata) });
     // Anthropic's non-streaming shape: { content: [{ type:"text", text }] } — Kroft.jsx does
     // data.content?.map(b => b.text||"").join(""), so a single block is all this needs.
     return jsonResponse({ content: [{ type: "text", text }] });
@@ -148,6 +172,7 @@ export async function callGemini(rawBody, apiKey) {
   const stream = new ReadableStream({
     async start(controller) {
       let buffer = "";
+      let usage = null; // Gemini repeats running totals in each chunk; the last one is final
       try {
         while (true) {
           const { done, value } = await reader.read();
@@ -160,7 +185,9 @@ export async function callGemini(rawBody, apiKey) {
             const payload = line.slice(5).trim();
             if (!payload) continue;
             try {
-              const text = extractText(JSON.parse(payload));
+              const chunk = JSON.parse(payload);
+              if (chunk.usageMetadata) usage = chunk.usageMetadata;
+              const text = extractText(chunk);
               if (text) {
                 controller.enqueue(
                   encoder.encode(`data: ${JSON.stringify({ type: "content_block_delta", delta: { text } })}\n\n`)
@@ -174,9 +201,11 @@ export async function callGemini(rawBody, apiKey) {
           }
         }
       } catch (e) {
+        report({ status: 200, error: "stream_broken", ...usageFrom(usage) });
         controller.error(e);
         return;
       }
+      report({ status: 200, ...usageFrom(usage) });
       controller.close();
     },
   });
