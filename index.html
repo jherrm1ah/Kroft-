@@ -29,7 +29,6 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400..900&display=swap" />
-    <link rel="preload" as="image" href="/onboarding-screen-1.webp" type="image/webp" />
 
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="icon" href="/icons/icon-192.png" type="image/png" sizes="192x192" />
@@ -46,16 +45,23 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <style>
       html, body { margin: 0; background: #f4f2ee; }
-      /* The splash, drawn straight from this HTML so the brand shows the moment the page arrives
-         instead of a blank screen while the app's script downloads. It is identical to
-         SplashScreen in src/Kroft.jsx (same image, same frame), so React taking over is seamless. */
+      /* The splash: "Kroft" set in type, drawn straight from this HTML so it shows the moment the
+         page arrives. SplashScreen in src/Kroft.jsx uses these same classes, so React taking over
+         is seamless. The wordmark font is Outfit SemiBold (SIL Open Font License), cut down to
+         just the letters K, r, o, f and t (about 1 KB) and embedded here, so it renders
+         instantly, online or offline, with no swap from a fallback font. */
+      @font-face {
+        font-family: "KroftWordmark";
+        font-weight: 600;
+        font-display: block;
+        src: url(data:font/woff2;base64,d09GMgABAAAAAAR0ABAAAAAACNgAAAQZAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGkAbgWYcZAZgP1NUQVQqAFwRCAqERIM5CxQAATYCJAMkBCAFhDAHIAwHGyUHyAQeKK/6V0mlhVlpaDYGm9YXdAJ5kh2r30/1EzJADtjYGBflfi74skFU3wW4jEJWuE5dHTDouhoVVV1hTZfhtQ6yGzYIIJs57mNBYTseBAomzAgkSolxlfkhCoBCBFASWhvJFF7Q3No9jGt9IbYfFxLC/CodayuR/VjakMUl0Di5VWwscsnG9FKNioaeNH4VnBz/GdjXI783PkWgoZC451YWmFBYERXpQcmQDkGFxDxqCtlszQZkD5caP6MaHyGN79CMnzFZByCM71GMV1AR05gJljHnukLH9aB/QQABICy+Fxc2YyuomFHQgpBp98hp1ZBKhzLOSVBOlUPXesQshSIRfYlIvMoXWfDzGPHE1C///xfUL4Ws1ohPlEcL8Vj3AZYCbHaG7UY5yB+IiSikEMI8KiULoBKFVOKcpB3DdWZXmYinCx86EWKG0fdk3BPjS+Me43LjfONc45xZum+NaBi4Mawc4vqWwBWh5wlC0okoBlNjSPocs/RKj0e6pIyTXol+xq655aJTdYwMjfRPDQwPOn1++7JYcWl2adeOeeMN+2mvZQxfeI3t1IeQk8LJwqmvvy6KPvMaR7/66uhpL9wpjrnjedupz97G0bc/Z1ftitpbFXyqjfiiXbNz3q5qrzF8zCPMim6WB3DX/c/djGt22fbo7kevjRa9UbTtsqSXXipSbc1vv93MT/n70/tu6FyvGzl79NGTH+XQbZUF41NFtXlN+24cHLrhss3JvuSdP+vRY6PstnbEGpsjbW1NoQMa2ztjjU2htramSKyx45CUo79OTf0rlJIc+is19e8QlZ8c94k9wTI+4htIOjA4MHPjN5szmznmpuNu+kWPrkQ5VKkpnJktra8fLEkfL100Z96SkXFzuu1nPXpz1KtvqyiYmCqqzWvad+PwIRr2Pzv6i37TcTcd3sUgdlx6Xmv+zXPu6t8sqvolKvPuO5/97/3yw8ptmcaR/x/rukz9CR5ikIu5aderxpH/17suuxTfYVVupE25jXZxJTalgp3iDirFCXiU57Ept+HhyZHbrdyFi56nOrW1+5rmbRwZBOTFKl0nbAo9v9C3YFJw8b5JpZgbFstqk0YlIZOJvQwaXZSyu48QOPAAN7NfgyFW2CBIIzrrLDPGCkH8BIhZQ2OEiFJJHntQlCUiBAkRo3iuIkBhndwH9Nf95NFHK930cQAxfASJkdM3G0Wk1cN09hNPAbkUkE8+VfjxIehEQ6NMkU8uFXh1IWXMwM74iLCAn6qR2ODGfg5gnQUiiv34ziZ0QhyyOvfac/EUUr0rpIB4hgmwQnz7o/qJoLPKCktJNFQgsBs8ipdP3z/4Wx0d4AAWyWUJnY1dm9Qj7co0mUIOrTtFO46MD84prGVcTiF6+33COOE2eQYA) format("woff2");
+      }
       .boot-splash { position: fixed; inset: 0; background: #f4f2ee; display: flex; align-items: center; justify-content: center; }
-      .boot-splash > div { position: relative; width: 100%; height: 100%; max-width: calc(100vh * 531 / 949); max-height: calc(100vw * 949 / 531); }
-      .boot-splash img { width: 100%; height: 100%; display: block; }
+      .kroft-wordmark { font-family: "KroftWordmark", "Outfit", system-ui, sans-serif; font-weight: 600; font-size: 34px; letter-spacing: -0.6px; line-height: 1; color: #0a0a0a; -webkit-font-smoothing: antialiased; }
     </style>
   </head>
   <body>
-    <div id="root"><div class="boot-splash" aria-hidden="true"><div><img src="/onboarding-screen-1.webp" alt="" /></div></div></div>
+    <div id="root"><div class="boot-splash" aria-hidden="true"><span class="kroft-wordmark">Kroft</span></div></div>
     <noscript style="position:fixed;bottom:24px;left:0;right:0;text-align:center;font:15px/1.5 sans-serif;color:#3a3833">KROFT needs JavaScript turned on to run.</noscript>
     <script type="module" src="/src/main.jsx"></script>
   </body>

@@ -11,7 +11,7 @@
 // Never cached: anything that isn't a GET, /api/*, Supabase or any other third-party call, and the
 // dev server's own files. The person's data is not stored here; storageShim.js keeps that.
 
-const VERSION = "v1";
+const VERSION = "v2";
 const SHELL = `kroft-shell-${VERSION}`;
 const ASSETS = "kroft-assets";
 const FONTS = "kroft-fonts";
@@ -20,7 +20,7 @@ const MAX_ASSETS = 80;
 // Lookups ignore Vary: servers mark responses "Vary: Origin", and module scripts are requested
 // with an Origin header the install-time copies didn't have. Hashed files can't be stale anyway.
 const STATIC_FILES = [
-  "/manifest.webmanifest", "/favicon.svg", "/onboarding-screen-1.webp", "/kroft-robot-badge.webp",
+  "/manifest.webmanifest", "/favicon.svg", "/kroft-robot-badge.webp",
   "/icons/icon-192.png", "/icons/icon-512.png", "/icons/badge-96.png", "/icons/apple-touch-icon.png",
 ];
 
