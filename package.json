@@ -7,10 +7,10 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "node src/markdown/parse.test.mjs && node src/markdown/verify.test.mjs && node src/native.test.mjs && node src/webUpdate.test.mjs",
+    "test": "node src/markdown/parse.test.mjs && node src/markdown/verify.test.mjs && node src/native.test.mjs && node src/webUpdate.test.mjs && node src/invoices/model.test.mjs",
     "android:sync": "npm run build && npx cap sync android",
     "android:apk": "npm run android:sync && cd android && ./gradlew assembleDebug",
-    "test:e2e": "VITE_SUPABASE_URL= VITE_SUPABASE_ANON_KEY= vite build --outDir dist-e2e --emptyOutDir && node tests/e2e/native-shells.mjs"
+    "test:e2e": "VITE_SUPABASE_URL= VITE_SUPABASE_ANON_KEY= vite build --outDir dist-e2e --emptyOutDir && node tests/e2e/native-shells.mjs && node tests/e2e/invoices.mjs"
   },
   "dependencies": {
     "@capacitor-community/speech-recognition": "^7.0.1",

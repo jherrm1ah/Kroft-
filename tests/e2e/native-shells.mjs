@@ -9,98 +9,11 @@
 //   npm run test:e2e        (builds a copy without Supabase, so no account or network is needed)
 
 import { chromium } from "playwright";
-import { spawn } from "node:child_process";
-import { fileURLToPath } from "node:url";
-import path from "node:path";
-
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-const DIST = process.env.E2E_DIST || "dist-e2e";
-const PORT = Number(process.env.E2E_PORT || 4180);
-const URL = `http://localhost:${PORT}/`;
-const BRIDGE = path.join(ROOT, "node_modules/@capacitor/android/capacitor/src/main/assets/native-bridge.js");
-
-const ALL = ["App", "Browser", "LocalNotifications", "Share", "TextToSpeech", "SpeechRecognition", "Geolocation", "NativeBiometric", "Filesystem"];
-const SHELLS = {
-  // The first APK (#108): no location, fingerprint or file-saving plugins, no version number.
-  "first APK (build 1)": { plugins: ["App", "Browser", "LocalNotifications", "Share", "TextToSpeech", "SpeechRecognition"], info: { version: "1.0", build: "1" } },
-  "current APK (1.1.0)": { plugins: ALL, info: { version: "1.1.0", build: "10100" } },
-};
-
-const MOCK = `
-  const m = (...n) => n.map(name => ({ name, rtype: 'promise' }));
-  window.__HEADERS = [
-    { name:'App', methods: m('minimizeApp','exitApp','getInfo','addListener','removeAllListeners') },
-    { name:'Browser', methods: m('open','close','addListener','removeAllListeners') },
-    { name:'LocalNotifications', methods: m('checkPermissions','requestPermissions','checkExactNotificationSetting','changeExactNotificationSetting','getPending','getDeliveredNotifications','schedule','cancel','addListener') },
-    { name:'Share', methods: m('share','canShare') },
-    { name:'TextToSpeech', methods: m('speak','stop','getSupportedVoices') },
-    { name:'SpeechRecognition', methods: m('available','start','stop','checkPermissions','requestPermissions','addListener','removeAllListeners') },
-    { name:'Geolocation', methods: m('checkPermissions','requestPermissions','getCurrentPosition','clearWatch').concat([{ name:'watchPosition', rtype:'callback' }]) },
-    { name:'NativeBiometric', methods: m('isAvailable','verifyIdentity') },
-    { name:'Filesystem', methods: m('writeFile') },
-  ];
-  window.__calls = [];
-  const replies = {
-    'SpeechRecognition.available': { available:false },
-    'SpeechRecognition.checkPermissions': { speechRecognition:'prompt' },
-    'SpeechRecognition.requestPermissions': { speechRecognition:'granted' },
-    'Geolocation.checkPermissions': { location:'prompt', coarseLocation:'prompt' },
-    'Geolocation.requestPermissions': { location:'granted', coarseLocation:'granted' },
-    'Geolocation.getCurrentPosition': { coords:{ latitude:6.45, longitude:3.39, accuracy:30 }, timestamp:Date.now() },
-    'LocalNotifications.checkPermissions': { display:'granted' },
-    'LocalNotifications.checkExactNotificationSetting': { exact_alarm:'denied' },
-    'LocalNotifications.getPending': { notifications:[] },
-    'LocalNotifications.getDeliveredNotifications': { notifications:[] },
-    'NativeBiometric.isAvailable': { isAvailable:true, biometryType:3 },
-    'TextToSpeech.getSupportedVoices': { voices:[] },
-    'App.getInfo': window.__INFO,
-    'Filesystem.writeFile': { uri:'file:///cache/exports/x' },
-  };
-  window.androidBridge = { postMessage(raw) {
-    const msg = JSON.parse(raw);
-    const key = msg.pluginId + '.' + msg.methodName;
-    window.__calls.push(key);
-    if (msg.callbackId == null) return;
-    setTimeout(() => window.Capacitor.fromNative({ callbackId:msg.callbackId, pluginId:msg.pluginId, methodName:msg.methodName, success:true, data: replies[key] || {} }), 30);
-  } };
-`;
-
-let failures = 0;
-const check = (name, ok, detail = "") => { if (!ok) failures++; console.log(`${ok ? "ok  " : "FAIL"} ${name}${!ok && detail ? `\n     ${detail}` : ""}`); };
-
-async function startServer() {
-  const server = spawn("npx", ["vite", "preview", "--outDir", DIST, "--port", String(PORT), "--strictPort"], { cwd: ROOT, stdio: "ignore" });
-  for (let i = 0; i < 60; i++) {
-    try { if ((await fetch(URL)).ok) return server; } catch { /* not up yet */ }
-    await new Promise(r => setTimeout(r, 500));
-  }
-  server.kill();
-  throw new Error(`preview server didn't start on ${URL}`);
-}
-
-async function signUp(page) {
-  await page.getByRole("button", { name: "Sign up with email" }).waitFor({ timeout: 20000 });
-  await page.getByRole("button", { name: "Sign up with email" }).click();
-  await page.getByLabel("Full name").fill("Ada Obi");
-  await page.getByLabel("Email").fill("ada@example.com");
-  await page.getByLabel("Password", { exact: true }).fill("TestPass123!");
-  await page.getByRole("button", { name: "Create account" }).click();
-  for (const n of ["Skip for now", "Continue", "Skip for now", "Start using KROFT"]) {
-    await page.getByRole("button", { name: n, exact: true }).click();
-    await page.waitForTimeout(350);
-  }
-  await page.locator('nav button[title="Home"]').waitFor({ timeout: 15000 });
-}
+import { SHELLS, check, startServer, signUp, newShellContext, failureCount, URL } from "./harness.mjs";
 
 async function runShell(browser, label, shell) {
   console.log(`\n${label}`);
-  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
-  if (shell) {
-    await ctx.addInitScript(`window.__INFO = ${JSON.stringify(shell.info)}; window.__KEEP = ${JSON.stringify(shell.plugins)};`);
-    await ctx.addInitScript(MOCK);
-    await ctx.addInitScript({ path: BRIDGE });
-    await ctx.addInitScript("window.Capacitor.PluginHeaders = window.__HEADERS.filter(h => window.__KEEP.includes(h.name));");
-  }
+  const ctx = await newShellContext(browser, shell);
   const page = await ctx.newPage();
   const errors = [];
   page.on("pageerror", e => errors.push(e.message));
@@ -169,11 +82,11 @@ try {
   await runShell(browser, "website (no app)", null);
   for (const [label, shell] of Object.entries(SHELLS)) await runShell(browser, label, shell);
 } catch (err) {
-  failures++;
-  console.log(`FAIL test run stopped: ${err.message}`);
+  check("test run finished", false, err.message);
 } finally {
   await browser.close();
   server.kill();
 }
+const failures = failureCount();
 console.log(failures ? `\n${failures} FAILED` : "\nALL PASSED");
 process.exit(failures ? 1 : 0);

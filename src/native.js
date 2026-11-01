@@ -422,14 +422,18 @@ export async function verifyBiometric(title = "Unlock KROFT") {
 // An Android WebView ignores <a download> (nothing happens at all), so backups, CSV exports and
 // documents are written to the app's cache and handed to the share sheet, where the person can
 // save them to Files/Drive or send them on. Returns false if they closed the sheet.
-export async function saveFileFromApp(filename, content) {
+// Binary files (a PDF) are passed as { base64 } instead of text; `text` goes with the file where
+// the chosen app supports it (WhatsApp shows it as the message).
+export async function saveFileFromApp(filename, content, { base64 = null, text = "" } = {}) {
   if (!isNativeApp) return false;
   if (!hasPlugin("Filesystem") || !hasPlugin("Share")) throw Object.assign(new Error("This version of the app can't save files"), { code: "needs-update" });
   const { Filesystem, Share } = await plugins;
   const name = String(filename || "kroft-file.txt").replace(/[\\/:*?"<>|]+/g, "_");
-  const { uri } = await Filesystem.writeFile({ path: `exports/${name}`, data: String(content ?? ""), directory: "CACHE", encoding: "utf8", recursive: true });
+  const { uri } = base64
+    ? await Filesystem.writeFile({ path: `exports/${name}`, data: base64, directory: "CACHE", recursive: true })
+    : await Filesystem.writeFile({ path: `exports/${name}`, data: String(content ?? ""), directory: "CACHE", encoding: "utf8", recursive: true });
   try {
-    await Share.share({ title: name, files: [uri], dialogTitle: "Save or send" });
+    await Share.share({ title: name, files: [uri], ...(text ? { text } : {}), dialogTitle: "Save or send" });
     return true;
   } catch (err) {
     if (/cancel/i.test(String(err?.message || ""))) return false;

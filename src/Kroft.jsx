@@ -6,6 +6,8 @@ import { Markdown } from "./markdown/Markdown.jsx";
 import { toPlainText, toSpeechText } from "./markdown/parse.js";
 import { copyRich, copyPlain } from "./markdown/clipboard.js";
 import { offlineUserId, flushPending, clearOfflineData, hasUnsyncedChanges, unreadableKeys } from "./storageShim.js";
+import { DEFAULT_INVOICE_SETTINGS, invoiceTotals, invoiceStatus, invoiceAllowance, createInvoice, invoiceProblem, invoicesCreatedInMonth, FREE_INVOICES_PER_MONTH, whatsappLink, sendMessage, reminderMessage, prettyDate, STATUS_LABEL, invoicesForAI, daysBetween } from "./invoices/model.js";
+import { invoicePdf, invoiceFileName } from "./invoices/pdf.js";
 import { isNativeApp, nativeRedirect, openInSystemBrowser, scheduleDeviceReminders, verifyBiometric, getAppPermissions, requestAppPermission, saveFileFromApp, exactAlarmStatus, openExactAlarmSetting, getClientHeader } from "./native.js";
 
 // What a mic button says when listening fails, by the SpeechRecognition error code. Silence used
@@ -2637,6 +2639,402 @@ function ProfileRow({ label, sub, expanded, onToggle, children, right, icon, glo
   );
 }
 
+// ── Invoices (Home › Finance › Invoices) ──
+// List, create/edit, view-and-send, and the business's invoice details. The logic (totals,
+// numbering, statuses, messages) is in src/invoices/model.js and the PDF in src/invoices/pdf.js;
+// this is only the screens. Free plan: FREE_INVOICES_PER_MONTH new invoices a month; KROFT Plus:
+// unlimited, plus payment reminders.
+const INVOICE_TONE = { draft:null, sent:"accent", overdue:"negative", paid:"positive", cancelled:null };
+const bytesToBase64 = bytes => { let bin = ""; for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000)); return btoa(bin); };
+
+function InvoiceField({ label, children, style }) {
+  return (
+    <label style={{ display:"block", ...style }}>
+      <Mono style={{ display:"block", color:C.muted, marginBottom:5 }}>{label}</Mono>
+      {children}
+    </label>
+  );
+}
+
+function InvoicesScreen({ invoices, setInvoices, settings, setSettings, user, subscribed, contacts, onClose, toast, onUpgrade, onRecordIncome, onRemoveIncome, openId }) {
+  const today = todayISO();
+  const fmt = fmtCur;
+  const [view, setView] = useState(openId ? "view" : "list");
+  const [currentId, setCurrentId] = useState(openId || null);
+  const [draft, setDraft] = useState(null);         // the invoice being created or edited
+  const [settingsDraft, setSettingsDraft] = useState(null);
+  const [filter, setFilter] = useState("all");
+  const [busy, setBusy] = useState("");
+  const [preview, setPreview] = useState(null);
+  const current = invoices.find(i => i.id === currentId) || null;
+  const allowance = invoiceAllowance({ subscribed, invoices, today });
+  const needsDetails = !settings.bankName && !settings.accountNumber;
+
+  useEffect(() => {
+    if (view !== "view" || !current) { setPreview(null); return; }
+    let cancelled = false;
+    invoicePdf(current, settings, user, fmt, { font: APP_FONT, today })
+      .then(r => { if (!cancelled) setPreview(r.preview); })
+      .catch(() => { if (!cancelled) setPreview(null); });
+    return () => { cancelled = true; };
+  }, [view, current, settings, user]);
+
+  const statusOf = inv => invoiceStatus(inv, today);
+  const counts = invoices.reduce((acc, inv) => { const s = statusOf(inv); acc[s] = (acc[s] || 0) + 1; return acc; }, {});
+  const unpaid = invoices.filter(inv => ["sent","overdue"].includes(statusOf(inv)));
+  const outstandingByCur = unpaid.reduce((acc, inv) => { acc[inv.currency] = (acc[inv.currency] || 0) + invoiceTotals(inv).total; return acc; }, {});
+  const shown = invoices
+    .filter(inv => filter === "all" || (filter === "unpaid" ? ["sent","overdue"].includes(statusOf(inv)) : statusOf(inv) === filter))
+    .slice().sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || "") || String(b.number).localeCompare(String(a.number)));
+
+  const update = (id, patch) => setInvoices(list => list.map(i => i.id === id ? { ...i, ...patch } : i));
+
+  const startNew = () => {
+    if (!allowance.allowed) {
+      toast(`You've used this month's ${FREE_INVOICES_PER_MONTH} free invoices. KROFT Plus gives you unlimited invoices.`);
+      onUpgrade?.();
+      return;
+    }
+    const { invoice } = createInvoice({ settings, currency: user.currency || "NGN", today, id: String(uid()) });
+    setDraft({ ...invoice, _new: true });
+    setView("edit");
+  };
+  const startEdit = inv => { setDraft({ ...inv, items: inv.items.map(it => ({ ...it })), client: { ...inv.client } }); setView("edit"); };
+  const duplicate = inv => {
+    if (!allowance.allowed) { toast(`You've used this month's ${FREE_INVOICES_PER_MONTH} free invoices. KROFT Plus gives you unlimited invoices.`); onUpgrade?.(); return; }
+    const { invoice } = createInvoice({ settings, client: inv.client, items: inv.items.map(({ description, qty, price }) => ({ description, qty, price })), currency: inv.currency, today, id: String(uid()), vatRate: inv.vatRate, discount: inv.discount, notes: inv.notes });
+    setDraft({ ...invoice, _new: true });
+    setView("edit");
+  };
+
+  const saveDraft = () => {
+    const { _new, ...inv } = draft;
+    const clean = { ...inv, items: inv.items.filter(it => it.description || Number(it.price)) };
+    if (!clean.client.name) { toast("Add who the invoice is for."); return; }
+    if (_new) {
+      // The number is only used up once the invoice is actually saved.
+      setInvoices(list => [clean, ...list]);
+      setSettings(s => ({ ...s, nextNumber: (Number(s.nextNumber) || 1) + 1 }));
+    } else update(clean.id, clean);
+    setDraft(null);
+    setCurrentId(clean.id);
+    setView("view");
+    toast(_new ? `${clean.number} saved.` : "Invoice updated.");
+  };
+
+  const markSent = inv => { if (inv.status === "draft") update(inv.id, { status:"sent", sentAt:today }); };
+
+  const sharePdf = async inv => {
+    const problem = invoiceProblem(inv);
+    if (problem) { toast(problem); return; }
+    setBusy("pdf");
+    try {
+      const { bytes } = await invoicePdf(inv, settings, user, fmt, { font: APP_FONT, today });
+      const name = invoiceFileName(inv);
+      const text = sendMessage(inv, settings, user, fmt);
+      if (isNativeApp) {
+        const shared = await saveFileFromApp(name, null, { base64: bytesToBase64(bytes), text });
+        if (shared) markSent(inv);
+      } else {
+        const file = new File([bytes], name, { type:"application/pdf" });
+        if (navigator.canShare?.({ files:[file] })) {
+          try { await navigator.share({ files:[file], title:`Invoice ${inv.number}`, text }); markSent(inv); }
+          catch (err) { if (err?.name !== "AbortError") throw err; }
+        } else {
+          const url = URL.createObjectURL(file);
+          const a = document.createElement("a"); a.href = url; a.download = name;
+          document.body.appendChild(a); a.click(); a.remove();
+          setTimeout(() => URL.revokeObjectURL(url), 10000);
+          markSent(inv);
+          toast("PDF downloaded. Attach it to your email or WhatsApp.");
+        }
+      }
+    } catch (err) {
+      toast(err?.code === "needs-update" ? "Update the KROFT app to share PDFs." : "Couldn't create the PDF. Try again.");
+    } finally { setBusy(""); }
+  };
+
+  const sendWhatsApp = (inv, reminder) => {
+    if (!inv.client.phone) { toast("Add the client's phone number to send on WhatsApp."); startEdit(inv); return; }
+    const text = reminder ? reminderMessage(inv, settings, user, fmt, today) : sendMessage(inv, settings, user, fmt);
+    window.open(whatsappLink(inv.client.phone, text), "_blank");
+    if (!reminder) markSent(inv);
+  };
+  const sendEmail = (inv, reminder) => {
+    if (!inv.client.email) { toast("Add the client's email address to send by email."); startEdit(inv); return; }
+    const subject = reminder ? `Reminder: invoice ${inv.number}` : `Invoice ${inv.number}`;
+    const body = reminder ? reminderMessage(inv, settings, user, fmt, today) : `${sendMessage(inv, settings, user, fmt)}\n\n(The invoice PDF is attached.)`;
+    window.location.href = `mailto:${encodeURIComponent(inv.client.email)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+    if (!reminder) markSent(inv);
+  };
+  const remind = (inv, via) => {
+    if (!subscribed) { toast("Payment reminders are a KROFT Plus feature."); onUpgrade?.(); return; }
+    if (via === "whatsapp") sendWhatsApp(inv, true); else sendEmail(inv, true);
+  };
+
+  const markPaid = inv => {
+    const incomeId = onRecordIncome(inv);
+    update(inv.id, { status:"paid", paidDate:today, incomeId });
+    toast(`${inv.number} marked paid and added to your income.`);
+  };
+  const markUnpaid = inv => {
+    if (inv.incomeId) onRemoveIncome(inv.incomeId);
+    update(inv.id, { status:"sent", paidDate:null, incomeId:null, sentAt: inv.sentAt || today });
+    toast(`${inv.number} is unpaid again; its income entry was removed.`);
+  };
+  const remove = inv => {
+    const extra = inv.status === "paid" ? " The income it recorded stays in your finances." : "";
+    if (!window.confirm(`Delete ${inv.number}?${extra}`)) return;
+    setInvoices(list => list.filter(i => i.id !== inv.id));
+    setCurrentId(null); setView("list");
+    toast(`${inv.number} deleted.`);
+  };
+
+  const header = (title, onBack, right) => (
+    <div style={{ display:"flex", alignItems:"center", gap:10, padding:"calc(12px + env(safe-area-inset-top)) 16px 12px", borderBottom:`1px solid ${C.cardB}`, flexShrink:0 }}>
+      <button onClick={onBack} aria-label="Back" style={{ background:"none", border:"none", color:C.white, cursor:"pointer", fontSize:20, padding:"2px 4px", lineHeight:1 }}>←</button>
+      <h2 style={{ fontSize:17, fontWeight:700, color:C.white, letterSpacing:-.5, flex:1, minWidth:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{title}</h2>
+      {right}
+    </div>
+  );
+
+  let body;
+  if (view === "settings") {
+    const d = settingsDraft || settings;
+    const set = patch => setSettingsDraft({ ...d, ...patch });
+    body = (
+      <>
+        {header("Invoice details", () => { setSettingsDraft(null); setView(current ? "view" : "list"); })}
+        <div style={{ flex:1, minHeight:0, overflowY:"auto", padding:16, display:"flex", flexDirection:"column", gap:12 }}>
+          <Mono style={{ color:C.soft, lineHeight:1.6 }}>These appear on every invoice you send.</Mono>
+          <InvoiceField label="Business name"><Inp placeholder={user.businessName || user.name || "Your business"} value={d.businessName} onChange={e => set({ businessName:e.target.value })} /></InvoiceField>
+          <InvoiceField label="Address (optional)"><Inp value={d.address} onChange={e => set({ address:e.target.value })} /></InvoiceField>
+          <div style={{ display:"flex", gap:10 }}>
+            <InvoiceField label="Email" style={{ flex:1 }}><Inp type="email" placeholder={user.email || ""} value={d.email} onChange={e => set({ email:e.target.value })} /></InvoiceField>
+            <InvoiceField label="Phone" style={{ flex:1 }}><Inp type="tel" inputMode="tel" placeholder={user.phone || ""} value={d.phone} onChange={e => set({ phone:e.target.value })} /></InvoiceField>
+          </div>
+          <div style={{ fontSize:12, fontWeight:600, color:C.muted, marginTop:8 }}>How clients pay you</div>
+          <InvoiceField label="Bank"><Inp placeholder="e.g. GTBank" value={d.bankName} onChange={e => set({ bankName:e.target.value })} /></InvoiceField>
+          <InvoiceField label="Account name"><Inp value={d.accountName} onChange={e => set({ accountName:e.target.value })} /></InvoiceField>
+          <InvoiceField label="Account number"><Inp inputMode="numeric" value={d.accountNumber} onChange={e => set({ accountNumber:e.target.value.replace(/[^\d ]/g, "") })} /></InvoiceField>
+          <div style={{ fontSize:12, fontWeight:600, color:C.muted, marginTop:8 }}>Defaults</div>
+          <div style={{ display:"flex", gap:10 }}>
+            <InvoiceField label="Number prefix" style={{ flex:1 }}><Inp value={d.prefix} onChange={e => set({ prefix:e.target.value.replace(/[^A-Za-z0-9]/g, "").slice(0, 8).toUpperCase() })} /></InvoiceField>
+            <InvoiceField label="Next number" style={{ flex:1 }}><Inp inputMode="numeric" value={String(d.nextNumber)} onChange={e => set({ nextNumber: Math.max(1, parseInt(e.target.value.replace(/\D/g, "") || "1", 10)) })} /></InvoiceField>
+          </div>
+          <div style={{ display:"flex", gap:10 }}>
+            <InvoiceField label="Payment due after (days)" style={{ flex:1 }}><Inp inputMode="numeric" value={String(d.dueDays)} onChange={e => set({ dueDays: Math.min(365, parseInt(e.target.value.replace(/\D/g, "") || "0", 10)) })} /></InvoiceField>
+            <InvoiceField label="VAT % (0 if none)" style={{ flex:1 }}><Inp inputMode="decimal" value={String(d.vatRate)} onChange={e => set({ vatRate: Math.min(100, parseFloat(e.target.value.replace(/[^\d.]/g, "")) || 0) })} /></InvoiceField>
+          </div>
+          <InvoiceField label="Note at the bottom"><Inp value={d.note} onChange={e => set({ note:e.target.value })} /></InvoiceField>
+          <Btn full onClick={() => { setSettings(d); setSettingsDraft(null); setView(current ? "view" : "list"); toast("Invoice details saved."); }}>Save</Btn>
+        </div>
+      </>
+    );
+  } else if (view === "edit" && draft) {
+    const setD = patch => setDraft(v => ({ ...v, ...patch }));
+    const setItem = (idx, patch) => setDraft(v => ({ ...v, items: v.items.map((it, i) => i === idx ? { ...it, ...patch } : it) }));
+    const t = invoiceTotals(draft);
+    const pickContact = name => {
+      const c = contacts.find(x => (x.name || "").toLowerCase() === name.trim().toLowerCase());
+      setD({ client: { ...draft.client, name, ...(c ? { email: draft.client.email || c.email || "", phone: draft.client.phone || c.phone || "" } : {}) } });
+    };
+    body = (
+      <>
+        {header(draft._new ? `New invoice · ${draft.number}` : `Edit ${draft.number}`, () => { setDraft(null); setView(current ? "view" : "list"); })}
+        <div style={{ flex:1, minHeight:0, overflowY:"auto", padding:16, display:"flex", flexDirection:"column", gap:12 }}>
+          <div style={{ fontSize:12, fontWeight:600, color:C.muted }}>Bill to</div>
+          <InvoiceField label="Client name">
+            <Inp list="kroft-invoice-contacts" placeholder="Who is this for?" value={draft.client.name} onChange={e => pickContact(e.target.value)} />
+            <datalist id="kroft-invoice-contacts">{contacts.filter(c => c.name).map(c => <option key={c.id} value={c.name} />)}</datalist>
+          </InvoiceField>
+          <div style={{ display:"flex", gap:10 }}>
+            <InvoiceField label="Email (optional)" style={{ flex:1 }}><Inp type="email" value={draft.client.email} onChange={e => setD({ client:{ ...draft.client, email:e.target.value } })} /></InvoiceField>
+            <InvoiceField label="Phone (optional)" style={{ flex:1 }}><Inp type="tel" inputMode="tel" value={draft.client.phone} onChange={e => setD({ client:{ ...draft.client, phone:e.target.value } })} /></InvoiceField>
+          </div>
+
+          <div style={{ fontSize:12, fontWeight:600, color:C.muted, marginTop:6 }}>Items</div>
+          {draft.items.map((it, idx) => (
+            <Card key={it.id} level="inset" style={{ padding:12, display:"flex", flexDirection:"column", gap:8 }}>
+              <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+                <Inp aria-label={`Item ${idx + 1} description`} placeholder="Description, e.g. Logo design" value={it.description} onChange={e => setItem(idx, { description:e.target.value })} />
+                {draft.items.length > 1 && <button aria-label={`Remove item ${idx + 1}`} onClick={() => setD({ items: draft.items.filter((_, i) => i !== idx) })} style={{ background:"none", border:"none", color:C.muted, cursor:"pointer", fontSize:18, padding:"4px 6px" }}>✕</button>}
+              </div>
+              <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+                <Inp aria-label={`Item ${idx + 1} quantity`} inputMode="decimal" placeholder="Qty" value={String(it.qty ?? "")} onChange={e => setItem(idx, { qty: e.target.value.replace(/[^\d.]/g, "") })} style={{ width:70, flex:"none" }} />
+                <Mono style={{ color:C.muted }}>×</Mono>
+                <Inp aria-label={`Item ${idx + 1} price`} inputMode="decimal" placeholder={`Price (${draft.currency})`} value={it.price ? String(it.price) : ""} onChange={e => setItem(idx, { price: parseFloat(e.target.value.replace(/[^\d.]/g, "")) || 0 })} />
+              </div>
+            </Card>
+          ))}
+          <Btn sm v="outline" onClick={() => setD({ items:[...draft.items, { id:`${draft.id}-${Date.now()}`, description:"", qty:1, price:0 }] })}>+ Add item</Btn>
+
+          <div style={{ display:"flex", gap:10, marginTop:6 }}>
+            <InvoiceField label="Invoice date" style={{ flex:1 }}><Inp type="date" value={draft.issueDate} onChange={e => setD({ issueDate:e.target.value })} /></InvoiceField>
+            <InvoiceField label="Due date" style={{ flex:1 }}><Inp type="date" value={draft.dueDate} onChange={e => setD({ dueDate:e.target.value })} /></InvoiceField>
+          </div>
+          <div style={{ display:"flex", gap:10 }}>
+            <InvoiceField label={`Discount (${draft.currency})`} style={{ flex:1 }}><Inp inputMode="decimal" value={draft.discount ? String(draft.discount) : ""} onChange={e => setD({ discount: parseFloat(e.target.value.replace(/[^\d.]/g, "")) || 0 })} /></InvoiceField>
+            <InvoiceField label="VAT %" style={{ flex:1 }}><Inp inputMode="decimal" value={draft.vatRate ? String(draft.vatRate) : ""} placeholder="0" onChange={e => setD({ vatRate: Math.min(100, parseFloat(e.target.value.replace(/[^\d.]/g, "")) || 0) })} /></InvoiceField>
+          </div>
+          <InvoiceField label="Notes (optional)"><Inp value={draft.notes} onChange={e => setD({ notes:e.target.value })} /></InvoiceField>
+
+          <Card level="raised" style={{ display:"flex", flexDirection:"column", gap:6 }}>
+            {[["Subtotal", t.subtotal], ...(t.discount ? [["Discount", -t.discount]] : []), ...(t.vat ? [[`VAT (${t.vatRate}%)`, t.vat]] : [])].map(([l, v]) => (
+              <div key={l} style={{ display:"flex", justifyContent:"space-between" }}><Mono style={{ color:C.soft }}>{l}</Mono><Mono style={{ color:C.text }}>{fmt(v, draft.currency)}</Mono></div>
+            ))}
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"baseline", marginTop:4 }}>
+              <span style={{ fontSize:13, fontWeight:600, color:C.white }}>Total</span>
+              <span style={{ fontSize:20, fontWeight:700, color:C.white, letterSpacing:-.6 }}>{fmt(t.total, draft.currency)}</span>
+            </div>
+          </Card>
+          <Btn full onClick={saveDraft}>Save invoice</Btn>
+        </div>
+      </>
+    );
+  } else if (view === "view" && current) {
+    const st = statusOf(current);
+    const t = invoiceTotals(current);
+    const late = st === "overdue" ? daysBetween(current.dueDate, today) : 0;
+    body = (
+      <>
+        {header(current.number, () => { setCurrentId(null); setView("list"); }, (
+          <button onClick={() => startEdit(current)} style={{ background:"none", border:"none", color:C.accent, fontSize:14, fontWeight:600, cursor:"pointer", padding:"4px 2px" }}>Edit</button>
+        ))}
+        <div style={{ flex:1, minHeight:0, overflowY:"auto", padding:16, display:"flex", flexDirection:"column", gap:12 }}>
+          <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:10 }}>
+            <div style={{ minWidth:0 }}>
+              <div style={{ fontSize:15, fontWeight:600, color:C.white, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{current.client.name}</div>
+              <Mono style={{ display:"block", color:C.muted, marginTop:2 }}>
+                {st === "paid" ? `Paid ${prettyDate(current.paidDate)}` : st === "overdue" ? `${late} day${late === 1 ? "" : "s"} overdue · due ${prettyDate(current.dueDate)}` : `Due ${prettyDate(current.dueDate)}`}
+              </Mono>
+            </div>
+            <div style={{ textAlign:"right", flexShrink:0 }}>
+              <div style={{ fontSize:20, fontWeight:700, color:C.white, letterSpacing:-.6 }}>{fmt(t.total, current.currency)}</div>
+              <Tag tone={INVOICE_TONE[st]}>{STATUS_LABEL[st].toUpperCase()}</Tag>
+            </div>
+          </div>
+
+          {needsDetails && st !== "paid" && (
+            <Card level="inset" style={{ borderStyle:"dashed", borderColor:C.warning+"66", cursor:"pointer" }} onClick={() => setView("settings")}>
+              <Mono style={{ color:C.text, lineHeight:1.6 }}>Add your bank details so clients know how to pay you. <span style={{ color:C.accent, fontWeight:600 }}>Add details</span></Mono>
+            </Card>
+          )}
+
+          <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+            <Btn full disabled={busy === "pdf"} onClick={() => sharePdf(current)}>{busy === "pdf" ? "Preparing PDF…" : isNativeApp ? "Share PDF" : "Share or download PDF"}</Btn>
+            <div style={{ display:"flex", gap:8 }}>
+              <Btn sm v="outline" style={{ flex:1 }} onClick={() => sendWhatsApp(current, false)}>WhatsApp</Btn>
+              <Btn sm v="outline" style={{ flex:1 }} onClick={() => sendEmail(current, false)}>Email</Btn>
+            </div>
+            {(st === "sent" || st === "overdue") && (
+              <>
+                <Btn full v="outline" onClick={() => markPaid(current)}>Mark as paid</Btn>
+                <Card level="inset" style={{ padding:12 }}>
+                  <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:8, marginBottom:8 }}>
+                    <span style={{ fontSize:13, fontWeight:600, color:C.white }}>Payment reminder</span>
+                    {!subscribed && <Tag tone="accent">PLUS</Tag>}
+                  </div>
+                  <Mono style={{ display:"block", color:C.soft, lineHeight:1.6, marginBottom:10 }}>A polite message saying how much is due and how to pay.</Mono>
+                  <div style={{ display:"flex", gap:8 }}>
+                    <Btn sm v="outline" style={{ flex:1 }} onClick={() => remind(current, "whatsapp")}>Remind on WhatsApp</Btn>
+                    <Btn sm v="outline" style={{ flex:1 }} onClick={() => remind(current, "email")}>By email</Btn>
+                  </div>
+                </Card>
+              </>
+            )}
+            {st === "draft" && <Mono style={{ color:C.muted, lineHeight:1.6 }}>Sharing it marks it as sent, so KROFT can tell you when it's overdue.</Mono>}
+            {st === "paid" && <Btn full v="outline" onClick={() => markUnpaid(current)}>Mark as unpaid</Btn>}
+          </div>
+
+          <div style={{ fontSize:12, fontWeight:600, color:C.muted, marginTop:6 }}>Preview</div>
+          <div style={{ background:"#fff", borderRadius:12, border:`1px solid ${C.cardB}`, overflow:"hidden", minHeight:120, display:"flex", alignItems:"center", justifyContent:"center" }}>
+            {preview ? <img src={preview} alt={`Preview of ${current.number}`} style={{ width:"100%", display:"block" }} /> : <Spinner size={16} color={C.muted} />}
+          </div>
+
+          <div style={{ display:"flex", gap:8, marginTop:4 }}>
+            <Btn sm v="outline" style={{ flex:1 }} onClick={() => duplicate(current)}>Duplicate</Btn>
+            <Btn sm v="outline" style={{ flex:1 }} onClick={() => setView("settings")}>Invoice details</Btn>
+            <Btn sm v="ghost" style={{ flex:1, color:C.negative }} onClick={() => remove(current)}>Delete</Btn>
+          </div>
+        </div>
+      </>
+    );
+  } else {
+    body = (
+      <>
+        {header("Invoices", onClose, (
+          <button onClick={() => setView("settings")} style={{ background:"none", border:"none", color:C.accent, fontSize:14, fontWeight:600, cursor:"pointer", padding:"4px 2px" }}>Details</button>
+        ))}
+        <div style={{ flex:1, minHeight:0, overflowY:"auto", padding:16 }}>
+          <Btn full onClick={startNew}>New invoice</Btn>
+          <Mono style={{ display:"block", color:C.muted, margin:"8px 0 16px", textAlign:"center" }}>
+            {subscribed ? "Unlimited invoices with KROFT Plus." : `${allowance.used} of ${allowance.limit} free invoices used this month.`}
+          </Mono>
+
+          {unpaid.length > 0 && (
+            <Card level="raised" style={{ marginBottom:14 }}>
+              <Mono style={{ display:"block", color:C.muted, marginBottom:4 }}>Waiting to be paid</Mono>
+              <div style={{ fontSize:22, fontWeight:700, color:C.white, letterSpacing:-.8 }}>
+                {Object.entries(outstandingByCur).map(([cur, amt]) => fmt(amt, cur)).join(" + ")}
+              </div>
+              <Mono style={{ display:"block", color:counts.overdue ? C.negative : C.soft, marginTop:3 }}>
+                {unpaid.length} unpaid{counts.overdue ? ` · ${counts.overdue} overdue` : ""}
+              </Mono>
+            </Card>
+          )}
+
+          {invoices.length > 0 && (
+            <div role="tablist" aria-label="Filter invoices" style={{ display:"flex", gap:6, flexWrap:"wrap", marginBottom:12 }}>
+              {[["all","All"],["unpaid","Unpaid"],["overdue","Overdue"],["paid","Paid"],["draft","Drafts"]].map(([k, l]) => (
+                <button key={k} role="tab" aria-selected={filter === k} onClick={() => setFilter(k)}
+                  style={{ background: filter === k ? C.text : C.surface, color: filter === k ? C.bg : C.soft, border:`1px solid ${filter === k ? C.text : C.cardB}`, borderRadius:99, padding:"6px 12px", fontSize:12, fontWeight:600, cursor:"pointer", fontFamily:APP_FONT }}>
+                  {l}{k !== "all" && (k === "unpaid" ? unpaid.length : counts[k]) ? ` ${k === "unpaid" ? unpaid.length : counts[k]}` : ""}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {invoices.length === 0 ? (
+            <Card level="inset" style={{ textAlign:"center", padding:26, borderStyle:"dashed" }}>
+              <div style={{ fontSize:15, fontWeight:600, color:C.white, marginBottom:6 }}>No invoices yet</div>
+              <Mono style={{ display:"block", color:C.soft, lineHeight:1.6 }}>Create one here, or just ask KROFT: "Invoice Tunde ₦50,000 for the logo design, due Friday."</Mono>
+            </Card>
+          ) : shown.length === 0 ? (
+            <Card level="inset" style={{ textAlign:"center", padding:22, borderStyle:"dashed" }}><Mono style={{ color:C.soft }}>Nothing here.</Mono></Card>
+          ) : (
+            <div style={{ display:"flex", flexDirection:"column", gap:9 }}>
+              {shown.map(inv => {
+                const st = statusOf(inv);
+                return (
+                  <Card key={inv.id} level="raised" style={{ cursor:"pointer", padding:"12px 14px" }} onClick={() => { setCurrentId(inv.id); setView("view"); }}>
+                    <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:10 }}>
+                      <div style={{ minWidth:0 }}>
+                        <div style={{ fontSize:14, fontWeight:600, color:C.white, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{inv.client.name || "No client yet"}</div>
+                        <Mono style={{ display:"block", color:C.muted, marginTop:2 }}>{inv.number} · {st === "paid" ? `paid ${prettyDate(inv.paidDate)}` : `due ${prettyDate(inv.dueDate)}`}</Mono>
+                      </div>
+                      <div style={{ textAlign:"right", flexShrink:0 }}>
+                        <div style={{ fontSize:14, fontWeight:700, color:C.white }}>{fmt(invoiceTotals(inv).total, inv.currency)}</div>
+                        <Tag tone={INVOICE_TONE[st]} style={{ marginTop:3, display:"inline-block" }}>{STATUS_LABEL[st].toUpperCase()}</Tag>
+                      </div>
+                    </div>
+                  </Card>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </>
+    );
+  }
+
+  return (
+    <div role="dialog" aria-modal="true" aria-label="Invoices" style={{ position:"fixed", inset:0, zIndex:310, background:C.bg, display:"flex", flexDirection:"column" }}>
+      {body}
+    </div>
+  );
+}
+
 // Android app only: what KROFT is allowed to use on this phone, with a button to ask for anything
 // that's still off. Android stops showing its prompt after someone taps "Don't allow" twice; from
 // then on only the phone's Settings can turn it back on, which the hint below says.
@@ -3504,6 +3902,10 @@ function KroftApp({ onFullReset } = {}) {
   const [income, setIncome] = useState([]);
   const [expenses, setExpenses] = useState([]);
   const [incomeCats, setIncomeCats] = useState(["Invoice","Sales","Consulting","Freelance","Other"]);
+  // Invoices live with the rest of the finance data (see src/invoices/model.js).
+  const [invoices, setInvoices] = useState([]);
+  const [invoiceSettings, setInvoiceSettings] = useState(DEFAULT_INVOICE_SETTINGS);
+  const [showInvoices, setShowInvoices] = useState(false);
   const [expenseCats, setExpenseCats] = useState(["Operations","Tech","Marketing","Travel","Rent","Other"]);
   // Monthly spending limits per category, as { [category]: amount }. Tracking spend without ever
   // warning about it means the app only tells you about a problem after the month is over.
@@ -3896,7 +4298,7 @@ function KroftApp({ onFullReset } = {}) {
       if (Array.isArray(p.incomeCats)) setIncomeCats(p.incomeCats);
       if (Array.isArray(p.expenseCats)) setExpenseCats(p.expenseCats);
     }
-    if (data.finance) { setIncome(data.finance.income||[]); setExpenses(data.finance.expenses||[]); setBudgets(data.finance.budgets||{}); setBudgetAlerts(data.finance.budgetAlerts||{}); setBudgetCarryover(data.finance.budgetCarryover||{}); if (data.finance.budgetRolloverMonth) setBudgetRolloverMonth(data.finance.budgetRolloverMonth); }
+    if (data.finance) { setIncome(data.finance.income||[]); setExpenses(data.finance.expenses||[]); setBudgets(data.finance.budgets||{}); setBudgetAlerts(data.finance.budgetAlerts||{}); setBudgetCarryover(data.finance.budgetCarryover||{}); if (data.finance.budgetRolloverMonth) setBudgetRolloverMonth(data.finance.budgetRolloverMonth); setInvoices(data.finance.invoices||[]); setInvoiceSettings({ ...DEFAULT_INVOICE_SETTINGS, ...(data.finance.invoiceSettings||{}) }); }
     if (data.productivity) {
       // Normalizes any task saved with a priority outside the app's real set (Urgent/High/
       // Normal/Low) back to Normal — Ask Kroft used to default to a nonexistent "Medium" here,
@@ -4036,9 +4438,9 @@ function KroftApp({ onFullReset } = {}) {
 
   useEffect(() => {
     if (!dataLoaded) return;
-    const t = setTimeout(() => { window.storage.set(STORAGE_KEYS.finance, JSON.stringify({ income, expenses, budgets, budgetAlerts, budgetCarryover, budgetRolloverMonth }), false).catch(()=>{}); }, 900);
+    const t = setTimeout(() => { window.storage.set(STORAGE_KEYS.finance, JSON.stringify({ income, expenses, budgets, budgetAlerts, budgetCarryover, budgetRolloverMonth, invoices, invoiceSettings }), false).catch(()=>{}); }, 900);
     return () => clearTimeout(t);
-  }, [dataLoaded, income, expenses, budgets, budgetAlerts, budgetCarryover, budgetRolloverMonth]);
+  }, [dataLoaded, income, expenses, budgets, budgetAlerts, budgetCarryover, budgetRolloverMonth, invoices, invoiceSettings]);
 
   useEffect(() => {
     if (!dataLoaded) return;
@@ -6154,6 +6556,7 @@ Budgets this month: ${budgetStatus().length
   : "none set"}
 Recent income: ${list(income.slice().reverse(), 5, r => `${r.label} ${money(r.amount)} (${r.date})`)}
 Recent expenses: ${list(expenses.slice().reverse(), 5, r => `${r.label} ${money(r.amount)} ${r.cat} (${r.date})`)}
+Invoices: ${invoicesForAI(invoices, today, fmtCur)}
 
 SCHEDULE
 Today (${todays.length}): ${list(todays, 10, a => `${a.title} at ${a.time}${a.location?` — ${a.location}`:""}`)}
@@ -6234,7 +6637,8 @@ Valid types and their fields:
 {"type":"delete_reminder","text":"string"}
 {"type":"delete_note","title":"string"}
 {"type":"send_email","to":"string","subject":"string","body":"string"}
-Rules: amounts are positive numbers with no currency symbol. Resolve relative dates ("tomorrow", "next Friday") against the current date above and emit an absolute YYYY-MM-DD. Expense categories to prefer: ${expenseCats.join(", ")}. Income categories to prefer: ${incomeCats.join(", ")}. Emit at most one action per reply, only when clearly asked to save, change or remove something — never for a question like "how much did I spend?". complete_task, edit_appointment, and every delete_* type match an EXISTING item by its title/label/text against the lists above — use the shortest distinctive wording from that list, not a paraphrase, so the match is unambiguous. edit_appointment only needs the field(s) actually changing (e.g. just "time" to only move the time). Only set send_email's "to" to an address that actually appears in CONTACTS or EMAIL above — never guess or construct one; if you don't have a real address for who they mean, say so and ask for it instead of emitting the action.
+{"type":"add_invoice","client":"string","items":[{"description":"string","qty":number,"price":number}],"due":"YYYY-MM-DD","notes":"string"}
+Rules: amounts are positive numbers with no currency symbol. Resolve relative dates ("tomorrow", "next Friday") against the current date above and emit an absolute YYYY-MM-DD. Expense categories to prefer: ${expenseCats.join(", ")}. Income categories to prefer: ${incomeCats.join(", ")}. add_invoice is for "invoice/bill [client] for …": it creates a draft invoice in ${user.currency} that the person reviews and sends from Finance › Invoices, so say it's ready to review, not that it was sent; price is per unit and qty defaults to 1; leave "due" out unless they gave a date. Getting paid for an invoice is marked there too, not with add_income. Emit at most one action per reply, only when clearly asked to save, change or remove something — never for a question like "how much did I spend?". complete_task, edit_appointment, and every delete_* type match an EXISTING item by its title/label/text against the lists above — use the shortest distinctive wording from that list, not a paraphrase, so the match is unambiguous. edit_appointment only needs the field(s) actually changing (e.g. just "time" to only move the time). Only set send_email's "to" to an address that actually appears in CONTACTS or EMAIL above — never guess or construct one; if you don't have a real address for who they mean, say so and ask for it instead of emitting the action.
 ${voiceMode
   ? `You're in a spoken voice conversation right now. Never emit a delete_* or send_email action block here — that confirmation step needs a screen this voice UI doesn't have. If asked to delete or send something, say you'll get it ready but they'll need to confirm it in the app, and leave out the action block entirely.`
   : `delete_* and send_email are NOT executed immediately — the app shows a confirm/cancel step first, so word your sentence as an offer ("I'll have that ready to send — just confirm it") rather than a completed fact. Every other action type above already happened by the time your reply is read, so word those as done.`}`;
@@ -6307,6 +6711,27 @@ ${voiceMode
         return {
           label:`${isInc?"Income":"Expense"} added: ${label} ${fmtCur(amt,user.currency)}`,
           undo:() => (isInc ? setIncome : setExpenses)(p => p.filter(x => x.id !== item.id)),
+        };
+      }
+      case "add_invoice": {
+        const client = str(action.client); if (!client) return null;
+        const items = (Array.isArray(action.items) ? action.items : [])
+          .map(it => ({ description: str(it?.description), qty: Number(it?.qty) > 0 ? Number(it.qty) : 1, price: parseAmount(it?.price) ?? 0 }))
+          .filter(it => it.description && it.price > 0);
+        if (!items.length) return { label:`I couldn't tell what to put on the invoice for ${client}. Try "invoice ${client} ₦50,000 for the logo design".` };
+        const allowance = invoiceAllowance({ subscribed, invoices, today:todayISO() });
+        if (!allowance.allowed) return { label:`You've used this month's ${FREE_INVOICES_PER_MONTH} free invoices. KROFT Plus gives you unlimited invoices.` };
+        const c = contacts.find(x => (x.name || "").toLowerCase() === client.toLowerCase());
+        const { invoice } = createInvoice({ settings:invoiceSettings, client:{ name:client, email:c?.email || "", phone:c?.phone || "" }, items, dueDate: validDate(action.due) ? action.due : undefined, notes: str(action.notes) || undefined, currency:user.currency, today:todayISO(), id:String(uid()) });
+        setInvoices(p => [invoice, ...p]);
+        setInvoiceSettings(s => ({ ...s, nextNumber:(Number(s.nextNumber) || 1) + 1 }));
+        return {
+          label:`Invoice ${invoice.number} drafted for ${client}: ${fmtCur(invoiceTotals(invoice).total, invoice.currency)}. Review and send it from Finance › Invoices.`,
+          undo:() => {
+            setInvoices(p => p.filter(x => x.id !== invoice.id));
+            // Give the number back only if nothing else has used the next one since.
+            setInvoiceSettings(s => (Number(s.nextNumber) === Number(invoice.number.split("-").pop()) + 1 ? { ...s, nextNumber: s.nextNumber - 1 } : s));
+          },
         };
       }
       case "add_appointment": {
@@ -6913,11 +7338,20 @@ ${voiceMode
         });
       }
 
+      // KROFT Plus: one nudge, in the morning, the day an invoice becomes overdue, so a late
+      // payment is noticed without having to check the list.
+      if (subscribed && notifPrefs.reminders && mins >= 9*60) {
+        invoices.filter(inv => invoiceStatus(inv, today) === "overdue" && inv.dueDate === ymdLocal(new Date(Date.now() - 86400000))).forEach(inv => {
+          send(`inv-overdue:${inv.id}`, `${inv.number} is overdue`,
+            `${inv.client.name} hasn't paid ${fmtCur(invoiceTotals(inv).total, inv.currency)} yet. Open Invoices to send a reminder.`);
+        });
+      }
+
       if (Object.keys(fired).length) setNotifSent(p => ({ ...p, ...fired }));
     };
     check();
     return heartbeat(check);
-  }, [dataLoaded, notifPermission, notifPrefs, appts, smartReminders, notifSent, subscribed, dailyBriefSentDate]);
+  }, [dataLoaded, notifPermission, notifPrefs, appts, smartReminders, notifSent, subscribed, dailyBriefSentDate, invoices]);
 
   // Keeps the server's scheduled_notifications index in sync with real, upcoming appointments so
   // a push can still reach this person 10 minutes before one starts even with the app fully
@@ -8428,6 +8862,17 @@ ${voiceMode
           </div>
         );
       })()}
+      {showInvoices && (
+        <InvoicesScreen invoices={invoices} setInvoices={setInvoices} settings={invoiceSettings} setSettings={setInvoiceSettings}
+          user={user} subscribed={subscribed} contacts={contacts} toast={toast} onClose={() => setShowInvoices(false)}
+          onRecordIncome={inv => {
+            // Getting paid is income: recorded the same way as one added by hand.
+            const item = { id:uid(), label:`${inv.number} · ${inv.client.name}`, amount:invoiceTotals(inv).total, cat: incomeCats.includes("Invoice") ? "Invoice" : incomeCats[0], date:todayISO(), cur:inv.currency, invoiceId:inv.id };
+            setIncome(p => [...p, item]);
+            return item.id;
+          }}
+          onRemoveIncome={id => setIncome(p => p.filter(x => x.id !== id))} />
+      )}
       {showEntryHistory && (() => {
         const q = entryHistoryQuery.trim().toLowerCase();
         const filtered = q ? allEntries.filter(e => `${e.label} ${e.cat}`.toLowerCase().includes(q)) : allEntries;
@@ -8899,6 +9344,7 @@ ${voiceMode
             <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:18 }}>
               <Btn sm onClick={() => { setShowAddInc(v=>!v); setShowAddExp(false); }}>Add Income</Btn>
               <Btn sm v="outline" onClick={() => { setShowAddExp(v=>!v); setShowAddInc(false); }}>Add Expense</Btn>
+              <Btn sm v="outline" onClick={() => setShowInvoices(true)}>Invoices{(() => { const n = invoices.filter(inv => invoiceStatus(inv, todayISO()) === "overdue").length; return n ? ` · ${n} overdue` : ""; })()}</Btn>
               <Btn sm v="outline" onClick={exportFinanceCsv}>Export</Btn>
             </div>
             {!dataLoaded && <><SkeletonCard lines={2} /><SkeletonCard lines={4} /></>}
