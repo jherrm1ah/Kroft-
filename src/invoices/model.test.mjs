@@ -120,6 +120,41 @@ eq("PDF strings escape brackets", pdfString("a(b)c\\"), "(a\\(b\\)c\\\\)");
   eq("open quotes counted", list.find(c => c.name === "Bisi").openQuotes, 1);
 }
 
+// ── Payments ──
+{
+  const base = { id: "p1", status: "sent", dueDate: "2026-11-20", issueDate: "2026-11-01", currency: "NGN", items: [{ description: "Website", qty: 1, price: 100000 }] };
+  let inv = M.recordPayment(base, { id: "a", amount: 40000, date: "2026-11-02", incomeId: "inc-a" }, today);
+  eq("part payment: Part paid with the balance left", [M.invoiceStatus(inv, today), M.amountPaid(inv), M.balanceDue(inv), inv.status, inv.paidDate], ["partial", 40000, 60000, "sent", null]);
+  eq("part paid and late is overdue", M.invoiceStatus({ ...inv, dueDate: "2026-10-01" }, today), "overdue");
+  inv = M.recordPayment(inv, { id: "b", amount: 60000, date: "2026-11-05", incomeId: "inc-b" }, "2026-11-06");
+  eq("payments covering the total make it paid, on the last payment's date", [M.invoiceStatus(inv, today), inv.paidDate, M.balanceDue(inv)], ["paid", "2026-11-05", 0]);
+  inv = M.removePayment(inv, "b", today);
+  eq("removing a payment makes it part paid again", [M.invoiceStatus(inv, today), M.balanceDue(inv), inv.paidDate], ["partial", 60000, null]);
+  const draftPaid = M.recordPayment({ ...base, status: "draft" }, { id: "c", amount: 10000, date: today }, today);
+  eq("a deposit on a draft marks it sent", [draftPaid.status, draftPaid.sentAt], ["sent", today]);
+
+  const legacy = { ...base, id: "old", status: "paid", paidDate: "2026-10-10", incomeId: "inc-old" };
+  eq("invoices paid before part payments count as one full payment", [M.paymentsOf(legacy).length, M.amountPaid(legacy), M.balanceDue(legacy)], [1, 100000, 0]);
+
+  // Income entries lead: edits and deletions there flow into the invoice.
+  const two = M.recordPayment(M.recordPayment(base, { id: "a", amount: 40000, date: "2026-11-02", incomeId: "inc-a" }, today), { id: "b", amount: 60000, date: "2026-11-05", incomeId: "inc-b" }, today);
+  const income = [{ id: "inc-a", amount: 40000, date: "2026-11-02" }, { id: "inc-b", amount: 60000, date: "2026-11-05" }];
+  const same = [two, base];
+  eq("nothing to sync returns the same list", M.syncInvoicesWithIncome(same, income, today) === same, true);
+  let synced = M.syncInvoicesWithIncome([two], [income[0]], today)[0];
+  eq("deleting a payment's income entry takes it off the invoice", [M.invoiceStatus(synced, today), M.balanceDue(synced), M.paymentsOf(synced).map(p => p.id)], ["partial", 60000, ["a"]]);
+  synced = M.syncInvoicesWithIncome([two], [{ ...income[0], amount: 30000, date: "2026-11-03" }, income[1]], today)[0];
+  eq("editing the income entry's amount and date updates the payment", [M.paymentsOf(synced)[0].amount, M.paymentsOf(synced)[0].date, M.invoiceStatus(synced, today), M.balanceDue(synced)], [30000, "2026-11-03", "partial", 10000]);
+  const migrated = M.syncInvoicesWithIncome([legacy], [{ id: "inc-old", amount: 100000, date: "2026-10-10" }], today)[0];
+  eq("old paid invoices are moved onto a payments list", [Array.isArray(migrated.payments), migrated.payments[0].incomeId, migrated.status], [true, "inc-old", "paid"]);
+  eq("old paid invoice whose income was deleted becomes unpaid", M.invoiceStatus(M.syncInvoicesWithIncome([legacy], [], today)[0], today), "sent");
+
+  const tunde = M.clientSummaries({ invoices: [M.recordPayment({ ...base, client: { name: "Tunde" } }, { id: "a", amount: 40000, date: today }, today)], quotes: [], contacts: [], today })[0];
+  eq("clients: part payments count as paid, the balance as owed", [tunde.owed, tunde.paid], [{ NGN: 60000 }, { NGN: 40000 }]);
+  const rem = M.reminderMessage({ ...M.recordPayment(base, { id: "a", amount: 40000, date: today }, today), number: "INV-0007", client: { name: "Tunde" }, dueDate: "2026-10-30" }, {}, {}, fmt, today);
+  eq("reminder asks for the balance, thanking them for what's paid", rem.includes("balance of NGN 60000.00 on invoice INV-0007 was due 2 days ago") && rem.includes("Thank you for the payment so far"), true);
+}
+
 eq("file names are plain ASCII", [invoiceFileName({ number: "INV-0001", client: { name: "Tunde Bákàrè" } }), invoiceFileName({ number: "INV-0002", client: { name: "Ọ̀ṣun / Foods" } }), invoiceFileName({ number: "INV-0003", client: {} })], ["INV-0001 Tunde Bakare.pdf", "INV-0002 Osun _ Foods.pdf", "INV-0003.pdf"]);
 
 console.log(fail ? `\n${fail} FAILED` : "\nALL PASSED");

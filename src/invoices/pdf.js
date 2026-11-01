@@ -5,7 +5,7 @@
 // letters (ẹ, ọ, ṣ, ń …) and any other character print exactly as on screen; the standard PDF
 // fonts can't show ₦ at all, and embedding a font would mean shipping a large library.
 
-import { invoiceTotals, lineTotal, prettyDate, paymentLines, fromName, docStatus, STATUS_LABEL } from "./model.js";
+import { invoiceTotals, lineTotal, prettyDate, paymentLines, fromName, docStatus, STATUS_LABEL, amountPaid, balanceDue } from "./model.js";
 
 const PAGE_W = 595.28, PAGE_H = 841.89;  // A4 in PDF points
 const SCALE = 2;                          // canvas pixels per point: sharp on phones and in print
@@ -182,7 +182,11 @@ export function drawInvoicePages(inv, settings, user, fmt, { font = "Inter, sans
   const pay = isQuote ? [] : paymentLines(settings);
   setFont(9.5);
   const noteLines = inv.notes ? wrap(ctx, inv.notes, PAGE_W - 2 * M) : [];
-  const totalsRows = [["Subtotal", t.subtotal], ...(t.discount ? [["Discount", -t.discount]] : []), ...(t.vat ? [[`VAT (${t.vatRate}%)`, t.vat]] : [])];
+  // Part-paid invoices show the full total, what's been paid, and the balance as the amount due.
+  const paidSoFar = isQuote ? 0 : amountPaid(inv);
+  const partly = paidSoFar > 0 && status !== "paid";
+  const totalsRows = [["Subtotal", t.subtotal], ...(t.discount ? [["Discount", -t.discount]] : []), ...(t.vat ? [[`VAT (${t.vatRate}%)`, t.vat]] : []),
+    ...(partly ? [["Total", t.total], ["Paid so far", -paidSoFar]] : [])];
   const needed = 20 + totalsRows.length * 18 + 44 + (pay.length ? 30 + pay.length * 15 : 0) + (noteLines.length ? 30 + noteLines.length * 13 : 0);
   if (y + needed > BOTTOM) {
     page = newPage(font); pages.push(page); ({ ctx, text, setFont } = page);
@@ -197,8 +201,8 @@ export function drawInvoicePages(inv, settings, user, fmt, { font = "Inter, sans
     y += 18;
   }
   ctx.fillStyle = ACCENT; ctx.fillRect(labelX - 12, y - 6, COL.amount - labelX + 20, 32);
-  text(isQuote ? "Total" : "Total due", labelX, y + 15, { size: 11, weight: 600, color: "#ffffff" });
-  text(money(t.total), COL.amount, y + 15, { size: 13, weight: 700, color: "#ffffff", align: "right" });
+  text(isQuote ? "Total" : partly ? "Balance due" : "Total due", labelX, y + 15, { size: 11, weight: 600, color: "#ffffff" });
+  text(money(partly ? balanceDue(inv) : t.total), COL.amount, y + 15, { size: 13, weight: 700, color: "#ffffff", align: "right" });
   y += 44;
 
   if (pay.length) {

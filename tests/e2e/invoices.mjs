@@ -77,15 +77,27 @@ async function website(browser) {
   check("PDF is a valid one-page PDF", pdf.startsWith("%PDF-1.4") && /\/Count 1\b/.test(pdf) && pdf.trimEnd().endsWith("%%EOF"));
   check("sharing marks it sent", await page.getByText("SENT").first().isVisible());
 
-  // 4. Getting paid records the income.
-  await page.getByRole("button", { name: "Mark as paid" }).click();
-  check("marked paid", await page.getByText("PAID").first().isVisible());
+  // 4. Getting paid: a deposit on an earlier date, then the rest. Each payment is income.
+  const earlier = iso(new Date(Date.now() - 3 * 86400000));
+  const amountBox = page.locator("label", { hasText: "Amount received" }).locator("input");
+  const dateBox = page.locator("label", { hasText: "Date received" }).locator("input");
+  await page.getByRole("button", { name: "Record payment" }).click();
+  check("payment form offers the full balance", await amountBox.inputValue() === "50000");
+  await amountBox.fill("20000");
+  await dateBox.fill(earlier);
+  await page.getByRole("button", { name: "Save payment" }).click();
+  check("a deposit leaves it part paid with the balance shown", await page.getByText("PART PAID").first().isVisible() && await page.getByText(/30,000\.00 left/).first().isVisible());
+  check("an invoice with payments can't be edited", !(await page.getByRole("button", { name: "Edit" }).isVisible()));
+  await page.getByRole("button", { name: "Record payment" }).click();
+  check("next payment offers what's left", await amountBox.inputValue() === "30000");
+  await page.getByRole("button", { name: "Save payment" }).click();
+  check("paid in full", await page.getByText("PAID", { exact: true }).first().isVisible());
   // Finance data is saved about a second after a change.
   await page.waitForFunction(() => (JSON.parse(localStorage.getItem("kroft:finance") || "null")?.invoices || []).some(i => i.status === "paid"), null, { timeout: 5000 }).catch(() => {});
   const saved = await page.evaluate(() => JSON.parse(localStorage.getItem("kroft:finance") || "null"));
-  const inv = saved?.invoices?.[0];
-  const income = saved?.income?.find(x => x.id === inv?.incomeId);
-  check("payment is added to income", !!income && income.amount === 50000 && income.cat === "Invoice", JSON.stringify(income));
+  const inv = saved?.invoices?.find(i => i.number === "INV-0001");
+  const incomes = (inv?.payments || []).map(p => saved.income.find(x => x.id === p.incomeId));
+  check("each payment is in income, on the day it arrived", incomes.length === 2 && incomes[0]?.amount === 20000 && incomes[0]?.date === earlier && incomes[0]?.label.includes("part payment") && incomes[1]?.amount === 30000 && incomes.every(x => x?.cat === "Invoice"), JSON.stringify(incomes));
 
   // 5. A long invoice spills onto more pages.
   await page.getByRole("button", { name: "Back" }).click();
@@ -119,8 +131,9 @@ async function website(browser) {
   check("accepted quote becomes the next invoice, INV-0003", await page.getByRole("heading", { name: "INV-0003" }).isVisible() && await page.getByText("From quote QUO-0001.").isVisible());
   const [idl] = await Promise.all([page.waitForEvent("download"), page.getByRole("button", { name: /Share or download PDF/ }).click()]);
   await idl.cancel().catch(() => {});
-  await page.getByRole("button", { name: "Mark as paid" }).click();
-  check("invoice from the quote is paid", await page.getByText("PAID").first().isVisible());
+  await page.getByRole("button", { name: "Record payment" }).click();
+  await page.getByRole("button", { name: "Save payment" }).click();
+  check("invoice from the quote is paid", await page.getByText("PAID", { exact: true }).first().isVisible());
 
   // 7. Clients: who owes what.
   await page.getByRole("button", { name: "Back" }).click();

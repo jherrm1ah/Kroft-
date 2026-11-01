@@ -46,7 +46,7 @@ async function computer(browser) {
   await page.goto(URL); await signUp(page); await addIncome(page);
   const [csv] = await Promise.all([page.waitForEvent("download", { timeout: 10000 }), exportCsv(page)]);
   const csvText = await readDownload(csv);
-  check("finance CSV downloads with its rows", /^kroft-finance-\d{4}-\d{2}-\d{2}\.csv$/.test(csv.suggestedFilename()) && csvText.startsWith("Date,Type,Description") && csvText.includes("Logo design"), `${csv.suggestedFilename()} ${csvText.slice(0, 60)}`);
+  check("finance CSV downloads with its rows (marked UTF-8 for Excel)", /^kroft-finance-\d{4}-\d{2}-\d{2}\.csv$/.test(csv.suggestedFilename()) && csvText.startsWith("\uFEFFDate,Type,Description") && csvText.includes("Logo design"), `${csv.suggestedFilename()} ${csvText.slice(0, 60)}`);
   const [bk] = await Promise.all([page.waitForEvent("download", { timeout: 10000 }), exportBackup(page)]);
   const backup = JSON.parse(await readDownload(bk));
   check("backup downloads as KROFT JSON with the income in it", backup.app === "KROFT" && JSON.stringify(backup.data.finance).includes("Logo design"));

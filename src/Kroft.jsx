@@ -6,7 +6,7 @@ import { Markdown } from "./markdown/Markdown.jsx";
 import { toPlainText, toSpeechText } from "./markdown/parse.js";
 import { copyRich, copyPlain } from "./markdown/clipboard.js";
 import { offlineUserId, flushPending, clearOfflineData, hasUnsyncedChanges, unreadableKeys } from "./storageShim.js";
-import { DEFAULT_INVOICE_SETTINGS, invoiceTotals, invoiceStatus, invoiceAllowance, quoteAllowance, createInvoice, createQuote, invoiceFromQuote, invoiceProblem, FREE_INVOICES_PER_MONTH, FREE_QUOTES_PER_MONTH, whatsappLink, sendMessage, reminderMessage, quoteMessage, prettyDate, STATUS_LABEL, invoicesForAI, quotesForAI, daysBetween, docStatus, clientSummaries, clientKey } from "./invoices/model.js";
+import { DEFAULT_INVOICE_SETTINGS, invoiceTotals, invoiceStatus, invoiceAllowance, quoteAllowance, createInvoice, createQuote, invoiceFromQuote, invoiceProblem, FREE_INVOICES_PER_MONTH, FREE_QUOTES_PER_MONTH, whatsappLink, sendMessage, reminderMessage, quoteMessage, prettyDate, STATUS_LABEL, invoicesForAI, quotesForAI, daysBetween, docStatus, clientSummaries, clientKey, recordPayment, removePayment, amountPaid, balanceDue, paymentsOf, hasPayments, syncInvoicesWithIncome } from "./invoices/model.js";
 import { invoicePdf, invoiceFileName } from "./invoices/pdf.js";
 import { saveFile } from "./saveFile.js";
 import { isNativeApp, nativeRedirect, openInSystemBrowser, scheduleDeviceReminders, verifyBiometric, getAppPermissions, requestAppPermission, saveFileFromApp, exactAlarmStatus, openExactAlarmSetting, getClientHeader } from "./native.js";
@@ -2646,7 +2646,7 @@ function ProfileRow({ label, sub, expanded, onToggle, children, right, icon, glo
 // contacts: an invoice or quote links to one (clientId), and a new name becomes a Business contact.
 // Free plan: FREE_INVOICES_PER_MONTH invoices and FREE_QUOTES_PER_MONTH quotes a month; KROFT Plus:
 // unlimited, plus payment reminders.
-const DOC_TONE = { draft:null, sent:"accent", overdue:"negative", paid:"positive", cancelled:null, accepted:"positive", declined:"negative", invoiced:null, expired:"warning" };
+const DOC_TONE = { draft:null, sent:"accent", partial:"warning", overdue:"negative", paid:"positive", cancelled:null, accepted:"positive", declined:"negative", invoiced:null, expired:"warning" };
 const sumByCur = (obj, fmt) => Object.entries(obj).filter(([, v]) => v).map(([cur, v]) => fmt(v, cur)).join(" + ");
 
 function InvoiceField({ label, children, style }) {
@@ -2658,7 +2658,7 @@ function InvoiceField({ label, children, style }) {
   );
 }
 
-function InvoicesScreen({ invoices, setInvoices, quotes, setQuotes, settings, setSettings, user, subscribed, contacts, setContacts, onClose, toast, onUpgrade, onRecordIncome, onRemoveIncome, openId }) {
+function InvoicesScreen({ invoices, setInvoices, quotes, setQuotes, settings, setSettings, user, subscribed, contacts, setContacts, onClose, toast, onUpgrade, onRecordPayment, onRemoveIncome, openId }) {
   const today = todayISO();
   const fmt = fmtCur;
   const [tab, setTab] = useState("invoices");          // invoices | quotes | clients
@@ -2672,6 +2672,7 @@ function InvoicesScreen({ invoices, setInvoices, quotes, setQuotes, settings, se
   const [busy, setBusy] = useState("");
   const [preview, setPreview] = useState(null);
   const [returnTo, setReturnTo] = useState("list");     // where Back goes from a document
+  const [payForm, setPayForm] = useState(null);         // { amount, date } while recording a payment
 
   const listFor = kind => (kind === "quote" ? quotes : invoices);
   const setListFor = kind => (kind === "quote" ? setQuotes : setInvoices);
@@ -2692,7 +2693,7 @@ function InvoicesScreen({ invoices, setInvoices, quotes, setQuotes, settings, se
 
   const statusOf = doc => docStatus(doc, today);
   const update = (kind, id, patch) => setListFor(kind)(list => list.map(d => d.id === id ? { ...d, ...patch } : d));
-  const openDoc = (doc, from = "list") => { setCurrentKind(doc.kind === "quote" ? "quote" : "invoice"); setCurrentId(doc.id); setReturnTo(from); setView("view"); };
+  const openDoc = (doc, from = "list") => { setPayForm(null); setCurrentKind(doc.kind === "quote" ? "quote" : "invoice"); setCurrentId(doc.id); setReturnTo(from); setView("view"); };
   const backFromDoc = () => { setCurrentId(null); setView(returnTo === "client" && clientKeySel ? "client" : "list"); };
 
   // The client on a saved invoice/quote becomes (or links to) a Business contact, so their phone
@@ -2791,15 +2792,29 @@ function InvoicesScreen({ invoices, setInvoices, quotes, setQuotes, settings, se
     if (via === "whatsapp") sendWhatsApp(doc, true); else sendEmail(doc, true);
   };
 
-  const markPaid = inv => {
-    const incomeId = onRecordIncome(inv);
-    update("invoice", inv.id, { status:"paid", paidDate:today, incomeId });
-    toast(`${inv.number} marked paid and added to your income.`);
+  // Each payment is also an income entry, dated when the money arrived.
+  const savePayment = inv => {
+    const amount = Math.round((parseFloat(String(payForm?.amount || "").replace(/[^\d.]/g, "")) || 0) * 100) / 100;
+    const date = /^\d{4}-\d{2}-\d{2}$/.test(payForm?.date || "") ? payForm.date : today;
+    const due = balanceDue(inv);
+    if (amount <= 0) { toast("Enter the amount you received."); return; }
+    if (amount > due + 0.005) { toast(`That's more than the ${fmt(due, inv.currency)} still due.`); return; }
+    if (date > today) { toast("The payment date can't be in the future."); return; }
+    const full = amount >= due - 0.005;
+    const id = String(uid());
+    const incomeId = onRecordPayment(inv, amount, date, !full || amountPaid(inv) > 0);
+    const next = recordPayment(inv, { id, amount, date, incomeId }, today);
+    update("invoice", inv.id, next);
+    setPayForm(null);
+    toast(next.status === "paid"
+      ? `${inv.number} is paid in full. ${fmt(amount, inv.currency)} added to your income.`
+      : `${fmt(amount, inv.currency)} recorded. ${fmt(balanceDue(next), inv.currency)} still due.`);
   };
-  const markUnpaid = inv => {
-    if (inv.incomeId) onRemoveIncome(inv.incomeId);
-    update("invoice", inv.id, { status:"sent", paidDate:null, incomeId:null, sentAt: inv.sentAt || today });
-    toast(`${inv.number} is unpaid again; its income entry was removed.`);
+  const undoPayment = (inv, p) => {
+    if (!window.confirm(`Remove the ${fmt(p.amount, inv.currency)} payment of ${prettyDate(p.date)}? Its income entry is removed too.`)) return;
+    if (p.incomeId) onRemoveIncome(p.incomeId);
+    update("invoice", inv.id, removePayment(inv, p.id, today));
+    toast("Payment removed.");
   };
   const convertQuote = q => {
     if (!invAllowance.allowed) { toast(blockedMsg("invoice")); onUpgrade?.(); return; }
@@ -2812,7 +2827,7 @@ function InvoicesScreen({ invoices, setInvoices, quotes, setQuotes, settings, se
   };
   const remove = doc => {
     const kind = doc.kind === "quote" ? "quote" : "invoice";
-    const extra = doc.status === "paid" ? " The income it recorded stays in your finances." : "";
+    const extra = doc.kind !== "quote" && hasPayments(doc) ? " The payments it recorded stay in your income." : "";
     if (!window.confirm(`Delete ${doc.number}?${extra}`)) return;
     setListFor(kind)(list => list.filter(d => d.id !== doc.id));
     backFromDoc();
@@ -2839,7 +2854,7 @@ function InvoicesScreen({ invoices, setInvoices, quotes, setQuotes, settings, se
     const st = statusOf(doc);
     const sub = doc.kind === "quote"
       ? `${doc.number} · ${st === "invoiced" ? "turned into an invoice" : `valid until ${prettyDate(doc.validUntil)}`}`
-      : `${doc.number} · ${st === "paid" ? `paid ${prettyDate(doc.paidDate)}` : `due ${prettyDate(doc.dueDate)}`}`;
+      : `${doc.number} · ${st === "paid" ? `paid ${prettyDate(doc.paidDate)}` : `${amountPaid(doc) > 0 ? `${fmt(balanceDue(doc), doc.currency)} left · ` : ""}due ${prettyDate(doc.dueDate)}`}`;
     return (
       <Card key={doc.id} level="raised" style={{ cursor:"pointer", padding:"12px 14px" }} onClick={() => openDoc(doc, from)}>
         <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:10 }}>
@@ -2975,10 +2990,11 @@ function InvoicesScreen({ invoices, setInvoices, quotes, setQuotes, settings, se
     const fromQuote = !isQuote && current.quoteId ? quotes.find(q => q.id === current.quoteId) : null;
     const subline = isQuote
       ? (st === "invoiced" ? `Turned into ${linkedInvoice?.number || "an invoice"}` : st === "expired" ? `Expired ${prettyDate(current.validUntil)}` : `Valid until ${prettyDate(current.validUntil)}`)
-      : (st === "paid" ? `Paid ${prettyDate(current.paidDate)}` : st === "overdue" ? `${late} day${late === 1 ? "" : "s"} overdue · due ${prettyDate(current.dueDate)}` : `Due ${prettyDate(current.dueDate)}`);
+      : (st === "paid" ? `Paid ${prettyDate(current.paidDate)}`
+        : `${amountPaid(current) > 0 ? `${fmt(amountPaid(current), current.currency)} paid · ${fmt(balanceDue(current), current.currency)} left · ` : ""}${st === "overdue" ? `${late} day${late === 1 ? "" : "s"} overdue` : `due ${prettyDate(current.dueDate)}`}`);
     body = (
       <>
-        {header(current.number, backFromDoc, st !== "invoiced" && linkBtn("Edit", () => startEdit(current)))}
+        {header(current.number, backFromDoc, st !== "invoiced" && (isQuote || !hasPayments(current)) && linkBtn("Edit", () => startEdit(current)))}
         <div style={{ flex:1, minHeight:0, overflowY:"auto", padding:16, display:"flex", flexDirection:"column", gap:12 }}>
           <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:10 }}>
             <div style={{ minWidth:0 }}>
@@ -3021,9 +3037,24 @@ function InvoicesScreen({ invoices, setInvoices, quotes, setQuotes, settings, se
               <Btn sm v="ghost" onClick={() => update("quote", current.id, { status:"sent" })}>Undo: back to sent</Btn>
             )}
             {linkedInvoice && <Btn full v="outline" onClick={() => openDoc(linkedInvoice, returnTo)}>Open {linkedInvoice.number}</Btn>}
-            {!isQuote && (st === "sent" || st === "overdue") && (
+            {!isQuote && ["draft","sent","overdue","partial"].includes(st) && (payForm ? (
+              <Card level="inset" style={{ padding:12, display:"flex", flexDirection:"column", gap:10 }}>
+                <span style={{ fontSize:13, fontWeight:600, color:C.white }}>Record a payment</span>
+                <div style={{ display:"flex", gap:10 }}>
+                  <InvoiceField label={`Amount received (${current.currency})`} style={{ flex:1 }}><Inp inputMode="decimal" value={payForm.amount} onChange={e => setPayForm(f => ({ ...f, amount:e.target.value }))} /></InvoiceField>
+                  <InvoiceField label="Date received" style={{ flex:1 }}><Inp type="date" max={today} value={payForm.date} onChange={e => setPayForm(f => ({ ...f, date:e.target.value }))} /></InvoiceField>
+                </div>
+                <Mono style={{ color:C.muted }}>{fmt(balanceDue(current), current.currency)} still due. A smaller amount is recorded as a part payment.</Mono>
+                <div style={{ display:"flex", gap:8 }}>
+                  <Btn sm v="outline" style={{ flex:1 }} onClick={() => setPayForm(null)}>Cancel</Btn>
+                  <Btn sm style={{ flex:1 }} onClick={() => savePayment(current)}>Save payment</Btn>
+                </div>
+              </Card>
+            ) : (
+              <Btn full v="outline" onClick={() => setPayForm({ amount:String(balanceDue(current)), date:today })}>Record payment</Btn>
+            ))}
+            {!isQuote && (st === "sent" || st === "overdue" || st === "partial") && (
               <>
-                <Btn full v="outline" onClick={() => markPaid(current)}>Mark as paid</Btn>
                 <Card level="inset" style={{ padding:12 }}>
                   <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:8, marginBottom:8 }}>
                     <span style={{ fontSize:13, fontWeight:600, color:C.white }}>Payment reminder</span>
@@ -3038,7 +3069,21 @@ function InvoicesScreen({ invoices, setInvoices, quotes, setQuotes, settings, se
               </>
             )}
             {st === "draft" && <Mono style={{ color:C.muted, lineHeight:1.6 }}>{isQuote ? "Sharing it marks it as sent." : "Sharing it marks it as sent, so KROFT can tell you when it's overdue."}</Mono>}
-            {!isQuote && st === "paid" && <Btn full v="outline" onClick={() => markUnpaid(current)}>Mark as unpaid</Btn>}
+            {!isQuote && paymentsOf(current).length > 0 && (
+              <Card level="inset" style={{ padding:12 }}>
+                <div style={{ fontSize:13, fontWeight:600, color:C.white, marginBottom:6 }}>Payments</div>
+                {paymentsOf(current).map(p => (
+                  <div key={p.id} style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:8, padding:"6px 0", borderTop:`1px solid ${C.div}` }}>
+                    <Mono style={{ color:C.text }}>{prettyDate(p.date)}</Mono>
+                    <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                      <span style={{ fontSize:13, fontWeight:600, color:C.positive }}>{fmt(p.amount, current.currency)}</span>
+                      <button aria-label={`Remove payment of ${prettyDate(p.date)}`} onClick={() => undoPayment(current, p)} style={{ background:"none", border:"none", color:C.muted, cursor:"pointer", fontSize:15, padding:"2px 6px" }}>✕</button>
+                    </div>
+                  </div>
+                ))}
+                <Mono style={{ display:"block", color:C.muted, marginTop:6, lineHeight:1.6 }}>Each payment is in your income too. To change the invoice itself, remove its payments first.</Mono>
+              </Card>
+            )}
           </div>
 
           <div style={{ fontSize:12, fontWeight:600, color:C.muted, marginTop:6 }}>Preview</div>
@@ -3091,9 +3136,9 @@ function InvoicesScreen({ invoices, setInvoices, quotes, setQuotes, settings, se
     );
   } else {
     // Lists: Invoices, Quotes, Clients
-    const unpaid = invoices.filter(inv => ["sent","overdue"].includes(statusOf(inv)));
+    const unpaid = invoices.filter(inv => ["sent","overdue","partial"].includes(statusOf(inv)));
     const overdueN = unpaid.filter(inv => statusOf(inv) === "overdue").length;
-    const outstanding = unpaid.reduce((acc, inv) => { acc[inv.currency] = (acc[inv.currency] || 0) + invoiceTotals(inv).total; return acc; }, {});
+    const outstanding = unpaid.reduce((acc, inv) => { acc[inv.currency] = (acc[inv.currency] || 0) + balanceDue(inv); return acc; }, {});
     const sortDocs = list => list.slice().sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || "") || String(b.number).localeCompare(String(a.number)));
     let content;
     if (tab === "clients") {
@@ -3143,7 +3188,7 @@ function InvoicesScreen({ invoices, setInvoices, quotes, setQuotes, settings, se
       );
     } else {
       const counts = invoices.reduce((acc, inv) => { const s = statusOf(inv); acc[s] = (acc[s] || 0) + 1; return acc; }, {});
-      const shown = sortDocs(invoices.filter(inv => filter === "all" || (filter === "unpaid" ? ["sent","overdue"].includes(statusOf(inv)) : statusOf(inv) === filter)));
+      const shown = sortDocs(invoices.filter(inv => filter === "all" || (filter === "unpaid" ? ["sent","overdue","partial"].includes(statusOf(inv)) : statusOf(inv) === filter)));
       content = (
         <>
           <Btn full onClick={() => startNew("invoice")}>New invoice</Btn>
@@ -4599,6 +4644,14 @@ function KroftApp({ onFullReset } = {}) {
     const t = setTimeout(() => { window.storage.set(STORAGE_KEYS.finance, JSON.stringify({ income, expenses, budgets, budgetAlerts, budgetCarryover, budgetRolloverMonth, invoices, quotes, invoiceSettings }), false).catch(()=>{}); }, 900);
     return () => clearTimeout(t);
   }, [dataLoaded, income, expenses, budgets, budgetAlerts, budgetCarryover, budgetRolloverMonth, invoices, quotes, invoiceSettings]);
+
+  // Income entries are the record of money received. If one that came from an invoice payment
+  // is edited or deleted anywhere (Entry history, KROFT chat), the invoice follows, so the two
+  // never disagree. Returns the same array when nothing changed, so this doesn't loop.
+  useEffect(() => {
+    if (!dataLoaded) return;
+    setInvoices(prev => syncInvoicesWithIncome(prev, income, todayISO()));
+  }, [dataLoaded, income, invoices]);
 
   useEffect(() => {
     if (!dataLoaded) return;
@@ -8265,7 +8318,10 @@ ${voiceMode
         .map(r => [r.date||"", r.type, r.label, r.cat, r.amount, r.cur||user.currency, (r.repeat&&r.repeat!=="none")?r.repeat:""]),
     ];
     const csv = rows.map(row => row.map(csvField).join(",")).join("\r\n");
-    downloadText(`kroft-finance-${todayISO()}.csv`, csv, "CSV downloaded.");
+    // The leading byte-order mark tells Excel the file is UTF-8; without it Excel reads it as
+    // the old Windows character set and ₦ and accented names come out garbled. Google Sheets,
+    // Numbers and LibreOffice ignore it.
+    downloadText(`kroft-finance-${todayISO()}.csv`, `\uFEFF${csv}`, "CSV downloaded.");
   };
   // Frees a blob: URL's browser memory after a deleted item's Undo window has fully closed —
   // NOT immediately on delete, since the "Undo" toast can restore the item, and an object URL
@@ -9027,9 +9083,10 @@ ${voiceMode
       {showInvoices && (
         <InvoicesScreen invoices={invoices} setInvoices={setInvoices} quotes={quotes} setQuotes={setQuotes} settings={invoiceSettings} setSettings={setInvoiceSettings}
           user={user} subscribed={subscribed} contacts={contacts} setContacts={setContacts} toast={toast} onClose={() => setShowInvoices(false)}
-          onRecordIncome={inv => {
-            // Getting paid is income: recorded the same way as one added by hand.
-            const item = { id:uid(), label:`${inv.number} · ${inv.client.name}`, amount:invoiceTotals(inv).total, cat: incomeCats.includes("Invoice") ? "Invoice" : incomeCats[0], date:todayISO(), cur:inv.currency, invoiceId:inv.id };
+          onRecordPayment={(inv, amount, date, part) => {
+            // Getting paid is income: recorded the same way as one added by hand, on the day the
+            // money arrived.
+            const item = { id:uid(), label:`${inv.number} · ${inv.client.name}${part ? " (part payment)" : ""}`, amount, cat: incomeCats.includes("Invoice") ? "Invoice" : incomeCats[0], date, cur:inv.currency, invoiceId:inv.id };
             setIncome(p => [...p, item]);
             return item.id;
           }}
