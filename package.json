@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "node src/markdown/parse.test.mjs"
+    "test": "node src/markdown/parse.test.mjs && node src/markdown/verify.test.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.4",
