@@ -84,6 +84,28 @@ export async function openInSystemBrowser(url) {
   return true;
 }
 
+// ── KROFT's notification sound ──
+// From app version 1.2.0 (build 10200) the APK carries res/raw/kroft_notify.wav, KROFT's signature
+// (rendered from src/sounds/defs.js by scripts/render-sounds.mjs). Android sets a notification's
+// sound per channel, so two channels are made: "KROFT alerts" with that sound, and a quiet one
+// for when KROFT is open and on screen and plays the sound itself (otherwise both would sound).
+// Older APKs don't have the file: they keep the phone's default sound and no channels are made.
+export const SOUND_BUILD = 10200;
+let alertChannel = null, quietChannel = null;
+async function installChannels(LocalNotifications) {
+  if (!shellInfo || shellInfo.build < SOUND_BUILD) return;
+  try {
+    await LocalNotifications.createChannel({ id: "kroft_alerts", name: "KROFT alerts", description: "Reminders, appointments and other KROFT notifications", importance: 4, sound: "kroft_notify.wav", visibility: 1, vibration: true });
+    await LocalNotifications.createChannel({ id: "kroft_quiet", name: "KROFT while open", description: "Shown while KROFT is open; KROFT plays its own sound", importance: 2, visibility: 1, vibration: false });
+    alertChannel = "kroft_alerts"; quietChannel = "kroft_quiet";
+  } catch { /* default channel and sound */ }
+}
+const withChannel = (n, quiet = false) => ((quiet ? quietChannel : alertChannel) ? { ...n, channelId: quiet ? quietChannel : alertChannel } : n);
+
+// Whether KROFT should play its own sound for a notification shown while it's open: always on
+// the website; in the app only when the quiet channel exists (otherwise the phone already plays one).
+export const appPlaysNotificationSound = () => !isNativeApp || !!quietChannel;
+
 // Reminders scheduled on the phone itself, so they fire even when KROFT is closed. Takes the same
 // { prefix, items:[{ clientKey, firesAt, title, body }] } list the web version sends to
 // /api/push/schedule, and reconciles it the same way: everything under `prefix` not in the list
@@ -99,7 +121,7 @@ export async function scheduleDeviceReminders(prefix, items) {
   const upcoming = items.filter(it => new Date(it.firesAt).getTime() > Date.now());
   if (!upcoming.length) return;
   await LocalNotifications.schedule({
-    notifications: upcoming.map(it => ({
+    notifications: upcoming.map(it => withChannel({
       id: idFor(it.clientKey),
       title: it.title,
       body: it.body || "",
@@ -118,7 +140,7 @@ export async function scheduleReminderAt(at, title, body) {
   try {
     const { LocalNotifications } = await plugins;
     if ((await LocalNotifications.checkPermissions()).display !== "granted") return;
-    await LocalNotifications.schedule({ notifications: [{ id: ONE_SHOT_ID, title, body, schedule: { at: new Date(at), allowWhileIdle: true } }] });
+    await LocalNotifications.schedule({ notifications: [withChannel({ id: ONE_SHOT_ID, title, body, schedule: { at: new Date(at), allowWhileIdle: true } })] });
   } catch { /* the countdown still works in the app */ }
 }
 export async function cancelReminderAt() {
@@ -269,13 +291,14 @@ async function installNotifications(LocalNotifications) {
   class NativeNotification {
     constructor(title, opts = {}) {
       this.title = title; this.body = opts.body || ""; this.tag = opts.tag || ""; this.onclick = null;
+      const quiet = !!opts.silent; // KROFT is open and played its own sound
       this._id = idFor(`${this.tag}|${title}|${Date.now()}`);
       // A reminder scheduled on the phone (scheduleDeviceReminders) and the app's own in-app check
       // can fire for the same thing while KROFT is open; show it once.
       LocalNotifications.getDeliveredNotifications()
         .then(({ notifications = [] }) => notifications.some(n => n.title === title && n.body === this.body))
         .catch(() => false)
-        .then(dupe => dupe ? null : LocalNotifications.schedule({ notifications: [{ id: this._id, title, body: this.body, extra: { tag: this.tag } }] }))
+        .then(dupe => dupe ? null : LocalNotifications.schedule({ notifications: [withChannel({ id: this._id, title, body: this.body, extra: { tag: this.tag } }, quiet)] }))
         .catch(() => {});
     }
     close() { LocalNotifications.cancel({ notifications: [{ id: this._id }] }).catch(() => {}); }
@@ -484,7 +507,7 @@ function handleDeepLink(url, Browser) {
 }
 
 // Exported for tests (src/native.test.mjs); the app only calls installNativeShims().
-export const _internals = { installSpeechSynthesis, installSpeechRecognition, installNotifications, installGeolocation, installPermissionsQuery, idFor, loadShellInfo };
+export const _internals = { installChannels, withChannel, installSpeechSynthesis, installSpeechRecognition, installNotifications, installGeolocation, installPermissionsQuery, idFor, loadShellInfo };
 
 // The app's version and which plugins it contains, read once at start-up.
 async function loadShellInfo(App) {
@@ -518,7 +541,7 @@ export async function installNativeShims() {
   }
   if (hasPlugin("Geolocation")) installGeolocation(p.Geolocation);
   if (hasPlugin("Geolocation") && hasPlugin("SpeechRecognition")) installPermissionsQuery(p);
-  if (hasPlugin("LocalNotifications")) await installNotifications(p.LocalNotifications);
+  if (hasPlugin("LocalNotifications")) { await installChannels(p.LocalNotifications); await installNotifications(p.LocalNotifications); }
   if (hasPlugin("Share")) navigator.share = async data => { await p.Share.share({ title: data?.title, text: data?.text, url: data?.url, dialogTitle: "Share" }); };
 
   if (hasPlugin("App")) {

@@ -15,6 +15,8 @@ export const SHELLS = {
   // The first APK (#108): no location, fingerprint or file-saving plugins, no version number.
   "first APK (build 1)": { plugins: ["App", "Browser", "LocalNotifications", "Share", "TextToSpeech", "SpeechRecognition"], info: { version: "1.0", build: "1" } },
   "current APK (1.1.0)": { plugins: ALL, info: { version: "1.1.0", build: "10100" } },
+  // 1.2.0 adds KROFT's notification sound (res/raw/kroft_notify.wav) and its channels.
+  "APK 1.2.0": { plugins: ALL, info: { version: "1.2.0", build: "10200" } },
 };
 
 export const MOCK = `
@@ -22,7 +24,7 @@ export const MOCK = `
   window.__HEADERS = [
     { name:'App', methods: m('minimizeApp','exitApp','getInfo','addListener','removeAllListeners') },
     { name:'Browser', methods: m('open','close','addListener','removeAllListeners') },
-    { name:'LocalNotifications', methods: m('checkPermissions','requestPermissions','checkExactNotificationSetting','changeExactNotificationSetting','getPending','getDeliveredNotifications','schedule','cancel','addListener') },
+    { name:'LocalNotifications', methods: m('checkPermissions','requestPermissions','checkExactNotificationSetting','changeExactNotificationSetting','getPending','getDeliveredNotifications','schedule','cancel','addListener','createChannel') },
     { name:'Share', methods: m('share','canShare') },
     { name:'TextToSpeech', methods: m('speak','stop','getSupportedVoices') },
     { name:'SpeechRecognition', methods: m('available','start','stop','checkPermissions','requestPermissions','addListener','removeAllListeners') },
@@ -52,6 +54,7 @@ export const MOCK = `
     const key = msg.pluginId + '.' + msg.methodName;
     window.__calls.push(key);
     (window.__args = window.__args || {})[key] = msg.options;
+    (window.__all = window.__all || []).push({ key, options: msg.options });
     if (msg.callbackId == null) return;
     setTimeout(() => window.Capacitor.fromNative({ callbackId:msg.callbackId, pluginId:msg.pluginId, methodName:msg.methodName, success:true, data: replies[key] || {} }), 30);
   } };

@@ -10,8 +10,9 @@ import { DEFAULT_INVOICE_SETTINGS, invoiceTotals, invoiceStatus, invoiceAllowanc
 import { invoicePdf, invoiceFileName } from "./invoices/pdf.js";
 import { saveFile } from "./saveFile.js";
 import { contactRecords, contactMoney, contactSummary, initials, relativeDay } from "./contacts/profile.js";
-import { isNativeApp, nativeRedirect, openInSystemBrowser, scheduleDeviceReminders, verifyBiometric, getAppPermissions, requestAppPermission, saveFileFromApp, exactAlarmStatus, openExactAlarmSetting, getClientHeader, scheduleReminderAt, cancelReminderAt } from "./native.js";
+import { isNativeApp, nativeRedirect, openInSystemBrowser, scheduleDeviceReminders, verifyBiometric, getAppPermissions, requestAppPermission, saveFileFromApp, exactAlarmStatus, openExactAlarmSetting, getClientHeader, scheduleReminderAt, cancelReminderAt, appPlaysNotificationSound } from "./native.js";
 import { unlockAudio, playTick, playDone, resetSoundOn, setResetSoundOn, keepScreenOn } from "./resetSounds.js";
+import { play as playSound, soundsOn, setSoundsOn, unlockSounds } from "./sounds/player.js";
 
 // What a mic button says when listening fails, by the SpeechRecognition error code. Silence used
 // to show "Mic error — check permissions." too, which sent people hunting through settings for a
@@ -216,35 +217,9 @@ const uid = () => Date.now() + Math.random();
 // browsers throw (rather than just no-op) calling vibrate() from certain contexts (e.g. an
 // iframe without the right permissions-policy).
 const haptic = pattern => { try { navigator.vibrate?.(pattern); } catch {} };
-// Synthesizes a short two-tone beep via the Web Audio API rather than shipping an audio file —
-// no asset to host, and it does the job for "something needs your attention right now." Reuses
-// one AudioContext across calls (creating a new one per beep is wasteful, and some browsers cap
-// how many can exist). Like any other audio in this app, browser autoplay policy means this only
-// reliably plays once the page has already seen at least one user interaction this session.
-let alarmAudioCtx = null;
-const playAlarmBeep = () => {
-  try {
-    const Ctx = window.AudioContext || window.webkitAudioContext;
-    if (!Ctx) return;
-    if (!alarmAudioCtx) alarmAudioCtx = new Ctx();
-    const ctx = alarmAudioCtx;
-    if (ctx.state === "suspended") ctx.resume().catch(() => {});
-    const now = ctx.currentTime;
-    [0, 0.22].forEach(offset => {
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = "sine";
-      osc.frequency.value = 880;
-      gain.gain.setValueAtTime(0, now + offset);
-      gain.gain.linearRampToValueAtTime(0.25, now + offset + 0.02);
-      gain.gain.linearRampToValueAtTime(0, now + offset + 0.18);
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start(now + offset);
-      osc.stop(now + offset + 0.2);
-    });
-  } catch {}
-};
+// The reminder alarm's sound: KROFT's signature, played stronger (see src/sounds/defs.js). Like
+// any web audio, it only plays once the page has seen a tap this session.
+const playAlarmBeep = () => playSound("alarm");
 // Formats a Date's own LOCAL y/m/d as "YYYY-MM-DD". Unlike toISOString() (always UTC), this
 // stays on whatever calendar day the Date's local getters say it is — the day the person is
 // actually living in. Converting through UTC instead rolls the date a day early or late for part
@@ -1039,7 +1014,12 @@ const sendNotification = (title, body, tag, opts = {}) => {
     // closest a background/closed-tab notification can get to "won't let you ignore it", since
     // sound and a full-screen takeover (see ReminderAlarmScreen) only work while the app itself
     // is open.
-    const n = new Notification(title, { body, tag, badge:"/icons/badge-96.png", icon:"/icons/icon-192.png", requireInteraction: !!opts.requireInteraction });
+    // While KROFT is open and on screen, its own signature sound plays instead of the system one,
+    // so a KROFT notification is recognisable by ear.
+    const visible = typeof document !== "undefined" && document.visibilityState === "visible";
+    const ownSound = visible && soundsOn() && appPlaysNotificationSound();
+    if (ownSound) playSound("signature");
+    const n = new Notification(title, { body, tag, badge:"/icons/badge-96.png", icon:"/icons/icon-192.png", requireInteraction: !!opts.requireInteraction, silent: ownSound });
     n.onclick = () => { window.focus(); n.close(); };
     return true;
   } catch { return false; }
@@ -2960,7 +2940,7 @@ function InvoicesScreen({ invoices, setInvoices, quotes, setQuotes, settings, se
       const text = messageFor(doc, false);
       const label = `${doc.kind === "quote" ? "Quote" : "Invoice"} ${doc.number}`;
       const result = await saveFile({ name, data:bytes, type:"application/pdf", text, title:label });
-      if (result !== "cancelled") markSent(doc);
+      if (result !== "cancelled") { markSent(doc); playSound("sent"); }
       if (result === "downloaded") toast("PDF downloaded. Attach it to your email or WhatsApp.");
     } catch (err) {
       toast(err?.code === "needs-update" ? "Update the KROFT app to share PDFs." : "Couldn't create the PDF. Try again.");
@@ -2999,6 +2979,7 @@ function InvoicesScreen({ invoices, setInvoices, quotes, setQuotes, settings, se
     const next = recordPayment(inv, { id, amount, date, incomeId }, today);
     update("invoice", inv.id, next);
     setPayForm(null);
+    playSound("payment");
     toast(next.status === "paid"
       ? `${inv.number} is paid in full. ${fmt(amount, inv.currency)} added to your income.`
       : `${fmt(amount, inv.currency)} recorded. ${fmt(balanceDue(next), inv.currency)} still due.`);
@@ -3486,6 +3467,25 @@ function AppPermissions({ toast }) {
   );
 }
 
+// KROFT's sounds (src/sounds/defs.js): one switch for all of them, and a way to hear each.
+const SOUND_PREVIEWS = [["signature", "Notification"], ["payment", "Payment in"], ["sent", "Sent"], ["done", "Done"], ["alarm", "Alarm"]];
+function SoundsRow({ expanded, onToggle }) {
+  const [on, setOn] = useState(soundsOn);
+  const change = v => { setSoundsOn(v); setOn(v); if (v) { unlockSounds(); playSound("signature"); } };
+  return (
+    <ProfileRow label="Sounds" sub={on ? "On" : "Off"} expanded={expanded} onToggle={onToggle} right={<ProfileSwitch value={on} onChange={change} />}>
+      <Mono style={{ display:"block", color:C.soft, lineHeight:1.7, marginBottom:12 }}>
+        KROFT's own sounds: its signature for notifications, a chime when money comes in, a soft swoosh when you send an invoice, a pop when you tick something off, and the alarm for reminders.{on ? " Tap to hear them." : " Turned off: KROFT stays silent."}
+      </Mono>
+      {on && (
+        <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+          {SOUND_PREVIEWS.map(([name, label]) => <Btn key={name} sm v="outline" onClick={() => { unlockSounds(); playSound(name); }}>{label}</Btn>)}
+        </div>
+      )}
+    </ProfileRow>
+  );
+}
+
 function ProfileSwitch({ value, onChange }) {
   return (
     <button onClick={e => { e.stopPropagation(); onChange(!value); }} style={{ width:38, height:22, borderRadius:99, border:`1px solid ${value?C.accent:C.muted}`, background:value?C.accentBg:"transparent", position:"relative", cursor:"pointer", flexShrink:0, transition:"all .16s" }}>
@@ -3557,6 +3557,7 @@ function ProfileSection({ nav, onNav, connections, user, onUpdateName, onEditBus
         </div>
       </ProfileRow>
     ),
+    sounds: <SoundsRow expanded={openRow==="sounds"} onToggle={()=>toggle("sounds")} />,
     notifs: (
       <ProfileRow label="Notifications"
         sub={notifPermission === "granted" ? "On for this device" : notifPermission === "denied" ? "Blocked in browser settings" : notifPermission === "unsupported" ? "Not supported here" : "Not enabled"}
@@ -3861,7 +3862,7 @@ function ProfileSection({ nav, onNav, connections, user, onUpdateName, onEditBus
     connected:       { title:"Connected apps", body:<ConnectedApps google={connections.google} microsoft={connections.microsoft} />, rows:[] },
     plan:            { title:subscribed ? "KROFT Plus" : "Upgrade plan", top:planSummary, rows:["plus", "billing", "paymethods", "managesub"] },
     usage:           { title:"Usage and limits", rows:["usage"] },
-    appearance:      { title:"Appearance", rows:["appearance"] },
+    appearance:      { title:"Appearance", rows:["appearance", "sounds"] },
     notifications:   { title:"Notifications", rows:["notifs"] },
     voice:           { title:"Voice", rows:["voice"] },
     automations:     { title:"Automations", rows:["auto"] },
@@ -9563,8 +9564,8 @@ ${voiceMode
             onCall={() => { logContactAction(c.id, "call"); window.location.href = `tel:${c.phone}`; }}
             onEmail={() => { logContactAction(c.id, "email"); setComposeDraft({ to:c.email, subject:"", body:"" }); }}
             onAskKroft={q => { setContactActivity(null); setAiInput(q); setTab("nova"); }}
-            onToggleTask={id => setTasks(p => p.map(x => x.id===id ? {...x, done:!x.done} : x))}
-            onToggleReminder={id => setSmartReminders(p => p.map(x => x.id===id ? {...x, done:!x.done} : x))}
+            onToggleTask={id => { if (!tasks.find(x => x.id === id)?.done) playSound("done"); setTasks(p => p.map(x => x.id===id ? {...x, done:!x.done} : x)); }}
+            onToggleReminder={id => { if (!smartReminders.find(x => x.id === id)?.done) playSound("done"); setSmartReminders(p => p.map(x => x.id===id ? {...x, done:!x.done} : x)); }}
             onOpenDoc={d => { setInvoicesOpenDoc({ id:d.id, kind:d.kind === "quote" ? "quote" : "invoice" }); setShowInvoices(true); }}
             onOpenFile={async f => {
               try {
@@ -10724,6 +10725,7 @@ ${voiceMode
                   <button key={`${t.id}-cb-${t.done}`} onClick={() => {
                     const completingThis = !t.done;
                     haptic(completingThis ? [12, 40, 12] : 10);
+                    if (completingThis) playSound("done");
                     setTasks(p => {
                       const target = p.find(x => x.id === t.id);
                       const completing = target && !target.done;
