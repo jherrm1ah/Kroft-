@@ -6,7 +6,7 @@ import { Markdown } from "./markdown/Markdown.jsx";
 import { toPlainText, toSpeechText } from "./markdown/parse.js";
 import { copyRich, copyPlain } from "./markdown/clipboard.js";
 import { offlineUserId, flushPending, clearOfflineData, hasUnsyncedChanges, unreadableKeys } from "./storageShim.js";
-import { DEFAULT_INVOICE_SETTINGS, invoiceTotals, invoiceStatus, invoiceAllowance, quoteAllowance, createInvoice, createQuote, invoiceFromQuote, invoiceProblem, FREE_INVOICES_PER_MONTH, FREE_QUOTES_PER_MONTH, whatsappLink, sendMessage, reminderMessage, quoteMessage, prettyDate, STATUS_LABEL, invoicesForAI, quotesForAI, daysBetween, docStatus, clientSummaries, clientKey, recordPayment, removePayment, amountPaid, balanceDue, paymentsOf, hasPayments, syncInvoicesWithIncome, quoteStatus } from "./invoices/model.js";
+import { DEFAULT_INVOICE_SETTINGS, taxName, userLocale, invoiceTotals, invoiceStatus, invoiceAllowance, quoteAllowance, createInvoice, createQuote, invoiceFromQuote, invoiceProblem, FREE_INVOICES_PER_MONTH, FREE_QUOTES_PER_MONTH, whatsappLink, sendMessage, reminderMessage, quoteMessage, prettyDate, STATUS_LABEL, invoicesForAI, quotesForAI, daysBetween, docStatus, clientSummaries, clientKey, recordPayment, removePayment, amountPaid, balanceDue, paymentsOf, hasPayments, syncInvoicesWithIncome, quoteStatus } from "./invoices/model.js";
 import { invoicePdf, invoiceFileName } from "./invoices/pdf.js";
 import { saveFile } from "./saveFile.js";
 import { contactRecords, contactMoney, contactSummary, initials, relativeDay } from "./contacts/profile.js";
@@ -226,7 +226,7 @@ const playAlarmBeep = () => playSound("alarm");
 // of every day anywhere off UTC (every evening in the Americas it already reads as tomorrow).
 const ymdLocal = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
 const todayISO = () => ymdLocal(new Date());
-const fmtDate = iso => { if (!iso) return ""; const d = new Date(iso + "T00:00:00"); return isNaN(d) ? iso : d.toLocaleDateString("en-US", { month:"short", day:"numeric", year:"numeric" }); };
+const fmtDate = iso => { if (!iso) return ""; const d = new Date(iso + "T00:00:00"); return isNaN(d) ? iso : d.toLocaleDateString(userLocale(), { month:"short", day:"numeric", year:"numeric" }); };
 // Advances an ISO date string forward by one occurrence of the given repeat cadence. Used to
 // roll a recurring appointment to its next date once its current one has passed — daily/weekly
 // add fixed day counts, monthly advances the calendar month (and lets JS Date normalize
@@ -256,7 +256,7 @@ const advanceRepeatDateTo = (iso, repeat, targetISO) => {
   }
   return date;
 };
-const monthLabel = iso => { if (!iso) return ""; const d = new Date(iso + "T00:00:00"); return isNaN(d) ? "" : d.toLocaleDateString("en-US", { month:"long", year:"numeric" }); };
+const monthLabel = iso => { if (!iso) return ""; const d = new Date(iso + "T00:00:00"); return isNaN(d) ? "" : d.toLocaleDateString(userLocale(), { month:"long", year:"numeric" }); };
 // Appointment times are free text (the field's own placeholder is "Time e.g. 4:00 PM"), not a
 // structured value, so finding "the next appointment" needs to parse that text into something
 // comparable. Returns null for anything unparseable — blank, or free text that isn't a time —
@@ -2849,7 +2849,7 @@ function InvoicesScreen({ invoices, setInvoices, quotes, setQuotes, settings, se
   const invAllowance = invoiceAllowance({ subscribed, invoices, today });
   const qAllowance = quoteAllowance({ subscribed, quotes, today });
   const clients = clientSummaries({ invoices, quotes, contacts, today });
-  const needsDetails = !settings.bankName && !settings.accountNumber;
+  const needsDetails = !settings.bankName && !settings.accountNumber && !settings.otherPayment?.trim();
 
   useEffect(() => {
     if (view !== "view" || !current) { setPreview(null); return; }
@@ -2903,7 +2903,7 @@ function InvoicesScreen({ invoices, setInvoices, quotes, setQuotes, settings, se
   const duplicate = doc => {
     const kind = doc.kind === "quote" ? "quote" : "invoice";
     if (!(kind === "quote" ? qAllowance : invAllowance).allowed) { toast(blockedMsg(kind)); onUpgrade?.(); return; }
-    const base = { settings, client: doc.client, items: doc.items.map(({ description, qty, price }) => ({ description, qty, price })), currency: doc.currency, today, id: String(uid()), vatRate: doc.vatRate, discount: doc.discount, notes: doc.notes };
+    const base = { settings, client: doc.client, items: doc.items.map(({ description, qty, price }) => ({ description, qty, price })), currency: doc.currency, today, id: String(uid()), vatRate: doc.vatRate, taxLabel: doc.taxLabel, discount: doc.discount, notes: doc.notes };
     const copy = kind === "quote" ? createQuote({ ...base, clientId: doc.clientId }).quote : { ...createInvoice(base).invoice, clientId: doc.clientId || null };
     setDraft({ ...copy, _new: true });
     setView("edit");
@@ -3068,9 +3068,10 @@ function InvoicesScreen({ invoices, setInvoices, quotes, setQuotes, settings, se
             <InvoiceField label="Phone" style={{ flex:1 }}><Inp type="tel" inputMode="tel" placeholder={user.phone || ""} value={d.phone} onChange={e => set({ phone:e.target.value })} /></InvoiceField>
           </div>
           <div style={{ fontSize:12, fontWeight:600, color:C.muted, marginTop:8 }}>How clients pay you</div>
-          <InvoiceField label="Bank"><Inp placeholder="e.g. GTBank" value={d.bankName} onChange={e => set({ bankName:e.target.value })} /></InvoiceField>
+          <InvoiceField label="Bank"><Inp placeholder="e.g. GTBank, Barclays, Chase" value={d.bankName} onChange={e => set({ bankName:e.target.value })} /></InvoiceField>
           <InvoiceField label="Account name"><Inp value={d.accountName} onChange={e => set({ accountName:e.target.value })} /></InvoiceField>
-          <InvoiceField label="Account number"><Inp inputMode="numeric" value={d.accountNumber} onChange={e => set({ accountNumber:e.target.value.replace(/[^\d ]/g, "") })} /></InvoiceField>
+          <InvoiceField label="Account number or IBAN"><Inp autoCapitalize="characters" value={d.accountNumber} onChange={e => set({ accountNumber:e.target.value.replace(/[^A-Za-z\d -]/g, "").toUpperCase() })} /></InvoiceField>
+          <InvoiceField label="Other payment details (optional)"><textarea aria-label="Other payment details" rows={3} placeholder={"One per line, e.g.\nSWIFT/BIC: ABCDGB2L\nSort code: 12-34-56\nPayPal: you@example.com"} value={d.otherPayment || ""} onChange={e => set({ otherPayment:e.target.value })} style={{ width:"100%", boxSizing:"border-box", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, color:C.text, padding:"11px 14px", fontSize:13, fontFamily:APP_FONT, outline:"none", resize:"vertical" }} /></InvoiceField>
           <div style={{ fontSize:12, fontWeight:600, color:C.muted, marginTop:8 }}>Invoices</div>
           <div style={{ display:"flex", gap:10 }}>
             <InvoiceField label="Number prefix" style={{ flex:1 }}><Inp value={d.prefix} onChange={e => set({ prefix:e.target.value.replace(/[^A-Za-z0-9]/g, "").slice(0, 8).toUpperCase() })} /></InvoiceField>
@@ -3078,8 +3079,13 @@ function InvoicesScreen({ invoices, setInvoices, quotes, setQuotes, settings, se
           </div>
           <div style={{ display:"flex", gap:10 }}>
             <InvoiceField label="Payment due after (days)" style={{ flex:1 }}><Inp inputMode="numeric" value={String(d.dueDays)} onChange={e => set({ dueDays: Math.min(365, parseInt(e.target.value.replace(/\D/g, "") || "0", 10)) })} /></InvoiceField>
-            <InvoiceField label="VAT % (0 if none)" style={{ flex:1 }}><Inp inputMode="decimal" value={String(d.vatRate)} onChange={e => set({ vatRate: Math.min(100, parseFloat(e.target.value.replace(/[^\d.]/g, "")) || 0) })} /></InvoiceField>
+            <InvoiceField label={`${taxName(d)} % (0 if none)`} style={{ flex:1 }}><Inp inputMode="decimal" value={String(d.vatRate)} onChange={e => set({ vatRate: Math.min(100, parseFloat(e.target.value.replace(/[^\d.]/g, "")) || 0) })} /></InvoiceField>
           </div>
+          <div style={{ display:"flex", gap:10 }}>
+            <InvoiceField label="Tax name" style={{ flex:1 }}><Inp list="kroft-tax-names" placeholder="VAT" value={d.taxLabel ?? ""} onChange={e => set({ taxLabel:e.target.value.slice(0, 16) })} /></InvoiceField>
+            <InvoiceField label="Tax number (optional)" style={{ flex:1 }}><Inp autoCapitalize="characters" value={d.taxId || ""} onChange={e => set({ taxId:e.target.value.slice(0, 32) })} /></InvoiceField>
+          </div>
+          <datalist id="kroft-tax-names">{["VAT", "GST", "Sales tax", "HST", "IVA", "TVA", "MwSt", "Tax"].map(n => <option key={n} value={n} />)}</datalist>
           <div style={{ fontSize:12, fontWeight:600, color:C.muted, marginTop:8 }}>Quotes</div>
           <div style={{ display:"flex", gap:10 }}>
             <InvoiceField label="Number prefix" style={{ flex:1 }}><Inp value={d.quotePrefix} onChange={e => set({ quotePrefix:e.target.value.replace(/[^A-Za-z0-9]/g, "").slice(0, 8).toUpperCase() })} /></InvoiceField>
@@ -3138,12 +3144,12 @@ function InvoicesScreen({ invoices, setInvoices, quotes, setQuotes, settings, se
           </div>
           <div style={{ display:"flex", gap:10 }}>
             <InvoiceField label={`Discount (${draft.currency})`} style={{ flex:1 }}><Inp inputMode="decimal" value={draft.discount ? String(draft.discount) : ""} onChange={e => setD({ discount: parseFloat(e.target.value.replace(/[^\d.]/g, "")) || 0 })} /></InvoiceField>
-            <InvoiceField label="VAT %" style={{ flex:1 }}><Inp inputMode="decimal" value={draft.vatRate ? String(draft.vatRate) : ""} placeholder="0" onChange={e => setD({ vatRate: Math.min(100, parseFloat(e.target.value.replace(/[^\d.]/g, "")) || 0) })} /></InvoiceField>
+            <InvoiceField label={`${taxName(draft)} %`} style={{ flex:1 }}><Inp inputMode="decimal" value={draft.vatRate ? String(draft.vatRate) : ""} placeholder="0" onChange={e => setD({ vatRate: Math.min(100, parseFloat(e.target.value.replace(/[^\d.]/g, "")) || 0) })} /></InvoiceField>
           </div>
           <InvoiceField label="Notes (optional)"><Inp value={draft.notes} onChange={e => setD({ notes:e.target.value })} /></InvoiceField>
 
           <Card level="raised" style={{ display:"flex", flexDirection:"column", gap:6 }}>
-            {[["Subtotal", t.subtotal], ...(t.discount ? [["Discount", -t.discount]] : []), ...(t.vat ? [[`VAT (${t.vatRate}%)`, t.vat]] : [])].map(([l, v]) => (
+            {[["Subtotal", t.subtotal], ...(t.discount ? [["Discount", -t.discount]] : []), ...(t.vat ? [[`${taxName(draft)} (${t.vatRate}%)`, t.vat]] : [])].map(([l, v]) => (
               <div key={l} style={{ display:"flex", justifyContent:"space-between" }}><Mono style={{ color:C.soft }}>{l}</Mono><Mono style={{ color:C.text }}>{fmt(v, draft.currency)}</Mono></div>
             ))}
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"baseline", marginTop:4 }}>

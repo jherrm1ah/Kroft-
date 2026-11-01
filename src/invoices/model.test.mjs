@@ -155,6 +155,16 @@ eq("PDF strings escape brackets", pdfString("a(b)c\\"), "(a\\(b\\)c\\\\)");
   eq("reminder asks for the balance, thanking them for what's paid", rem.includes("balance of NGN 60000.00 on invoice INV-0007 was due 2 days ago") && rem.includes("Thank you for the payment so far"), true);
 }
 
+{
+  const gst = M.createInvoice({ settings: { taxLabel: "GST", vatRate: 18, taxId: "29ABCDE1234F1Z5" }, today, id: "g", currency: "INR" }).invoice;
+  eq("tax is named the way the business's country names it", [gst.taxLabel, M.taxName(gst), M.taxName({}), M.taxName({ taxLabel: "  " })], ["GST", "GST", "VAT", "VAT"]);
+  eq("the tax number line uses the tax's name", [M.taxIdLine({ taxLabel: "GST", taxId: " 29ABCDE1234F1Z5 " }), M.taxIdLine({ taxId: "GB123456789" }), M.taxIdLine({ taxId: " " })], ["GST no. 29ABCDE1234F1Z5", "VAT no. GB123456789", ""]);
+  const q = M.createQuote({ settings: { taxLabel: "Sales tax" }, today, id: "sq", currency: "USD" }).quote;
+  eq("a quote's tax name carries to its invoice", M.invoiceFromQuote({ quote: q, settings: { taxLabel: "VAT" }, today, id: "si" }).invoice.taxLabel, "Sales tax");
+  eq("payment details: IBAN is labelled, other details one per line", M.paymentLines({ bankName: "Barclays", accountNumber: "GB29 NWBK 6016 1331 9268 19", otherPayment: "SWIFT/BIC: NWBKGB2L\n\n PayPal: ada@example.com " }),
+    ["Bank: Barclays", "IBAN: GB29 NWBK 6016 1331 9268 19", "SWIFT/BIC: NWBKGB2L", "PayPal: ada@example.com"]);
+}
+
 eq("file names are plain ASCII", [invoiceFileName({ number: "INV-0001", client: { name: "Tunde Bákàrè" } }), invoiceFileName({ number: "INV-0002", client: { name: "Ọ̀ṣun / Foods" } }), invoiceFileName({ number: "INV-0003", client: {} })], ["INV-0001 Tunde Bakare.pdf", "INV-0002 Osun _ Foods.pdf", "INV-0003.pdf"]);
 
 console.log(fail ? `\n${fail} FAILED` : "\nALL PASSED");
