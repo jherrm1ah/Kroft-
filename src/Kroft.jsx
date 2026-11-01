@@ -10837,6 +10837,7 @@ ${voiceMode
                         // a reply still arriving, so a paused stream doesn't read as finished.
                         <Markdown text={displayContent} theme={C} font={APP_FONT} streaming={!!m.streaming}
                           onCopy={ok => toast(ok ? "Copied to clipboard." : "Couldn't copy. Try selecting the text manually.")}
+                          onRecheck={aiLoading ? undefined : q => askKroft(q)}
                           caret={m.streaming ? <span aria-hidden="true" style={{ display:"inline-block", width:7, height:15, marginLeft:3, verticalAlign:"text-bottom", background:C.muted, animation:"pulse 1s ease-in-out infinite" }} /> : null} />
                       ) : (
                         <div style={{ fontSize:15, lineHeight:1.6, color:m.failed?C.negative:(m.role==="user"?C.black:C.text), whiteSpace:"pre-wrap", overflowWrap:"anywhere" }}>

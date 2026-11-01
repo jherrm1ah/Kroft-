@@ -2,6 +2,7 @@ import { memo, useMemo, useState, useRef, useEffect, Fragment } from "react";
 import { parseBlocks, parseInline } from "./parse.js";
 import { copyRich, copyPlain } from "./clipboard.js";
 import { highlight } from "./highlight.jsx";
+import { verifyBlocks, formatAmountLike } from "./verify.js";
 
 // Renders an AI reply's Markdown as React elements. Nothing here uses dangerouslySetInnerHTML:
 // every piece of model text ends up as a text node, so it can't inject markup.
@@ -14,6 +15,7 @@ import { highlight } from "./highlight.jsx";
 //   caret      an element appended where the text currently ends (the "still writing" cursor)
 //   onCopy     called with true/false after any copy button is used, e.g. to show a toast
 //   font       font-family for prose
+//   onRecheck  called with a message asking KROFT to redo a calculation whose figures don't add up
 
 const MONO = "ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace";
 
@@ -161,9 +163,41 @@ function ResultBlock({ block, theme }) {
   );
 }
 
+// Shown under a calculation table whose figures don't add up (see verify.js), so a wrong
+// balance from the model is flagged rather than trusted.
+function MathWarning({ issue, theme, onRecheck }) {
+  const fmt = v => formatAmountLike(issue.sample, v);
+  const text = issue.where === "row"
+    ? `The balance after "${issue.label}" should be ${fmt(issue.expected)}, but the table shows ${fmt(issue.stated)}.`
+    : issue.where === "result"
+      ? `The headline figure ${fmt(issue.stated)} doesn't match the table's total of ${fmt(issue.expected)}.`
+      : `These steps add up to ${fmt(issue.expected)}, but "${issue.label}" shows ${fmt(issue.stated)}.`;
+  const ask = issue.where === "result"
+    ? `Please recheck that calculation. Your headline figure was ${fmt(issue.stated)} but the table's total is ${fmt(issue.expected)}. Which is right?`
+    : `Please recheck that calculation. ${text} Redo it step by step and correct the figures.`;
+  return (
+    <div role="alert" style={{ display: "flex", gap: 10, alignItems: "flex-start", background: theme.warningBg, borderRadius: 14, padding: "12px 14px" }}>
+      <svg viewBox="0 0 24 24" width={18} height={18} aria-hidden="true" style={{ flexShrink: 0, marginTop: 2 }}>
+        <path d="M12 3.5 2.8 19.5h18.4z" fill="none" stroke={theme.warning} strokeWidth="2" strokeLinejoin="round" />
+        <path d="M12 10v4.5M12 17v.01" stroke={theme.warning} strokeWidth="2" strokeLinecap="round" />
+      </svg>
+      <div style={{ fontSize: 14, lineHeight: 1.5, color: theme.text, minWidth: 0 }}>
+        <div style={{ fontWeight: 650 }}>These figures don't add up</div>
+        <div style={{ color: theme.soft }}>{text}</div>
+        {onRecheck && (
+          <button type="button" onClick={() => onRecheck(ask)}
+            style={{ marginTop: 8, height: 32, padding: "0 14px", borderRadius: 999, border: `1px solid ${theme.cardB}`, background: theme.card, color: theme.text, fontSize: 13, fontWeight: 600, fontFamily: "inherit", cursor: "pointer" }}>
+            Ask KROFT to recheck
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 const HEADING_SIZE = { 1: 20, 2: 18, 3: 16.5, 4: 15.5, 5: 15, 6: 15 };
 
-function Blocks({ blocks, theme, onCopy, font, caret, nested }) {
+function Blocks({ blocks, theme, onCopy, font, caret, nested, issues, onRecheck }) {
   return blocks.map((b, i) => {
     const isLast = i === blocks.length - 1;
     const tail = isLast && caret ? caret : null;
@@ -193,7 +227,9 @@ function Blocks({ blocks, theme, onCopy, font, caret, nested }) {
       case "hr":
         return <hr key={i} style={{ border: "none", height: 1, background: theme.cardB, margin: "4px 0", width: "100%" }} />;
       case "table":
-        return <Table key={i} block={b} theme={theme} />;
+        return issues?.get(i)
+          ? <Fragment key={i}><Table block={b} theme={theme} /><MathWarning issue={issues.get(i)} theme={theme} onRecheck={onRecheck} /></Fragment>
+          : <Table key={i} block={b} theme={theme} />;
       case "code":
         return <CodeBlock key={i} block={b} theme={theme} onCopy={onCopy} />;
       case "copy":
@@ -206,8 +242,10 @@ function Blocks({ blocks, theme, onCopy, font, caret, nested }) {
   });
 }
 
-export const Markdown = memo(function Markdown({ text, theme, streaming = false, caret = null, onCopy, font, style }) {
+export const Markdown = memo(function Markdown({ text, theme, streaming = false, caret = null, onCopy, onRecheck, font, style }) {
   const blocks = useMemo(() => parseBlocks(text, { streaming }), [text, streaming]);
+  // Checked only once the reply is complete: mid-stream, a table is legitimately unfinished.
+  const issues = useMemo(() => (streaming ? null : verifyBlocks(blocks)), [blocks, streaming]);
   // A caret only makes sense at the end of prose; after a table or code block it sits on its own.
   const last = blocks[blocks.length - 1];
   const inlineCaret = caret && last && ["paragraph", "heading", "list"].includes(last.type);
@@ -215,7 +253,7 @@ export const Markdown = memo(function Markdown({ text, theme, streaming = false,
     // Capped at a comfortable reading width so tables and paragraphs don't stretch across a
     // desktop monitor; on phones the cap never applies.
     <div style={{ display: "flex", flexDirection: "column", gap: 12, fontSize: 15, lineHeight: 1.65, color: theme.text, fontFamily: font, overflowWrap: "anywhere", minWidth: 0, maxWidth: 760, ...style }}>
-      <Blocks blocks={blocks} theme={theme} onCopy={onCopy} font={font} caret={inlineCaret ? caret : null} />
+      <Blocks blocks={blocks} theme={theme} onCopy={onCopy} font={font} caret={inlineCaret ? caret : null} issues={issues} onRecheck={onRecheck} />
       {caret && !inlineCaret && <div>{caret}</div>}
     </div>
   );
