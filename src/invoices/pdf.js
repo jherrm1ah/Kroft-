@@ -5,7 +5,7 @@
 // letters (ẹ, ọ, ṣ, ń …) and any other character print exactly as on screen; the standard PDF
 // fonts can't show ₦ at all, and embedding a font would mean shipping a large library.
 
-import { invoiceTotals, lineTotal, prettyDate, paymentLines, fromName, docStatus, STATUS_LABEL, amountPaid, balanceDue } from "./model.js";
+import { invoiceTotals, lineTotal, prettyDate, paymentLines, fromName, taxName, taxIdLine, docStatus, STATUS_LABEL, amountPaid, balanceDue } from "./model.js";
 
 const PAGE_W = 595.28, PAGE_H = 841.89;  // A4 in PDF points
 const SCALE = 2;                          // canvas pixels per point: sharp on phones and in print
@@ -123,7 +123,7 @@ export function drawInvoicePages(inv, settings, user, fmt, { font = "Inter, sans
   let y = 72;
   fromLines.slice(0, 2).forEach((l, i) => text(l, M, y + i * 24, { size: 20, weight: 700 }));
   y += fromLines.slice(0, 2).length * 24 - 6;
-  for (const l of [settings.address, settings.email || user?.email, settings.phone || user?.phone].filter(Boolean)) {
+  for (const l of [settings.address, settings.email || user?.email, settings.phone || user?.phone, taxIdLine(settings)].filter(Boolean)) {
     setFont(9.5);
     for (const w of wrap(ctx, l, 300).slice(0, 3)) { y += 13; text(w, M, y, { size: 9.5, color: SOFT }); }
   }
@@ -185,7 +185,7 @@ export function drawInvoicePages(inv, settings, user, fmt, { font = "Inter, sans
   // Part-paid invoices show the full total, what's been paid, and the balance as the amount due.
   const paidSoFar = isQuote ? 0 : amountPaid(inv);
   const partly = paidSoFar > 0 && status !== "paid";
-  const totalsRows = [["Subtotal", t.subtotal], ...(t.discount ? [["Discount", -t.discount]] : []), ...(t.vat ? [[`VAT (${t.vatRate}%)`, t.vat]] : []),
+  const totalsRows = [["Subtotal", t.subtotal], ...(t.discount ? [["Discount", -t.discount]] : []), ...(t.vat ? [[`${taxName(inv)} (${t.vatRate}%)`, t.vat]] : []),
     ...(partly ? [["Total", t.total], ["Paid so far", -paidSoFar]] : [])];
   const needed = 20 + totalsRows.length * 18 + 44 + (pay.length ? 30 + pay.length * 15 : 0) + (noteLines.length ? 30 + noteLines.length * 13 : 0);
   if (y + needed > BOTTOM) {
@@ -238,7 +238,7 @@ export async function invoicePdf(inv, settings, user, fmt, { font = "Inter, sans
   // plain English), before drawing.
   try {
     const sample = [fromName(settings, user), settings.address, settings.email, settings.phone, inv.client?.name, inv.client?.email, inv.notes,
-      ...(inv.items || []).map(it => it.description), "INVOICE QUOTE 0123456789 ₦$€£,.-()%", ...paymentLines(settings)].filter(Boolean).join(" ");
+      ...(inv.items || []).map(it => it.description), "INVOICE QUOTE 0123456789 ₦$€£,.-()%", taxIdLine(settings), ...paymentLines(settings)].filter(Boolean).join(" ");
     await Promise.all([400, 600, 700].map(w => document.fonts?.load(`${w} 16px ${font}`, sample)));
     await document.fonts?.ready;
   } catch { /* draw with whatever is loaded */ }

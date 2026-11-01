@@ -29,7 +29,8 @@ export const DEFAULT_INVOICE_SETTINGS = {
   phone: "",
   bankName: "",
   accountName: "",
-  accountNumber: "",
+  accountNumber: "",     // or an IBAN
+  otherPayment: "",      // anything else a client needs: SWIFT/BIC, sort code, routing number, PayPal, mobile money
   prefix: "INV",
   nextNumber: 1,
   dueDays: 7,
@@ -37,8 +38,19 @@ export const DEFAULT_INVOICE_SETTINGS = {
   nextQuoteNumber: 1,
   quoteValidDays: 14,
   vatRate: 0,
+  taxLabel: "VAT",       // what the tax is called where the business is: VAT, GST, Sales tax, IVA, TVA…
+  taxId: "",             // the business's tax or registration number, shown on invoices
   note: "Thank you for your business.",
 };
+
+// What the tax on a document is called (older invoices were all VAT), and the line for the
+// business's tax number on it.
+export const taxName = doc => String(doc?.taxLabel || "").trim() || "VAT";
+export const taxIdLine = settings => settings?.taxId?.trim() ? `${taxName(settings)} no. ${settings.taxId.trim()}` : "";
+
+// The person's own language and region (en-NG, en-US, fr-FR…), so dates and money read the way
+// they're written where they are. Falls back to British English when there's no browser.
+export const userLocale = () => (typeof navigator !== "undefined" && navigator.language) || "en-GB";
 
 export const round2 = n => Math.round((Number(n) || 0) * 100) / 100;
 
@@ -156,7 +168,7 @@ export function invoiceAllowance({ subscribed, invoices, today, limit = FREE_INV
 export const quoteAllowance = ({ subscribed, quotes, today }) => invoiceAllowance({ subscribed, invoices: quotes, today, limit: FREE_QUOTES_PER_MONTH });
 
 // A new invoice and the settings with the next number reserved.
-export function createInvoice({ settings, client = {}, items = [], dueDate, notes, currency, today, id, vatRate, discount }) {
+export function createInvoice({ settings, client = {}, items = [], dueDate, notes, currency, today, id, vatRate, discount, taxLabel }) {
   const s = { ...DEFAULT_INVOICE_SETTINGS, ...settings };
   const invoice = {
     id,
@@ -172,6 +184,7 @@ export function createInvoice({ settings, client = {}, items = [], dueDate, note
     issueDate: today,
     dueDate: dueDate && /^\d{4}-\d{2}-\d{2}$/.test(dueDate) ? dueDate : addDays(today, Number(s.dueDays) || 7),
     vatRate: vatRate ?? (Number(s.vatRate) || 0),
+    taxLabel: taxName({ taxLabel: taxLabel ?? s.taxLabel }),
     discount: round2(discount || 0),
     notes: (notes ?? s.note ?? "").trim(),
     status: "draft",
@@ -205,7 +218,7 @@ export function invoiceFromQuote({ quote, settings, today, id }) {
   const { invoice, settings: next } = createInvoice({
     settings, client: quote.client, currency: quote.currency, today, id,
     items: quote.items.map(({ description, qty, price }) => ({ description, qty, price })),
-    vatRate: quote.vatRate, discount: quote.discount,
+    vatRate: quote.vatRate, discount: quote.discount, taxLabel: quote.taxLabel,
   });
   return { invoice: { ...invoice, clientId: quote.clientId || null, quoteId: quote.id }, settings: next };
 }
@@ -285,7 +298,8 @@ export function paymentLines(settings) {
   const lines = [];
   if (settings.bankName) lines.push(`Bank: ${settings.bankName}`);
   if (settings.accountName) lines.push(`Account name: ${settings.accountName}`);
-  if (settings.accountNumber) lines.push(`Account number: ${settings.accountNumber}`);
+  if (settings.accountNumber) lines.push(`${/^[A-Z]{2}\d{2}/i.test(settings.accountNumber.replace(/\s/g, "")) ? "IBAN" : "Account number"}: ${settings.accountNumber}`);
+  for (const l of String(settings.otherPayment || "").split("\n").map(x => x.trim()).filter(Boolean)) lines.push(l);
   return lines;
 }
 
@@ -346,7 +360,7 @@ export function quoteMessage(q, settings, user, fmt) {
 export function prettyDate(iso) {
   if (!iso) return "";
   const [y, m, d] = iso.split("-").map(Number);
-  return new Date(y, m - 1, d).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+  return new Date(y, m - 1, d).toLocaleDateString(userLocale(), { day: "numeric", month: "short", year: "numeric" });
 }
 
 // Short summary for KROFT's AI, so "who owes me?" can be answered.
