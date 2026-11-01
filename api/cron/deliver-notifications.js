@@ -23,6 +23,11 @@ export default async function handler(req, res) {
 
   const admin = supabaseAdmin();
   const nowIso = new Date().toISOString();
+
+  // Daily housekeeping: AI usage records (tokens and timing only, used to measure cost) are kept
+  // for 90 days. Ignored if the table doesn't exist.
+  await admin.from("ai_request_log").delete().lt("created_at", new Date(Date.now() - 90 * 86400000).toISOString()).then(() => {}, () => {});
+
   const { data: due, error } = await admin
     .from("scheduled_notifications")
     .select("id, user_id, title, body, tag")
