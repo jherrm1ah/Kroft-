@@ -7,10 +7,16 @@
 //   { id, number, client:{ name, email, phone }, items:[{ id, description, qty, price }],
 //     currency, issueDate, dueDate, vatRate, discount, notes,
 //     status: "draft" | "sent" | "paid" | "cancelled",   ("overdue" is worked out, not stored)
-//     sentAt, paidDate, incomeId, createdAt }
+//     sentAt, paidDate, incomeId, createdAt, clientId, quoteId }
+// clientId links to a contact (Workspace › Contacts); quoteId to the quote it came from.
+//
+// A quote has the same shape plus kind:"quote", validUntil instead of dueDate, and
+//   status: "draft" | "sent" | "accepted" | "declined" | "invoiced"   ("expired" is worked out)
+//   invoiceId once it has been turned into an invoice.
 // Dates are local YYYY-MM-DD strings, like the rest of KROFT.
 
 export const FREE_INVOICES_PER_MONTH = 3;
+export const FREE_QUOTES_PER_MONTH = 3;
 
 export const DEFAULT_INVOICE_SETTINGS = {
   businessName: "",   // blank = the profile's business name, then the person's name
@@ -23,6 +29,9 @@ export const DEFAULT_INVOICE_SETTINGS = {
   prefix: "INV",
   nextNumber: 1,
   dueDays: 7,
+  quotePrefix: "QUO",
+  nextQuoteNumber: 1,
+  quoteValidDays: 14,
   vatRate: 0,
   note: "Thank you for your business.",
 };
@@ -59,19 +68,28 @@ export function invoiceStatus(inv, today) {
   return inv.dueDate && inv.dueDate < today ? "overdue" : "sent";
 }
 
-export const STATUS_LABEL = { draft: "Draft", sent: "Sent", overdue: "Overdue", paid: "Paid", cancelled: "Cancelled" };
+export const STATUS_LABEL = { draft: "Draft", sent: "Sent", overdue: "Overdue", paid: "Paid", cancelled: "Cancelled", accepted: "Accepted", declined: "Declined", invoiced: "Invoiced", expired: "Expired" };
+
+// A quote past its "valid until" date that the client never answered.
+export function quoteStatus(q, today) {
+  if (q.status !== "sent") return q.status;
+  return q.validUntil && q.validUntil < today ? "expired" : "sent";
+}
+
+export const docStatus = (doc, today) => (doc.kind === "quote" ? quoteStatus(doc, today) : invoiceStatus(doc, today));
 
 export function invoicesCreatedInMonth(invoices, today) {
   const month = today.slice(0, 7);
   return invoices.filter(inv => (inv.createdAt || "").slice(0, 7) === month).length;
 }
 
-// Free plan: a few invoices a month; KROFT Plus: no limit.
-export function invoiceAllowance({ subscribed, invoices, today }) {
+// Free plan: a few invoices (and, separately, a few quotes) a month; KROFT Plus: no limit.
+export function invoiceAllowance({ subscribed, invoices, today, limit = FREE_INVOICES_PER_MONTH }) {
   if (subscribed) return { allowed: true, used: null, limit: null };
   const used = invoicesCreatedInMonth(invoices, today);
-  return { allowed: used < FREE_INVOICES_PER_MONTH, used, limit: FREE_INVOICES_PER_MONTH };
+  return { allowed: used < limit, used, limit };
 }
+export const quoteAllowance = ({ subscribed, quotes, today }) => invoiceAllowance({ subscribed, invoices: quotes, today, limit: FREE_QUOTES_PER_MONTH });
 
 // A new invoice and the settings with the next number reserved.
 export function createInvoice({ settings, client = {}, items = [], dueDate, notes, currency, today, id, vatRate, discount }) {
@@ -99,6 +117,76 @@ export function createInvoice({ settings, client = {}, items = [], dueDate, note
     createdAt: today,
   };
   return { invoice, settings: { ...s, nextNumber: (Number(s.nextNumber) || 1) + 1 } };
+}
+
+// A new quote and the settings with the next quote number reserved.
+export function createQuote({ settings, client = {}, items = [], validUntil, notes, currency, today, id, vatRate, discount, clientId = null }) {
+  const s = { ...DEFAULT_INVOICE_SETTINGS, ...settings };
+  const { invoice } = createInvoice({ settings: s, client, items, currency, today, id, vatRate, discount, notes: notes ?? "" });
+  const { dueDate, sentAt, paidDate, incomeId, ...rest } = invoice;
+  const quote = {
+    ...rest,
+    kind: "quote",
+    number: formatInvoiceNumber(s.quotePrefix || "QUO", s.nextQuoteNumber),
+    validUntil: validUntil && /^\d{4}-\d{2}-\d{2}$/.test(validUntil) ? validUntil : addDays(today, Number(s.quoteValidDays) || 14),
+    clientId,
+    sentAt: null,
+    invoiceId: null,
+  };
+  return { quote, settings: { ...s, nextQuoteNumber: (Number(s.nextQuoteNumber) || 1) + 1 } };
+}
+
+// Turns an accepted (or sent) quote into a draft invoice with the same client and items.
+export function invoiceFromQuote({ quote, settings, today, id }) {
+  const { invoice, settings: next } = createInvoice({
+    settings, client: quote.client, currency: quote.currency, today, id,
+    items: quote.items.map(({ description, qty, price }) => ({ description, qty, price })),
+    vatRate: quote.vatRate, discount: quote.discount,
+  });
+  return { invoice: { ...invoice, clientId: quote.clientId || null, quoteId: quote.id }, settings: next };
+}
+
+// ── Clients ──
+// Everyone who has been sent an invoice or quote, with what they owe and have paid. Linked to a
+// contact by clientId; older invoices without one are matched by name.
+export const clientKey = doc => (doc.clientId ? `id:${doc.clientId}` : `name:${(doc.client?.name || "").trim().toLowerCase()}`);
+
+export function clientSummaries({ invoices = [], quotes = [], contacts = [], today }) {
+  const byKey = new Map();
+  const get = (key, doc) => {
+    if (!byKey.has(key)) {
+      const contact = doc.clientId ? contacts.find(c => String(c.id) === String(doc.clientId)) : null;
+      byKey.set(key, {
+        key, clientId: doc.clientId || null,
+        name: contact?.name || doc.client?.name || "",
+        email: contact?.email || doc.client?.email || "",
+        phone: contact?.phone || doc.client?.phone || "",
+        owed: {}, paid: {}, overdueCount: 0, unpaidCount: 0, invoiceCount: 0, quoteCount: 0, openQuotes: 0, lastDate: "",
+      });
+    }
+    return byKey.get(key);
+  };
+  for (const inv of invoices) {
+    if (!inv.client?.name) continue;
+    const c = get(clientKey(inv), inv);
+    c.invoiceCount++;
+    const st = invoiceStatus(inv, today);
+    const { total } = invoiceTotals(inv);
+    if (st === "sent" || st === "overdue") { c.owed[inv.currency] = round2((c.owed[inv.currency] || 0) + total); c.unpaidCount++; }
+    if (st === "overdue") c.overdueCount++;
+    if (st === "paid") c.paid[inv.currency] = round2((c.paid[inv.currency] || 0) + total);
+    if ((inv.issueDate || "") > c.lastDate) c.lastDate = inv.issueDate;
+  }
+  for (const q of quotes) {
+    if (!q.client?.name) continue;
+    const c = get(clientKey(q), q);
+    c.quoteCount++;
+    if (["draft", "sent", "accepted"].includes(quoteStatus(q, today))) c.openQuotes++;
+    if ((q.issueDate || "") > c.lastDate) c.lastDate = q.issueDate;
+  }
+  // Biggest debt first, then most recent.
+  const owedTotal = c => Object.values(c.owed).reduce((a, b) => a + b, 0);
+  return [...byKey.values()].sort((a, b) => owedTotal(b) - owedTotal(a) || b.lastDate.localeCompare(a.lastDate));
 }
 
 // What stops an invoice being sent: shown to the person instead of a broken PDF.
@@ -171,6 +259,22 @@ export function reminderMessage(inv, settings, user, fmt, today) {
   ].join("\n").trim();
 }
 
+// The message that goes with a quote.
+export function quoteMessage(q, settings, user, fmt) {
+  const { total } = invoiceTotals(q);
+  const who = q.client?.name ? `Hi ${q.client.name.split(/\s+/)[0]},` : "Hello,";
+  const from = fromName(settings, user);
+  return [
+    who,
+    "",
+    `Here's quote ${q.number}${from ? ` from ${from}` : ""} for ${fmt(total, q.currency)}, valid until ${prettyDate(q.validUntil)}.`,
+    "",
+    "Let me know if you'd like to go ahead, or if anything needs changing.",
+    "",
+    "Thank you!",
+  ].join("\n");
+}
+
 export function prettyDate(iso) {
   if (!iso) return "";
   const [y, m, d] = iso.split("-").map(Number);
@@ -178,6 +282,12 @@ export function prettyDate(iso) {
 }
 
 // Short summary for KROFT's AI, so "who owes me?" can be answered.
+export function quotesForAI(quotes = [], today, fmt) {
+  const open = quotes.filter(q => ["draft", "sent", "accepted"].includes(quoteStatus(q, today)));
+  if (!open.length) return `${quotes.length} quote${quotes.length === 1 ? "" : "s"} on record, none open.`;
+  return `${open.length} open: ` + open.slice(0, 6).map(q => `${q.number} ${q.client.name} ${fmt(invoiceTotals(q).total, q.currency)} ${quoteStatus(q, today)}`).join("; ");
+}
+
 export function invoicesForAI(invoices, today, fmt) {
   const open = invoices.filter(inv => ["sent", "overdue"].includes(invoiceStatus(inv, today)));
   if (!open.length) return `${invoices.length} invoice${invoices.length === 1 ? "" : "s"} on record, none unpaid.`;

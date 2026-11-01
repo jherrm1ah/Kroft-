@@ -78,6 +78,48 @@ eq("image length matches the JPEG", /\/Filter \/DCTDecode \/Length 7 >>/.test(te
 eq("non-ASCII author written as UTF-16", pdfString("Adé"), "<FEFF004100640065301>".replace("0065301", "00E9"));
 eq("PDF strings escape brackets", pdfString("a(b)c\\"), "(a\\(b\\)c\\\\)");
 
+// ── Quotes ──
+{
+  const { quote, settings: s2 } = M.createQuote({ settings: { quotePrefix: "QUO", nextQuoteNumber: 2, quoteValidDays: 10, nextNumber: 9 }, client: { name: "Ada" }, items: [{ description: "Website", qty: 1, price: 300000 }], currency: "NGN", today, id: "q1", clientId: "c1" });
+  eq("quote numbering and validity", [quote.kind, quote.number, quote.validUntil, quote.status, quote.clientId, s2.nextQuoteNumber, s2.nextNumber], ["quote", "QUO-0002", "2026-11-11", "draft", "c1", 3, 9]);
+  eq("quote has no due date or payment fields", ["dueDate", "paidDate", "incomeId"].map(k => k in quote), [false, false, false]);
+  eq("quote status: expired only once sent and past validity", [
+    M.quoteStatus({ status: "sent", validUntil: "2026-10-30" }, today),
+    M.quoteStatus({ status: "sent", validUntil: today }, today),
+    M.quoteStatus({ status: "draft", validUntil: "2026-10-30" }, today),
+    M.quoteStatus({ status: "accepted", validUntil: "2026-10-30" }, today),
+  ], ["expired", "sent", "draft", "accepted"]);
+  eq("docStatus picks the right rules", [M.docStatus({ kind: "quote", status: "sent", validUntil: "2026-10-01" }, today), M.docStatus({ status: "sent", dueDate: "2026-10-01" }, today)], ["expired", "overdue"]);
+  const { invoice: fromQ, settings: s3 } = M.invoiceFromQuote({ quote: { ...quote, discount: 1000, vatRate: 7.5 }, settings: s2, today, id: "i9" });
+  eq("quote → invoice keeps client, items, discount, VAT, and links back", [fromQ.number, fromQ.client.name, fromQ.clientId, fromQ.quoteId, fromQ.items[0].price, fromQ.discount, fromQ.vatRate, fromQ.status, s3.nextNumber], ["INV-0009", "Ada", "c1", "q1", 300000, 1000, 7.5, "draft", 10]);
+  eq("quote allowance is separate from invoices", [M.quoteAllowance({ subscribed: false, quotes: [mk(today), mk(today)], today }).allowed, M.quoteAllowance({ subscribed: false, quotes: [mk(today), mk(today), mk(today)], today }).allowed], [true, false]);
+  const qm = M.quoteMessage(quote, { businessName: "Ada Designs" }, {}, fmt);
+  eq("quote message", [qm.includes("quote QUO-0002 from Ada Designs for NGN 300000.00, valid until"), qm.includes("Payment details")], [true, false]);
+}
+
+// ── Clients ──
+{
+  const contacts = [{ id: 1, name: "Tunde Bakare", phone: "0803", email: "" }];
+  const inv = (o) => ({ items: [{ description: "x", qty: 1, price: o.amount }], currency: "NGN", issueDate: o.date || today, ...o });
+  const list = M.clientSummaries({
+    contacts, today,
+    invoices: [
+      inv({ id: "a", clientId: 1, client: { name: "Tunde" }, status: "sent", dueDate: "2026-10-20", amount: 50000 }),
+      inv({ id: "b", clientId: 1, client: { name: "Tunde" }, status: "paid", amount: 20000, date: "2026-10-01" }),
+      inv({ id: "c", client: { name: "Chidi" }, status: "sent", dueDate: "2026-12-01", amount: 80000 }),
+      inv({ id: "d", client: { name: "chidi " }, status: "draft", amount: 5000 }),
+      inv({ id: "e", client: { name: "Bisi" }, status: "paid", amount: 10000 }),
+    ],
+    quotes: [{ kind: "quote", client: { name: "Bisi" }, status: "sent", validUntil: "2026-12-01", issueDate: today, items: [] }],
+  });
+  eq("clients sorted by what they owe", list.map(c => c.name), ["Chidi", "Tunde Bakare", "Bisi"]);
+  const tunde = list.find(c => c.clientId === 1);
+  eq("linked client uses the contact's details and adds up owed/paid/overdue", [tunde.phone, tunde.owed, tunde.paid, tunde.overdueCount, tunde.invoiceCount], ["0803", { NGN: 50000 }, { NGN: 20000 }, 1, 2]);
+  const chidi = list.find(c => c.name === "Chidi");
+  eq("unlinked invoices group by name, case and spaces ignored; drafts aren't owed", [chidi.invoiceCount, chidi.owed, chidi.unpaidCount], [2, { NGN: 80000 }, 1]);
+  eq("open quotes counted", list.find(c => c.name === "Bisi").openQuotes, 1);
+}
+
 eq("file names are plain ASCII", [invoiceFileName({ number: "INV-0001", client: { name: "Tunde Bákàrè" } }), invoiceFileName({ number: "INV-0002", client: { name: "Ọ̀ṣun / Foods" } }), invoiceFileName({ number: "INV-0003", client: {} })], ["INV-0001 Tunde Bakare.pdf", "INV-0002 Osun _ Foods.pdf", "INV-0003.pdf"]);
 
 console.log(fail ? `\n${fail} FAILED` : "\nALL PASSED");

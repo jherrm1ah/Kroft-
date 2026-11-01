@@ -100,6 +100,51 @@ async function website(browser) {
   const pages = Number((pdf2.match(/\/Count (\d+)/) || [])[1]);
   check("40-item invoice runs to several pages", pages >= 2, `pages=${pages}`);
 
+  // 6. Quote → accepted → invoice → paid.
+  await page.getByRole("button", { name: "Back" }).click();
+  await page.getByRole("tab", { name: "Quotes" }).click();
+  await page.getByRole("button", { name: "New quote" }).click();
+  await page.locator("label", { hasText: "Client name" }).locator("input").fill("Chidi Okafor");
+  await page.locator("label", { hasText: "Phone" }).locator("input").fill("08099998888");
+  await page.getByLabel("Item 1 description").fill("Company website");
+  await page.getByLabel("Item 1 price").fill("300000");
+  await page.getByRole("button", { name: "Save quote" }).click();
+  check("quote saved as QUO-0001", await page.getByRole("heading", { name: "QUO-0001" }).isVisible());
+  const [qdl] = await Promise.all([page.waitForEvent("download"), page.getByRole("button", { name: /Share or download PDF/ }).click()]);
+  const qpdf = await pdfFromDownload(qdl);
+  check("quote PDF is titled as a quote", qpdf.includes("/Title (Quote QUO-0001)") && qdl.suggestedFilename() === "QUO-0001 Chidi Okafor.pdf", qdl.suggestedFilename());
+  await page.getByRole("button", { name: "Client accepted" }).click();
+  check("quote accepted", await page.getByText("ACCEPTED").first().isVisible());
+  await page.getByRole("button", { name: "Turn into invoice" }).click();
+  check("accepted quote becomes the next invoice, INV-0003", await page.getByRole("heading", { name: "INV-0003" }).isVisible() && await page.getByText("From quote QUO-0001.").isVisible());
+  const [idl] = await Promise.all([page.waitForEvent("download"), page.getByRole("button", { name: /Share or download PDF/ }).click()]);
+  await idl.cancel().catch(() => {});
+  await page.getByRole("button", { name: "Mark as paid" }).click();
+  check("invoice from the quote is paid", await page.getByText("PAID").first().isVisible());
+
+  // 7. Clients: who owes what.
+  await page.getByRole("button", { name: "Back" }).click();
+  await page.getByRole("tab", { name: "Clients" }).click();
+  const clientsText = await page.locator("body").innerText();
+  const order = ["Ọlá Stores", "Chidi Okafor", "Tunde Bakare"].map(n => clientsText.indexOf(n));
+  check("clients listed, the one who owes first", order.every(i => i >= 0) && order[0] < order[1] && order[0] < order[2], JSON.stringify(order));
+  check("client balances shown", /OWES YOU/.test(clientsText) && /All paid/.test(clientsText));
+  await page.getByText("Chidi Okafor").first().click();
+  const chidiText = await page.locator("body").innerText();
+  check("client page shows paid total and both documents", /300,000\.00/.test(chidiText) && chidiText.includes("QUO-0001") && chidiText.includes("INV-0003"), chidiText.slice(0, 300));
+  await page.waitForFunction(() => (JSON.parse(localStorage.getItem("kroft:contacts") || "null")?.contacts || JSON.parse(localStorage.getItem("kroft:contacts") || "[]")) && true, null, { timeout: 3000 }).catch(() => {});
+  await page.waitForTimeout(1200);
+  const contactNames = await page.evaluate(() => JSON.stringify(JSON.parse(localStorage.getItem("kroft:contacts") || "null")));
+  check("new client saved to Contacts", contactNames.includes("Chidi Okafor") && contactNames.includes("08099998888"), contactNames.slice(0, 200));
+
+  // 8. Asking KROFT for a quote.
+  await page.getByRole("button", { name: "Back" }).click();
+  await page.getByRole("button", { name: "Back" }).click();
+  reply = sse("Here's a quote for Bisi, ready to review.", { type: "add_quote", client: "Bisi", items: [{ description: "Photo shoot", qty: 1, price: 75000 }] });
+  await askKroft(page, "Quote Bisi 75k for the photo shoot");
+  check("asking KROFT drafts QUO-0002", await page.getByText(/Quote QUO-0002 drafted for Bisi/).waitFor({ timeout: 10000 }).then(() => true, () => false));
+  check("KROFT is told about quotes and who owes money", prompts.at(-1).includes('"type":"add_quote"') && prompts.at(-1).includes("Clients who owe money: Ọlá Stores"), prompts.at(-1).match(/Clients who owe money:[^\n]*/)?.[0]);
+
   check("no page errors", errors.length === 0, errors.join(" | "));
   await ctx.close();
 }
