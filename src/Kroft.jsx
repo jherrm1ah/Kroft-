@@ -1259,6 +1259,52 @@ const GoogleG = ({ size = 20 }) => (
 // the bottom. Always light, matching the rest of account creation.
 // Phone and Google both sign in OR create an account (the code/redirect proves who you are
 // either way), so only email needs a separate "Log in" path for returning users.
+// ── Chat history search ──
+// A query matches a message when every word in it appears somewhere in that message, in any
+// order ("rent march" finds "March rent is due"), which is how people actually half-remember a
+// conversation.
+const searchTerms = q => q.toLowerCase().split(/\s+/).filter(Boolean);
+const escapeRegExp = t => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const textMatches = (text, terms) => { const t = (text || "").toLowerCase(); return terms.every(w => t.includes(w)); };
+// A short window of the message around the first matched word, so the result shows why it matched.
+const matchSnippet = (text, terms, before = 36, after = 90) => {
+  const flat = (text || "").replace(/\s+/g, " ").trim();
+  const lower = flat.toLowerCase();
+  const at = Math.min(...terms.map(w => lower.indexOf(w)).filter(i => i >= 0));
+  if (!isFinite(at)) return flat.slice(0, before + after);
+  const start = Math.max(0, at - before);
+  const cut = flat.slice(start, at + after);
+  // Drop a word cut in half at the start, but only if that happens before the match.
+  const firstSpace = cut.indexOf(" ");
+  const body = start > 0 && firstSpace >= 0 && firstSpace < at - start ? cut.slice(firstSpace + 1) : cut;
+  return (start > 0 ? "…" : "") + body + (at + after < flat.length ? "…" : "");
+};
+// Finds where a conversation matches: the first message containing every word (so opening the
+// result can jump there), otherwise its title.
+const findChatMatch = (title, messages, terms) => {
+  const idx = (messages || []).findIndex(m => textMatches(m.content, terms));
+  if (idx >= 0) return { msgIndex: idx, role: messages[idx].role, snippet: matchSnippet(messages[idx].content, terms) };
+  if (textMatches(title, terms)) return { msgIndex: null, role: null, snippet: null };
+  return null;
+};
+// Wraps every matched word in a highlight.
+function Highlight({ text, terms }) {
+  if (!terms.length || !text) return text || null;
+  const parts = text.split(new RegExp(`(${terms.map(escapeRegExp).join("|")})`, "gi"));
+  return parts.map((part, i) => terms.includes(part.toLowerCase())
+    ? <mark key={i} style={{ background:C.accentBg, color:C.text, fontWeight:600, borderRadius:3, padding:"0 1px" }}>{part}</mark>
+    : <Fragment key={i}>{part}</Fragment>);
+}
+// Today / Yesterday / Previous 7 days / Older, for scanning the list when not searching.
+const chatHistoryGroup = ts => {
+  const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0);
+  const t = startOfToday.getTime();
+  if (ts >= t) return "Today";
+  if (ts >= t - 86400000) return "Yesterday";
+  if (ts >= t - 7 * 86400000) return "Previous 7 days";
+  return "Older";
+};
+
 function WelcomeScreen({ onPhone, onGoogle, onEmail, onLogIn, googleLoading }) {
   const pill = { width:"100%", height:56, borderRadius:999, display:"flex", alignItems:"center", justifyContent:"center", gap:12, fontSize:"clamp(14px, 4.4vw, 17px)", whiteSpace:"nowrap", fontWeight:600, fontFamily:APP_FONT, cursor:"pointer", letterSpacing:-.1 };
   // KROFT's own light palette (see LIGHT): warm cream background, near-black ink, warm beige
@@ -1458,6 +1504,8 @@ const NavIcon = ({ id, size=20, color="currentColor" }) => {
       return <svg viewBox="0 0 24 24" style={s}><path d="M5.5 21V4" {...p} /><path d="M5.5 4.5h11l-2 4 2 4h-11" {...p} /></svg>;
     case "phone":
       return <svg viewBox="0 0 24 24" style={s}><path d="M6.6 3.5h2.6l1.3 4-1.9 1.4a12 12 0 0 0 6.5 6.5l1.4-1.9 4 1.3v2.6a2 2 0 0 1-2 2A16 16 0 0 1 4.6 5.5a2 2 0 0 1 2-2z" {...p} /></svg>;
+    case "search":
+      return <svg viewBox="0 0 24 24" style={s}><circle cx="10.5" cy="10.5" r="6.5" {...p} /><path d="m15.5 15.5 4.5 4.5" {...p} /></svg>;
     case "trash":
       return <svg viewBox="0 0 24 24" style={s}><path d="M4.5 6.5h15M9.5 6.5V4.5h5v2M6.5 6.5l.8 12.2a2 2 0 0 0 2 1.8h5.4a2 2 0 0 0 2-1.8l.8-12.2M10 10.5v6M14 10.5v6" {...p} /></svg>;
     case "logout":
@@ -3478,6 +3526,9 @@ function KroftApp({ onFullReset } = {}) {
   const [chatHistory, setChatHistory] = useState([]);
   const [showChatHistory, setShowChatHistory] = useState(false);
   const [chatHistorySearch, setChatHistorySearch] = useState("");
+  // Set when a search result is opened: which message to scroll to. flashMsg briefly highlights it.
+  const [chatJump, setChatJump] = useState(null);
+  const [flashMsg, setFlashMsg] = useState(null);
   const [aiInput, setAiInput] = useState("");
   const [aiInputFocused, setAiInputFocused] = useState(false);
   const [aiLoading, setAiLoading] = useState(false);
@@ -4115,6 +4166,18 @@ function KroftApp({ onFullReset } = {}) {
     const streaming = aiMessages.some(m => m.streaming);
     chatEnd.current?.scrollIntoView({ behavior: streaming ? "auto" : "smooth" });
   }, [aiMessages]);
+  // Runs after the auto-scroll above so the jump wins over "scroll to the newest message".
+  useEffect(() => {
+    if (!chatJump) return;
+    let clear;
+    const t = setTimeout(() => {
+      const el = document.querySelector(`[data-msg-idx="${chatJump.idx}"]`);
+      el?.scrollIntoView({ behavior:"smooth", block:"center" });
+      setFlashMsg(chatJump.idx);
+      clear = setTimeout(() => setFlashMsg(null), 2200);
+    }, 160);
+    return () => { clearTimeout(t); clearTimeout(clear); };
+  }, [chatJump]);
   useEffect(() => {
     if (!locked) return;
     let t = 30; setLockTimer(t);
@@ -6887,7 +6950,15 @@ ${voiceMode
   // Swaps in a saved conversation as the active one — saving whatever's currently active into
   // history first (same as startNewChat), and pulling the opened conversation out of the history
   // list since it's the live one again now, not a saved item.
-  const openHistoryChat = id => {
+  // Scrolls the chat to a message opened from search, expanding it first if it's a collapsed long
+  // message, then highlights it for a moment.
+  const jumpToMessage = (messages, idx) => {
+    if (idx == null) return;
+    const m = messages[idx];
+    if (m?.role === "user") setExpandedUserMsgs(prev => new Set(prev).add(m.id ?? idx));
+    setChatJump({ idx, at: Date.now() });
+  };
+  const openHistoryChat = (id, jumpIdx = null) => {
     const target = chatHistory.find(c => c.id === id);
     if (!target) return;
     const current = aiMessages;
@@ -6901,6 +6972,7 @@ ${voiceMode
     setAiMessages(target.messages);
     setShowChatHistory(false);
     setChatHistorySearch("");
+    jumpToMessage(target.messages, jumpIdx);
   };
 
   // Short, glanceable "when" for a history entry — "Today"/"Yesterday" reads faster than a full
@@ -7848,54 +7920,97 @@ ${voiceMode
       <style>{G}</style>
       {showBriefing && <Briefing user={user} income={totalIncome} expenses={totalExpenses} emails={emails} appts={todaysAppts} onClose={() => setShowBriefing(false)} />}
       {showChatHistory && (() => {
-        const q = chatHistorySearch.trim().toLowerCase();
-        // Title alone used to miss anything that isn't literally in the auto-generated title —
-        // searching for a word actually discussed, not just the topic it got titled after, is
-        // the more useful case for a conversation search.
-        const filtered = q ? chatHistory.filter(c => c.title.toLowerCase().includes(q) || (c.messages||[]).some(m => (m.content||"").toLowerCase().includes(q))) : chatHistory;
+        const terms = searchTerms(chatHistorySearch);
+        const searching = terms.length > 0;
+        const closeHistory = () => { setShowChatHistory(false); setChatHistorySearch(""); };
+        // The active conversation isn't in chatHistory (it lives in aiMessages), but people search
+        // it too, so it's included as "Current chat".
+        const currentHasContent = aiMessages.some(m => m.role === "user");
+        const all = [
+          ...(currentHasContent ? [{ id:"current", title:deriveChatTitle(aiMessages), messages:aiMessages, updatedAt:Date.now(), current:true }] : []),
+          ...chatHistory,
+        ];
+        const results = searching
+          ? all.map(c => { const hit = findChatMatch(c.title, c.messages, terms); return hit && { ...c, hit }; }).filter(Boolean)
+          : chatHistory;
+        const groups = [];
+        if (searching) groups.push({ label: `${results.length} result${results.length === 1 ? "" : "s"}`, items: results });
+        else results.forEach(c => { const g = chatHistoryGroup(c.updatedAt); const last = groups[groups.length - 1]; if (last?.label === g) last.items.push(c); else groups.push({ label:g, items:[c] }); });
+        const open = c => {
+          if (c.current) { closeHistory(); jumpToMessage(aiMessages, c.hit?.msgIndex ?? null); }
+          else openHistoryChat(c.id, c.hit?.msgIndex ?? null);
+        };
         return (
           <div role="dialog" aria-modal="true" aria-label="Chat history" style={{ position:"fixed", inset:0, zIndex:310, background:C.bg, display:"flex", flexDirection:"column" }}>
             <div style={{ display:"flex", alignItems:"center", gap:10, padding:"12px 16px", borderBottom:`1px solid ${C.cardB}`, flexShrink:0 }}>
-              <button onClick={() => { setShowChatHistory(false); setChatHistorySearch(""); }} aria-label="Close chat history" style={{ background:"none", border:"none", color:C.white, cursor:"pointer", fontSize:20, padding:"2px 4px", lineHeight:1 }}>←</button>
+              <button onClick={closeHistory} aria-label="Close chat history" style={{ background:"none", border:"none", color:C.white, cursor:"pointer", fontSize:20, padding:"2px 4px", lineHeight:1 }}>←</button>
               <h2 style={{ fontSize:17, fontWeight:700, color:C.white, letterSpacing:-.5, flex:1 }}>Chat history</h2>
-              <Btn sm onClick={() => { startNewChat(); setShowChatHistory(false); setChatHistorySearch(""); }}>New chat</Btn>
+              <Btn sm onClick={() => { startNewChat(); closeHistory(); }}>New chat</Btn>
             </div>
-            <div style={{ flex:1, minHeight:0, overflowY:"auto", padding:16 }}>
-              {chatHistory.length > 0 && (
-                <Inp placeholder="Search conversations…" value={chatHistorySearch} onChange={e=>setChatHistorySearch(e.target.value)} style={{ marginBottom:16, width:"100%", boxSizing:"border-box" }} />
+            <div style={{ flex:1, minHeight:0, overflowY:"auto", padding:"14px 16px 24px" }}>
+              {all.length > 0 && (
+                <div role="search" style={{ position:"relative", marginBottom:18 }}>
+                  <span style={{ position:"absolute", left:13, top:"50%", transform:"translateY(-50%)", display:"flex", pointerEvents:"none" }}><NavIcon id="search" size={18} color={C.muted} /></span>
+                  <input autoFocus type="text" inputMode="search" enterKeyHint="search" aria-label="Search conversations" placeholder="Search your chats"
+                    value={chatHistorySearch} onChange={e => setChatHistorySearch(e.target.value)}
+                    onKeyDown={e => { if (e.key === "Escape" && chatHistorySearch) { e.stopPropagation(); setChatHistorySearch(""); } }}
+                    style={{ width:"100%", height:46, boxSizing:"border-box", borderRadius:999, border:`1px solid ${C.cardB}`, background:C.card, color:C.text, fontSize:15, fontFamily:APP_FONT, padding:"0 42px 0 40px", outline:"none", WebkitAppearance:"none", appearance:"none" }} />
+                  {chatHistorySearch && (
+                    <button onClick={() => setChatHistorySearch("")} aria-label="Clear search"
+                      style={{ position:"absolute", right:8, top:"50%", transform:"translateY(-50%)", width:30, height:30, borderRadius:"50%", border:"none", background:C.surface, color:C.muted, fontSize:14, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>✕</button>
+                  )}
+                </div>
               )}
-              {chatHistory.length === 0 ? (
+              {all.length === 0 || (!searching && chatHistory.length === 0) ? (
                 <Card level="inset" style={{ textAlign:"center", padding:26, borderStyle:"dashed" }}>
                   <div style={{ fontSize:15, fontWeight:600, color:C.white, marginBottom:6 }}>No past conversations yet</div>
                   <Mono style={{ display:"block", color:C.soft }}>Starting a new chat saves the one you're leaving here.</Mono>
                 </Card>
-              ) : filtered.length === 0 ? (
-                <Card level="inset" style={{ textAlign:"center", padding:26, borderStyle:"dashed" }}>
-                  <Mono style={{ color:C.soft }}>Nothing matches "{chatHistorySearch}".</Mono>
-                </Card>
-              ) : (
-                <div style={{ display:"flex", flexDirection:"column", gap:9 }}>
-                  {filtered.map(c => (
-                    <Card key={c.id} onClick={() => openHistoryChat(c.id)}
-                      {...longPress(() => setActionSheet(holdActions({
-                        title: c.title,
-                        subtitle: `${c.messages.length} messages · ${chatHistoryWhen(c.updatedAt)}`,
-                        list: chatHistory, setList: setChatHistory, id: c.id,
-                        deletedLabel: "Conversation deleted.",
-                        confirmText: "This removes the conversation from your history.",
-                      })))}
-                      style={{ cursor:"pointer", WebkitTouchCallout:"none", WebkitUserSelect:"none", userSelect:"none" }}>
-                      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:10 }}>
-                        <div style={{ minWidth:0, flex:1 }}>
-                          <div style={{ fontSize:13, fontWeight:600, color:C.white, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{c.title}</div>
-                          <Mono style={{ color:C.muted, display:"block", marginTop:3 }}>{c.messages.filter(m=>m.role==="user").length} message{c.messages.filter(m=>m.role==="user").length===1?"":"s"} you sent</Mono>
-                        </div>
-                        <Mono style={{ color:C.soft, flexShrink:0 }}>{chatHistoryWhen(c.updatedAt)}</Mono>
-                      </div>
-                    </Card>
-                  ))}
+              ) : searching && results.length === 0 ? (
+                <div style={{ textAlign:"center", padding:"36px 20px" }}>
+                  <div style={{ fontSize:15, fontWeight:600, color:C.text, marginBottom:6 }}>No chats found</div>
+                  <div style={{ fontSize:14, color:C.muted, lineHeight:1.5 }}>Nothing matches "{chatHistorySearch.trim()}". Try fewer or different words.</div>
                 </div>
-              )}
+              ) : groups.map(g => (
+                <div key={g.label} style={{ marginBottom:20 }}>
+                  <div style={{ fontSize:13, fontWeight:600, color:C.muted, margin:"0 4px 8px" }}>{g.label}</div>
+                  <div style={{ background:C.card, border:`1px solid ${C.cardB}`, borderRadius:20, overflow:"hidden" }}>
+                    {g.items.map((c, i) => (
+                      <div key={c.id} role="button" tabIndex={0} className="row" onClick={() => open(c)}
+                        onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(c); } }}
+                        {...(c.current ? {} : longPress(() => setActionSheet(holdActions({
+                          title: c.title,
+                          subtitle: `${c.messages.length} messages · ${chatHistoryWhen(c.updatedAt)}`,
+                          list: chatHistory, setList: setChatHistory, id: c.id,
+                          deletedLabel: "Conversation deleted.",
+                          confirmText: "This removes the conversation from your history.",
+                        }))))}
+                        style={{ padding:"13px 16px", cursor:"pointer", borderBottom: i === g.items.length - 1 ? "none" : `1px solid ${C.div}`, WebkitTouchCallout:"none", WebkitUserSelect:"none", userSelect:"none" }}>
+                        <div style={{ display:"flex", alignItems:"baseline", gap:10 }}>
+                          <div style={{ flex:1, minWidth:0, fontSize:15, fontWeight:600, color:C.text, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                            <Highlight text={c.title} terms={terms} />
+                          </div>
+                          <span style={{ fontSize:12.5, color:C.muted, flexShrink:0 }}>{c.current ? "Current chat"
+                            // Under a Today/Yesterday heading the day is already said, so show the time.
+                            : !searching && ["Today", "Yesterday"].includes(chatHistoryGroup(c.updatedAt))
+                              ? new Date(c.updatedAt).toLocaleTimeString([], { hour:"numeric", minute:"2-digit" })
+                              : chatHistoryWhen(c.updatedAt)}</span>
+                        </div>
+                        {c.hit?.snippet ? (
+                          <div style={{ fontSize:13.5, color:C.soft, lineHeight:1.45, marginTop:4, display:"-webkit-box", WebkitLineClamp:2, WebkitBoxOrient:"vertical", overflow:"hidden" }}>
+                            <span style={{ color:C.muted }}>{c.hit.role === "user" ? "You: " : "KROFT: "}</span>
+                            <Highlight text={c.hit.snippet} terms={terms} />
+                          </div>
+                        ) : (
+                          <div style={{ fontSize:13, color:C.muted, marginTop:3 }}>
+                            {(() => { const n = c.messages.filter(m => m.role === "user").length; return `${n} message${n === 1 ? "" : "s"} you sent`; })()}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
         );
@@ -10596,7 +10711,7 @@ ${voiceMode
                   const isExpanded = expandedUserMsgs.has(msgKey);
                   const displayContent = isLongUserMsg && !isExpanded ? m.content.slice(0, USER_MSG_TRUNCATE_LEN).trimEnd() + "…" : m.content;
                   return (
-                  <div key={m.id || i} style={{ display:"flex", flexDirection:"column", alignItems:m.role==="user"?"flex-end":"flex-start", animation:"fadeUp .3s ease" }}>
+                  <div key={m.id || i} data-msg-idx={i} style={{ display:"flex", flexDirection:"column", alignItems:m.role==="user"?"flex-end":"flex-start", animation:"fadeUp .3s ease", borderRadius:14, transition:"background .5s ease, box-shadow .5s ease", ...(flashMsg===i ? { background:C.accentBg, boxShadow:`0 0 0 8px ${C.accentBg}` } : {}) }}>
                     <div {...(m.role==="user" ? longPress((x,y) => setCopyPopup({ x, y, content:m.content })) : {})}
                       // Only the user's own messages sit in a bubble; KROFT's replies are plain
                       // full-width text, so the answer reads like a page rather than a chat card.
