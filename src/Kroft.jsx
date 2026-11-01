@@ -6,9 +6,12 @@ import { Markdown } from "./markdown/Markdown.jsx";
 import { toPlainText, toSpeechText } from "./markdown/parse.js";
 import { copyRich, copyPlain } from "./markdown/clipboard.js";
 import { offlineUserId, flushPending, clearOfflineData, hasUnsyncedChanges, unreadableKeys } from "./storageShim.js";
-import { DEFAULT_INVOICE_SETTINGS, invoiceTotals, invoiceStatus, invoiceAllowance, createInvoice, invoiceProblem, invoicesCreatedInMonth, FREE_INVOICES_PER_MONTH, whatsappLink, sendMessage, reminderMessage, prettyDate, STATUS_LABEL, invoicesForAI, daysBetween } from "./invoices/model.js";
+import { DEFAULT_INVOICE_SETTINGS, invoiceTotals, invoiceStatus, invoiceAllowance, quoteAllowance, createInvoice, createQuote, invoiceFromQuote, invoiceProblem, FREE_INVOICES_PER_MONTH, FREE_QUOTES_PER_MONTH, whatsappLink, sendMessage, reminderMessage, quoteMessage, prettyDate, STATUS_LABEL, invoicesForAI, quotesForAI, daysBetween, docStatus, clientSummaries, clientKey, recordPayment, removePayment, amountPaid, balanceDue, paymentsOf, hasPayments, syncInvoicesWithIncome, quoteStatus } from "./invoices/model.js";
 import { invoicePdf, invoiceFileName } from "./invoices/pdf.js";
-import { isNativeApp, nativeRedirect, openInSystemBrowser, scheduleDeviceReminders, verifyBiometric, getAppPermissions, requestAppPermission, saveFileFromApp, exactAlarmStatus, openExactAlarmSetting, getClientHeader } from "./native.js";
+import { saveFile } from "./saveFile.js";
+import { contactRecords, contactMoney, contactSummary, initials, relativeDay } from "./contacts/profile.js";
+import { isNativeApp, nativeRedirect, openInSystemBrowser, scheduleDeviceReminders, verifyBiometric, getAppPermissions, requestAppPermission, saveFileFromApp, exactAlarmStatus, openExactAlarmSetting, getClientHeader, scheduleReminderAt, cancelReminderAt } from "./native.js";
+import { unlockAudio, playTick, playDone, resetSoundOn, setResetSoundOn, keepScreenOn } from "./resetSounds.js";
 
 // What a mic button says when listening fails, by the SpeechRecognition error code. Silence used
 // to show "Mic error — check permissions." too, which sent people hunting through settings for a
@@ -2081,11 +2084,20 @@ function UberModal({ dest, onClose }) {
 // The guided countdown for an in-progress Quick Reset session. `session` is Kroft.jsx's own
 // activeReset state ({ key, label, guide, seconds, total }); the countdown itself lives there too
 // (ticked once a second by an effect in KroftApp) so this component stays a pure display of it.
-function QuickResetModal({ session, onCancel }) {
+function QuickResetModal({ session, onCancel, soundOn, onToggleSound }) {
   const pct = 1 - session.seconds / session.total;
   const mm = Math.floor(session.seconds / 60), ss = session.seconds % 60;
   return (
     <div role="dialog" aria-modal="true" aria-label={session.label} style={{ position:"fixed", inset:0, zIndex:1300, background:C.bg, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:24 }}>
+      {/* Ticks each second and chimes at the end, so the reset can be followed eyes closed. */}
+      <button onClick={onToggleSound} aria-pressed={soundOn} aria-label={soundOn ? "Turn countdown sound off" : "Turn countdown sound on"}
+        style={{ position:"absolute", top:"calc(16px + env(safe-area-inset-top))", right:16, background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:99, padding:"8px 14px", color:soundOn ? C.white : C.muted, fontSize:13, fontWeight:600, fontFamily:APP_FONT, cursor:"pointer", display:"flex", alignItems:"center", gap:7 }}>
+        <svg viewBox="0 0 24 24" width={16} height={16} aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M11 5 6 9H3v6h3l5 4z" />
+          {soundOn ? <path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13" /> : <path d="m16 9 6 6M22 9l-6 6" />}
+        </svg>
+        {soundOn ? "Sound on" : "Sound off"}
+      </button>
       <Mono style={{ color:C.muted, letterSpacing:.8, marginBottom:22, animation:"fadeUp .3s ease" }}>{session.label}</Mono>
       <div style={{ position:"relative", width:180, height:180, marginBottom:26, animation:"pop .35s cubic-bezier(.34,1.56,.64,1)" }}>
         {/* A slow ambient glow behind the ring, not tied to the second-by-second countdown —
@@ -2224,71 +2236,249 @@ const ContactSelect = ({ value, onChange, contacts, style }) => {
   );
 };
 
-// Drill-down for a single contact — shows their KROFT call/email history plus everything
-// linked to them (tasks, reminders, appointments, notes, files) in one place.
-function ContactActivityModal({ contact, tasks, reminders, appts, notes, files, onToggleTask, onToggleReminder, onClose }) {
-  const Section = ({ label, items, render }) => items.length === 0 ? null : (
-    <div style={{ marginBottom:16 }}>
-      <div style={{ fontSize:12, fontWeight:600, color:C.muted, marginBottom:8 }}>{label} ({items.length})</div>
-      <div style={{ display:"flex", flexDirection:"column", gap:8 }}>{items.map(render)}</div>
+// A contact's profile: who they are, and everything KROFT knows about them, from the records
+// linked to them (see src/contacts/profile.js). Opened by tapping a contact in Workspace › Contacts.
+function ContactProfile({ contact, data, fmt, onBack, onSave, onDelete, onCall, onEmail, onAskKroft, onToggleTask, onToggleReminder, onOpenDoc, onOpenFile }) {
+  const today = todayISO();
+  const records = contactRecords(contact, data, today);
+  const money = contactMoney(records, today);
+  const summary = contactSummary(contact, records, money, today, fmt);
+  const [editing, setEditing] = useState(null);
+  const first = (contact.name || "").split(/\s+/)[0] || "them";
+  const sum = obj => Object.entries(obj).filter(([, v]) => v > 0).map(([cur, v]) => fmt(v, cur)).join(" + ");
+
+  const Section = ({ title, count, children }) => (
+    <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+      <div style={{ fontSize:12, fontWeight:600, color:C.muted }}>{title}{count != null ? ` (${count})` : ""}</div>
+      {children}
     </div>
   );
-  const modalRef = useModalA11y(onClose);
-  const empty = tasks.length===0 && reminders.length===0 && appts.length===0 && notes.length===0 && files.length===0 && (contact.log||[]).length===0;
+  const Row = ({ children, onClick, style }) => (
+    <div onClick={onClick} role={onClick ? "button" : undefined} tabIndex={onClick ? 0 : undefined}
+      style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:10, padding:"10px 12px", borderRadius:12, border:`1px solid ${C.cardB}`, background:C.card, cursor:onClick ? "pointer" : "default", ...style }}>
+      {children}
+    </div>
+  );
+  const Check = ({ done, onClick, label }) => (
+    <button onClick={onClick} aria-label={label} aria-pressed={done} style={{ width:20, height:20, borderRadius:6, border:`1.5px solid ${done ? C.white : C.soft}`, background:done ? C.white : "transparent", cursor:"pointer", flexShrink:0, color:C.bg, fontSize:12, lineHeight:1, padding:0 }}>{done ? "✓" : ""}</button>
+  );
+  const header = (title, right) => (
+    <div style={{ display:"flex", alignItems:"center", gap:10, padding:"calc(12px + env(safe-area-inset-top)) 16px 12px", borderBottom:`1px solid ${C.cardB}`, flexShrink:0 }}>
+      <button onClick={editing ? () => setEditing(null) : onBack} aria-label="Back" style={{ background:"none", border:"none", color:C.white, cursor:"pointer", fontSize:20, padding:"2px 4px", lineHeight:1 }}>←</button>
+      <h2 style={{ fontSize:17, fontWeight:700, color:C.white, letterSpacing:-.5, flex:1, minWidth:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{title}</h2>
+      {right}
+    </div>
+  );
+
+  if (editing) {
+    const set = patch => setEditing(v => ({ ...v, ...patch }));
+    const field = (label, key, props = {}) => (
+      <label style={{ display:"block" }}>
+        <Mono style={{ display:"block", color:C.muted, marginBottom:5 }}>{label}</Mono>
+        <Inp value={editing[key] || ""} onChange={e => set({ [key]: e.target.value })} {...props} />
+      </label>
+    );
+    return (
+      <div role="dialog" aria-modal="true" aria-label={`Edit ${contact.name}`} style={{ position:"fixed", inset:0, zIndex:320, background:C.bg, display:"flex", flexDirection:"column" }}>
+        {header("Edit contact")}
+        <div style={{ flex:1, minHeight:0, overflowY:"auto", padding:16, display:"flex", flexDirection:"column", gap:12 }}>
+          {field("Name", "name")}
+          <div style={{ display:"flex", gap:10 }}>
+            <div style={{ flex:1 }}>{field("Phone", "phone", { type:"tel", inputMode:"tel" })}</div>
+            <div style={{ flex:1 }}>{field("Email", "email", { type:"email", inputMode:"email" })}</div>
+          </div>
+          <div style={{ display:"flex", gap:10 }}>
+            <div style={{ flex:1 }}>{field("Company (optional)", "company")}</div>
+            <div style={{ flex:1 }}>{field("Role (optional)", "role", { placeholder:"e.g. Marketing manager" })}</div>
+          </div>
+          {field("Address (optional)", "address")}
+          <div style={{ display:"flex", gap:10, alignItems:"flex-end" }}>
+            <div style={{ flex:1 }}>{field("Birthday (optional)", "birthday", { type:"date" })}</div>
+            <label style={{ flex:1, display:"block" }}>
+              <Mono style={{ display:"block", color:C.muted, marginBottom:5 }}>Group</Mono>
+              <select value={editing.category || "business"} onChange={e => set({ category:e.target.value })} style={{ width:"100%", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 12px", color:C.text, fontSize:13, fontFamily:APP_FONT }}>
+                <option value="business">Business</option>
+                <option value="family">Family</option>
+              </select>
+            </label>
+          </div>
+          {field("Note", "note", { placeholder:"Anything worth remembering" })}
+          <Btn full onClick={() => { if (!editing.name?.trim()) return; onSave({ ...editing, name:editing.name.trim() }); setEditing(null); }}>Save</Btn>
+          <Btn full v="ghost" style={{ color:C.negative }} onClick={onDelete}>Delete contact</Btn>
+        </div>
+      </div>
+    );
+  }
+
+  const hasMoney = records.invoices.length > 0 || records.quotes.length > 0;
+  const details = [["Phone", contact.phone], ["Email", contact.email], ["Company", contact.company], ["Role", contact.role], ["Address", contact.address], ["Birthday", contact.birthday && prettyDate(contact.birthday)], ["Note", contact.note]].filter(([, v]) => v);
+
   return (
-    <div ref={modalRef} role="dialog" aria-modal="true" aria-label={`Activity for ${contact.name}`} tabIndex={-1} style={{ position:"fixed", inset:0, zIndex:950, background:"rgba(0,0,0,.93)", display:"flex", alignItems:"center", justifyContent:"center", padding:24 }} onClick={onClose}>
-      <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:18, padding:26, maxWidth:460, width:"100%", maxHeight:"80vh", overflowY:"auto", animation:"pop .3s ease" }} onClick={e => e.stopPropagation()}>
-        <div style={{ fontSize:19, fontWeight:700, color:C.text, letterSpacing:-.3, marginBottom:2 }}>{contact.name}</div>
-        <Mono style={{ display:"block", color:C.muted, marginBottom:18 }}>Everything linked to this contact</Mono>
-        {empty ? (
-          <Mono style={{ display:"block", color:C.soft, marginBottom:18 }}>Nothing here yet. Calls and emails you place from KROFT show up here, along with any task, reminder, appointment, note or file you assign to {contact.name}. Calls dialled outside KROFT aren't visible to the app.</Mono>
-        ) : (
-          <>
-            <Section label="Calls & emails" items={contact.log||[]} render={l => (
-              <div key={l.id} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:10, padding:"9px 11px", borderRadius:10, border:`1px solid ${C.cardB}` }}>
-                <div style={{ fontSize:12, color:C.text }}>{l.type==="call" ? "Called from KROFT" : "Emailed from KROFT"}</div>
-                <Mono style={{ color:C.muted, flexShrink:0 }}>{new Date(l.at).toLocaleString("en-US", { month:"short", day:"numeric", hour:"2-digit", minute:"2-digit" })}</Mono>
-              </div>
-            )} />
-            <Section label="Tasks" items={tasks} render={t => (
-              <div key={t.id} style={{ display:"flex", alignItems:"center", gap:10, padding:"9px 11px", borderRadius:10, border:`1px solid ${C.cardB}` }}>
-                <button onClick={() => onToggleTask(t.id)} style={{ width:18, height:18, borderRadius:5, border:`1.5px solid ${t.done?C.white:C.soft}`, background:t.done?C.white:"transparent", cursor:"pointer", flexShrink:0, display:"flex", alignItems:"center", justifyContent:"center", color:C.black, fontSize:11, fontWeight:900 }}>{t.done?"✓":""}</button>
-                <div style={{ fontSize:12, color:C.text, textDecoration:t.done?"line-through":"none" }}>{t.title}</div>
-              </div>
-            )} />
-            <Section label="Reminders" items={reminders} render={r => (
-              <div key={r.id} style={{ display:"flex", alignItems:"center", gap:10, padding:"9px 11px", borderRadius:10, border:`1px solid ${C.cardB}` }}>
-                <button onClick={() => onToggleReminder(r.id)} style={{ width:18, height:18, borderRadius:5, border:`1.5px solid ${r.done?C.white:C.soft}`, background:r.done?C.white:"transparent", cursor:"pointer", flexShrink:0, display:"flex", alignItems:"center", justifyContent:"center", color:C.black, fontSize:11, fontWeight:900 }}>{r.done?"✓":""}</button>
-                <div style={{ flex:1, minWidth:0 }}>
-                  <div style={{ fontSize:12, color:C.text, textDecoration:r.done?"line-through":"none" }}>{r.text}</div>
-                  <Mono style={{ color:C.muted }}>{r.when}</Mono>
-                </div>
-              </div>
-            )} />
-            <Section label="Appointments" items={appts} render={a => (
-              <div key={a.id} style={{ padding:"9px 11px", borderRadius:10, border:`1px solid ${C.cardB}` }}>
-                <div style={{ fontSize:12, fontWeight:700, color:C.text }}>{a.title}</div>
-                <Mono style={{ color:C.muted }}>{a.time} · {fmtDate(a.date)||a.date}</Mono>
-              </div>
-            )} />
-            <Section label="Notes" items={notes} render={n => (
-              <div key={n.id} style={{ padding:"9px 11px", borderRadius:10, border:`1px solid ${C.cardB}` }}>
-                <div style={{ fontSize:12, fontWeight:700, color:C.text, marginBottom:2 }}>{n.title || "Untitled note"}</div>
-                <Mono style={{ color:C.muted }}>{n.date}</Mono>
-              </div>
-            )} />
-            <Section label="Files" items={files} render={f => (
-              <div key={f.id} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:10, padding:"9px 11px", borderRadius:10, border:`1px solid ${C.cardB}` }}>
-                <div style={{ minWidth:0, flex:1 }}>
-                  <div style={{ fontSize:12, fontWeight:700, color:C.text, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{f.name}</div>
-                  <Mono style={{ color:C.muted }}>{(f.size/1024).toFixed(0)} KB · {f.date}</Mono>
-                </div>
-                <a href={f.url} download={f.name} style={{ textDecoration:"none", flexShrink:0 }}><Btn sm v="outline">Open</Btn></a>
-              </div>
-            )} />
-          </>
+    <div role="dialog" aria-modal="true" aria-label={contact.name} style={{ position:"fixed", inset:0, zIndex:320, background:C.bg, display:"flex", flexDirection:"column" }}>
+      {header(contact.name, <button onClick={() => setEditing({ ...contact })} style={{ background:"none", border:"none", color:C.accent, fontSize:14, fontWeight:600, cursor:"pointer", padding:"4px 2px" }}>Edit</button>)}
+      <div style={{ flex:1, minHeight:0, overflowY:"auto", padding:16, display:"flex", flexDirection:"column", gap:18 }}>
+        {/* Who they are */}
+        <div style={{ display:"flex", alignItems:"center", gap:14 }}>
+          <div aria-hidden="true" style={{ width:60, height:60, borderRadius:"50%", background:C.accentBg, border:`1px solid ${C.accent}44`, color:C.accent, display:"flex", alignItems:"center", justifyContent:"center", fontSize:22, fontWeight:700, flexShrink:0 }}>{initials(contact.name)}</div>
+          <div style={{ minWidth:0 }}>
+            <div style={{ fontSize:20, fontWeight:700, color:C.white, letterSpacing:-.5, overflow:"hidden", textOverflow:"ellipsis" }}>{contact.name}</div>
+            <div style={{ display:"flex", gap:6, alignItems:"center", marginTop:4, flexWrap:"wrap" }}>
+              <Tag>{contact.category === "family" ? "FAMILY" : "BUSINESS"}</Tag>
+              {(contact.role || contact.company) && <Mono style={{ color:C.soft }}>{[contact.role, contact.company].filter(Boolean).join(" · ")}</Mono>}
+            </div>
+          </div>
+        </div>
+        <div style={{ display:"flex", gap:8 }}>
+          {contact.phone && <Btn sm style={{ flex:1 }} onClick={onCall}>Call</Btn>}
+          {contact.phone && <Btn sm v="outline" style={{ flex:1 }} onClick={() => window.open(whatsappLink(contact.phone, `Hi ${first},`), "_blank")}>WhatsApp</Btn>}
+          {contact.email && <Btn sm v="outline" style={{ flex:1 }} onClick={onEmail}>Email</Btn>}
+        </div>
+
+        {/* What KROFT knows */}
+        <Card level="raised" style={{ display:"flex", flexDirection:"column", gap:8 }}>
+          <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:8 }}>
+            <span style={{ fontSize:13, fontWeight:700, color:C.white }}>What KROFT knows</span>
+            <NavIcon id="nova" size={14} color={C.accent} />
+          </div>
+          {summary.length ? summary.map((l, i) => (
+            <div key={i} style={{ display:"flex", gap:8, alignItems:"flex-start" }}>
+              <span aria-hidden="true" style={{ width:5, height:5, borderRadius:"50%", background:C.accent, marginTop:7, flexShrink:0 }} />
+              <span style={{ fontSize:13.5, color:C.text, lineHeight:1.5 }}>{l}</span>
+            </div>
+          )) : (
+            <Mono style={{ color:C.soft, lineHeight:1.6 }}>Nothing yet. As you send {first} invoices, book meetings, add tasks or notes about them, it builds up here.</Mono>
+          )}
+          <Btn sm v="outline" onClick={() => onAskKroft(`What do you know about ${contact.name}?`)} style={{ marginTop:4 }}>Ask KROFT about {first}</Btn>
+        </Card>
+
+        {hasMoney && (
+          <Section title="Money">
+            <div style={{ display:"flex", gap:8 }}>
+              <Card level="inset" style={{ flex:1, padding:12 }}>
+                <Mono style={{ display:"block", color:C.muted, marginBottom:3 }}>Owes you</Mono>
+                <div style={{ fontSize:17, fontWeight:700, color:sum(money.owed) ? (money.overdue ? C.negative : C.white) : C.muted }}>{sum(money.owed) || fmt(0, data.currency)}</div>
+              </Card>
+              <Card level="inset" style={{ flex:1, padding:12 }}>
+                <Mono style={{ display:"block", color:C.muted, marginBottom:3 }}>Paid you</Mono>
+                <div style={{ fontSize:17, fontWeight:700, color:sum(money.paid) ? C.positive : C.muted }}>{sum(money.paid) || fmt(0, data.currency)}</div>
+              </Card>
+            </div>
+            {[...records.invoices, ...records.quotes].sort((a, b) => (b.issueDate || "").localeCompare(a.issueDate || "")).slice(0, 8).map(d => {
+              const st = d.kind === "quote" ? quoteStatus(d, today) : invoiceStatus(d, today);
+              return (
+                <Row key={d.id} onClick={() => onOpenDoc(d)}>
+                  <div style={{ minWidth:0 }}>
+                    <div style={{ fontSize:13, fontWeight:600, color:C.white }}>{d.number}</div>
+                    <Mono style={{ color:C.muted }}>{d.kind === "quote" ? "Quote" : "Invoice"} · {prettyDate(d.issueDate)}</Mono>
+                  </div>
+                  <div style={{ textAlign:"right" }}>
+                    <div style={{ fontSize:13, fontWeight:700, color:C.white }}>{fmt(invoiceTotals(d).total, d.currency)}</div>
+                    <Tag tone={DOC_TONE[st]} style={{ marginTop:2, display:"inline-block" }}>{STATUS_LABEL[st].toUpperCase()}</Tag>
+                  </div>
+                </Row>
+              );
+            })}
+          </Section>
         )}
-        <Btn v="outline" full onClick={onClose}>Close</Btn>
+
+        {(records.upcoming.length > 0 || records.past.length > 0) && (
+          <Section title="Meetings" count={records.upcoming.length + records.past.length}>
+            {[...records.upcoming, ...records.past.slice(0, 3)].map(a => (
+              <Row key={a.id} style={a.date < today ? { opacity:.7 } : null}>
+                <div style={{ minWidth:0 }}>
+                  <div style={{ fontSize:13, fontWeight:600, color:C.white }}>{a.title}</div>
+                  <Mono style={{ color:C.muted }}>{[a.time, a.location].filter(Boolean).join(" · ")}</Mono>
+                </div>
+                <Mono style={{ color:a.date >= today ? C.accent : C.muted, flexShrink:0 }}>{relativeDay(a.date, today)}</Mono>
+              </Row>
+            ))}
+          </Section>
+        )}
+
+        {(records.tasks.length > 0 || records.reminders.length > 0) && (
+          <Section title="To do" count={records.tasks.filter(t => !t.done).length + records.reminders.filter(r => !r.done).length}>
+            {records.tasks.map(t => (
+              <Row key={t.id} style={{ justifyContent:"flex-start" }}>
+                <Check done={t.done} onClick={() => onToggleTask(t.id)} label={`${t.done ? "Reopen" : "Complete"} ${t.title}`} />
+                <span style={{ fontSize:13, color:C.text, textDecoration:t.done ? "line-through" : "none" }}>{t.title}</span>
+              </Row>
+            ))}
+            {records.reminders.map(r => (
+              <Row key={r.id} style={{ justifyContent:"flex-start" }}>
+                <Check done={r.done} onClick={() => onToggleReminder(r.id)} label={`${r.done ? "Reopen" : "Complete"} ${r.text}`} />
+                <div style={{ minWidth:0 }}>
+                  <div style={{ fontSize:13, color:C.text, textDecoration:r.done ? "line-through" : "none" }}>{r.text}</div>
+                  {r.when && <Mono style={{ color:C.muted }}>{r.when}</Mono>}
+                </div>
+              </Row>
+            ))}
+          </Section>
+        )}
+
+        {records.notes.length > 0 && (
+          <Section title="Notes" count={records.notes.length}>
+            {records.notes.map(n => (
+              <Row key={n.id} style={{ flexDirection:"column", alignItems:"stretch", gap:3 }}>
+                <div style={{ fontSize:13, fontWeight:600, color:C.white }}>{n.title || "Note"}</div>
+                {n.body && <Mono style={{ color:C.soft, lineHeight:1.5, display:"-webkit-box", WebkitLineClamp:3, WebkitBoxOrient:"vertical", overflow:"hidden" }}>{n.body}</Mono>}
+                <Mono style={{ color:C.muted }}>{n.date}</Mono>
+              </Row>
+            ))}
+          </Section>
+        )}
+
+        {records.files.length > 0 && (
+          <Section title="Files" count={records.files.length}>
+            {records.files.map(f => (
+              <Row key={f.id}>
+                <div style={{ minWidth:0 }}>
+                  <div style={{ fontSize:13, fontWeight:600, color:C.white, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{f.name}</div>
+                  <Mono style={{ color:C.muted }}>{Math.max(1, Math.round((f.size || 0) / 1024))} KB · {f.date}</Mono>
+                </div>
+                <Btn sm v="outline" onClick={() => onOpenFile(f)}>Save</Btn>
+              </Row>
+            ))}
+          </Section>
+        )}
+
+        {records.emails.length > 0 && (
+          <Section title="Emails from them" count={records.emails.length}>
+            {records.emails.slice(0, 5).map(e => (
+              <Row key={e.id}>
+                <div style={{ minWidth:0 }}>
+                  <div style={{ fontSize:13, fontWeight:e.read ? 500 : 700, color:C.white, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{e.subject || "(no subject)"}</div>
+                  <Mono style={{ color:C.muted }}>{e.time}</Mono>
+                </div>
+                {!e.read && <Tag tone="accent">NEW</Tag>}
+              </Row>
+            ))}
+          </Section>
+        )}
+
+        {records.log.length > 0 && (
+          <Section title="Contact history" count={records.log.length}>
+            {records.log.slice(0, 8).map(l => (
+              <Row key={l.id}>
+                <span style={{ fontSize:13, color:C.text }}>{l.type === "call" ? "Called from KROFT" : "Emailed from KROFT"}</span>
+                <Mono style={{ color:C.muted }}>{new Date(l.at).toLocaleString("en-GB", { day:"numeric", month:"short", hour:"2-digit", minute:"2-digit" })}</Mono>
+              </Row>
+            ))}
+          </Section>
+        )}
+
+        {details.length > 0 && (
+          <Section title="Details">
+            <Card level="inset" style={{ padding:"4px 14px" }}>
+              {details.map(([label, value], i) => (
+                <div key={label} style={{ display:"flex", justifyContent:"space-between", gap:14, padding:"10px 0", borderTop:i ? `1px solid ${C.div}` : "none" }}>
+                  <Mono style={{ color:C.muted, flexShrink:0 }}>{label}</Mono>
+                  <span style={{ fontSize:13, color:C.text, textAlign:"right", wordBreak:"break-word" }}>{value}</span>
+                </div>
+              ))}
+            </Card>
+          </Section>
+        )}
+        <div style={{ height:8 }} />
       </div>
     </div>
   );
@@ -2639,13 +2829,14 @@ function ProfileRow({ label, sub, expanded, onToggle, children, right, icon, glo
   );
 }
 
-// ── Invoices (Home › Finance › Invoices) ──
-// List, create/edit, view-and-send, and the business's invoice details. The logic (totals,
-// numbering, statuses, messages) is in src/invoices/model.js and the PDF in src/invoices/pdf.js;
-// this is only the screens. Free plan: FREE_INVOICES_PER_MONTH new invoices a month; KROFT Plus:
+// ── Invoices, quotes and clients (Home › Finance › Invoices) ──
+// The logic (totals, numbering, statuses, messages, client balances) is in src/invoices/model.js
+// and the PDF in src/invoices/pdf.js; this is only the screens. Clients are the person's own
+// contacts: an invoice or quote links to one (clientId), and a new name becomes a Business contact.
+// Free plan: FREE_INVOICES_PER_MONTH invoices and FREE_QUOTES_PER_MONTH quotes a month; KROFT Plus:
 // unlimited, plus payment reminders.
-const INVOICE_TONE = { draft:null, sent:"accent", overdue:"negative", paid:"positive", cancelled:null };
-const bytesToBase64 = bytes => { let bin = ""; for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000)); return btoa(bin); };
+const DOC_TONE = { draft:null, sent:"accent", partial:"warning", overdue:"negative", paid:"positive", cancelled:null, accepted:"positive", declined:"negative", invoiced:null, expired:"warning" };
+const sumByCur = (obj, fmt) => Object.entries(obj).filter(([, v]) => v).map(([cur, v]) => fmt(v, cur)).join(" + ");
 
 function InvoiceField({ label, children, style }) {
   return (
@@ -2656,18 +2847,28 @@ function InvoiceField({ label, children, style }) {
   );
 }
 
-function InvoicesScreen({ invoices, setInvoices, settings, setSettings, user, subscribed, contacts, onClose, toast, onUpgrade, onRecordIncome, onRemoveIncome, openId }) {
+function InvoicesScreen({ invoices, setInvoices, quotes, setQuotes, settings, setSettings, user, subscribed, contacts, setContacts, onClose, toast, onUpgrade, onRecordPayment, onRemoveIncome, openId, openKind }) {
   const today = todayISO();
   const fmt = fmtCur;
-  const [view, setView] = useState(openId ? "view" : "list");
+  const [tab, setTab] = useState("invoices");          // invoices | quotes | clients
+  const [view, setView] = useState(openId ? "view" : "list");  // list | edit | view | settings | client
   const [currentId, setCurrentId] = useState(openId || null);
-  const [draft, setDraft] = useState(null);         // the invoice being created or edited
+  const [currentKind, setCurrentKind] = useState(openKind || "invoice");
+  const [clientKeySel, setClientKeySel] = useState(null);
+  const [draft, setDraft] = useState(null);
   const [settingsDraft, setSettingsDraft] = useState(null);
   const [filter, setFilter] = useState("all");
   const [busy, setBusy] = useState("");
   const [preview, setPreview] = useState(null);
-  const current = invoices.find(i => i.id === currentId) || null;
-  const allowance = invoiceAllowance({ subscribed, invoices, today });
+  const [returnTo, setReturnTo] = useState("list");     // where Back goes from a document
+  const [payForm, setPayForm] = useState(null);         // { amount, date } while recording a payment
+
+  const listFor = kind => (kind === "quote" ? quotes : invoices);
+  const setListFor = kind => (kind === "quote" ? setQuotes : setInvoices);
+  const current = listFor(currentKind).find(d => d.id === currentId) || null;
+  const invAllowance = invoiceAllowance({ subscribed, invoices, today });
+  const qAllowance = quoteAllowance({ subscribed, quotes, today });
+  const clients = clientSummaries({ invoices, quotes, contacts, today });
   const needsDetails = !settings.bankName && !settings.accountNumber;
 
   useEffect(() => {
@@ -2679,115 +2880,151 @@ function InvoicesScreen({ invoices, setInvoices, settings, setSettings, user, su
     return () => { cancelled = true; };
   }, [view, current, settings, user]);
 
-  const statusOf = inv => invoiceStatus(inv, today);
-  const counts = invoices.reduce((acc, inv) => { const s = statusOf(inv); acc[s] = (acc[s] || 0) + 1; return acc; }, {});
-  const unpaid = invoices.filter(inv => ["sent","overdue"].includes(statusOf(inv)));
-  const outstandingByCur = unpaid.reduce((acc, inv) => { acc[inv.currency] = (acc[inv.currency] || 0) + invoiceTotals(inv).total; return acc; }, {});
-  const shown = invoices
-    .filter(inv => filter === "all" || (filter === "unpaid" ? ["sent","overdue"].includes(statusOf(inv)) : statusOf(inv) === filter))
-    .slice().sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || "") || String(b.number).localeCompare(String(a.number)));
+  const statusOf = doc => docStatus(doc, today);
+  const update = (kind, id, patch) => setListFor(kind)(list => list.map(d => d.id === id ? { ...d, ...patch } : d));
+  const openDoc = (doc, from = "list") => { setPayForm(null); setCurrentKind(doc.kind === "quote" ? "quote" : "invoice"); setCurrentId(doc.id); setReturnTo(from); setView("view"); };
+  const backFromDoc = () => {
+    // Opened straight to this document (from a contact's profile): Back goes back there.
+    if (openId && currentId === openId) { onClose(); return; }
+    setCurrentId(null); setView(returnTo === "client" && clientKeySel ? "client" : "list");
+  };
 
-  const update = (id, patch) => setInvoices(list => list.map(i => i.id === id ? { ...i, ...patch } : i));
-
-  const startNew = () => {
-    if (!allowance.allowed) {
-      toast(`You've used this month's ${FREE_INVOICES_PER_MONTH} free invoices. KROFT Plus gives you unlimited invoices.`);
-      onUpgrade?.();
-      return;
+  // The client on a saved invoice/quote becomes (or links to) a Business contact, so their phone
+  // and email are remembered and everything for them can be seen together.
+  const linkClient = doc => {
+    const name = doc.client.name.trim();
+    const existing = (doc.clientId && contacts.find(c => String(c.id) === String(doc.clientId)))
+      || contacts.find(c => (c.name || "").trim().toLowerCase() === name.toLowerCase());
+    if (existing) {
+      const fill = {};
+      if (!existing.phone && doc.client.phone) fill.phone = doc.client.phone;
+      if (!existing.email && doc.client.email) fill.email = doc.client.email;
+      if (Object.keys(fill).length) setContacts(p => p.map(c => c.id === existing.id ? { ...c, ...fill } : c));
+      return existing.id;
     }
-    const { invoice } = createInvoice({ settings, currency: user.currency || "NGN", today, id: String(uid()) });
-    setDraft({ ...invoice, _new: true });
+    const contact = { id:uid(), name, phone:doc.client.phone || "", email:doc.client.email || "", category:"business", note:"Client" };
+    setContacts(p => [contact, ...p]);
+    return contact.id;
+  };
+
+  const blockedMsg = kind => kind === "quote"
+    ? `You've used this month's ${FREE_QUOTES_PER_MONTH} free quotes. KROFT Plus gives you unlimited quotes.`
+    : `You've used this month's ${FREE_INVOICES_PER_MONTH} free invoices. KROFT Plus gives you unlimited invoices.`;
+
+  const startNew = (kind, client = null) => {
+    if (!(kind === "quote" ? qAllowance : invAllowance).allowed) { toast(blockedMsg(kind)); onUpgrade?.(); return; }
+    const base = { settings, currency: user.currency || "NGN", today, id: String(uid()), client: client ? { name:client.name, email:client.email, phone:client.phone } : {} };
+    const doc = kind === "quote" ? createQuote({ ...base, clientId: client?.clientId || null }).quote : { ...createInvoice(base).invoice, clientId: client?.clientId || null };
+    setDraft({ ...doc, _new: true });
+    setReturnTo(client ? "client" : "list");
     setView("edit");
   };
-  const startEdit = inv => { setDraft({ ...inv, items: inv.items.map(it => ({ ...it })), client: { ...inv.client } }); setView("edit"); };
-  const duplicate = inv => {
-    if (!allowance.allowed) { toast(`You've used this month's ${FREE_INVOICES_PER_MONTH} free invoices. KROFT Plus gives you unlimited invoices.`); onUpgrade?.(); return; }
-    const { invoice } = createInvoice({ settings, client: inv.client, items: inv.items.map(({ description, qty, price }) => ({ description, qty, price })), currency: inv.currency, today, id: String(uid()), vatRate: inv.vatRate, discount: inv.discount, notes: inv.notes });
-    setDraft({ ...invoice, _new: true });
+  const startEdit = doc => { setDraft({ ...doc, items: doc.items.map(it => ({ ...it })), client: { ...doc.client } }); setView("edit"); };
+  const duplicate = doc => {
+    const kind = doc.kind === "quote" ? "quote" : "invoice";
+    if (!(kind === "quote" ? qAllowance : invAllowance).allowed) { toast(blockedMsg(kind)); onUpgrade?.(); return; }
+    const base = { settings, client: doc.client, items: doc.items.map(({ description, qty, price }) => ({ description, qty, price })), currency: doc.currency, today, id: String(uid()), vatRate: doc.vatRate, discount: doc.discount, notes: doc.notes };
+    const copy = kind === "quote" ? createQuote({ ...base, clientId: doc.clientId }).quote : { ...createInvoice(base).invoice, clientId: doc.clientId || null };
+    setDraft({ ...copy, _new: true });
     setView("edit");
   };
 
   const saveDraft = () => {
-    const { _new, ...inv } = draft;
-    const clean = { ...inv, items: inv.items.filter(it => it.description || Number(it.price)) };
-    if (!clean.client.name) { toast("Add who the invoice is for."); return; }
+    const { _new, ...doc } = draft;
+    const kind = doc.kind === "quote" ? "quote" : "invoice";
+    const clean = { ...doc, items: doc.items.filter(it => it.description || Number(it.price)) };
+    if (!clean.client.name) { toast(`Add who the ${kind} is for.`); return; }
+    clean.clientId = linkClient(clean);
     if (_new) {
-      // The number is only used up once the invoice is actually saved.
-      setInvoices(list => [clean, ...list]);
-      setSettings(s => ({ ...s, nextNumber: (Number(s.nextNumber) || 1) + 1 }));
-    } else update(clean.id, clean);
+      // The number is only used up once it's actually saved.
+      setListFor(kind)(list => [clean, ...list]);
+      setSettings(s => kind === "quote" ? { ...s, nextQuoteNumber:(Number(s.nextQuoteNumber) || 1) + 1 } : { ...s, nextNumber:(Number(s.nextNumber) || 1) + 1 });
+    } else update(kind, clean.id, clean);
     setDraft(null);
-    setCurrentId(clean.id);
+    setCurrentKind(kind); setCurrentId(clean.id);
     setView("view");
-    toast(_new ? `${clean.number} saved.` : "Invoice updated.");
+    toast(_new ? `${clean.number} saved.` : `${kind === "quote" ? "Quote" : "Invoice"} updated.`);
   };
 
-  const markSent = inv => { if (inv.status === "draft") update(inv.id, { status:"sent", sentAt:today }); };
+  const markSent = doc => { if (doc.status === "draft") update(doc.kind === "quote" ? "quote" : "invoice", doc.id, { status:"sent", sentAt:today }); };
+  const messageFor = (doc, reminder) => doc.kind === "quote" ? quoteMessage(doc, settings, user, fmt)
+    : reminder ? reminderMessage(doc, settings, user, fmt, today) : sendMessage(doc, settings, user, fmt);
 
-  const sharePdf = async inv => {
-    const problem = invoiceProblem(inv);
-    if (problem) { toast(problem); return; }
+  const sharePdf = async doc => {
+    const problem = invoiceProblem(doc);
+    if (problem) { toast(problem.replace("invoice", doc.kind === "quote" ? "quote" : "invoice")); return; }
     setBusy("pdf");
     try {
-      const { bytes } = await invoicePdf(inv, settings, user, fmt, { font: APP_FONT, today });
-      const name = invoiceFileName(inv);
-      const text = sendMessage(inv, settings, user, fmt);
-      if (isNativeApp) {
-        const shared = await saveFileFromApp(name, null, { base64: bytesToBase64(bytes), text });
-        if (shared) markSent(inv);
-      } else {
-        const file = new File([bytes], name, { type:"application/pdf" });
-        if (navigator.canShare?.({ files:[file] })) {
-          try { await navigator.share({ files:[file], title:`Invoice ${inv.number}`, text }); markSent(inv); }
-          catch (err) { if (err?.name !== "AbortError") throw err; }
-        } else {
-          const url = URL.createObjectURL(file);
-          const a = document.createElement("a"); a.href = url; a.download = name;
-          document.body.appendChild(a); a.click(); a.remove();
-          setTimeout(() => URL.revokeObjectURL(url), 10000);
-          markSent(inv);
-          toast("PDF downloaded. Attach it to your email or WhatsApp.");
-        }
-      }
+      const { bytes } = await invoicePdf(doc, settings, user, fmt, { font: APP_FONT, today });
+      const name = invoiceFileName(doc);
+      const text = messageFor(doc, false);
+      const label = `${doc.kind === "quote" ? "Quote" : "Invoice"} ${doc.number}`;
+      const result = await saveFile({ name, data:bytes, type:"application/pdf", text, title:label });
+      if (result !== "cancelled") markSent(doc);
+      if (result === "downloaded") toast("PDF downloaded. Attach it to your email or WhatsApp.");
     } catch (err) {
       toast(err?.code === "needs-update" ? "Update the KROFT app to share PDFs." : "Couldn't create the PDF. Try again.");
     } finally { setBusy(""); }
   };
 
-  const sendWhatsApp = (inv, reminder) => {
-    if (!inv.client.phone) { toast("Add the client's phone number to send on WhatsApp."); startEdit(inv); return; }
-    const text = reminder ? reminderMessage(inv, settings, user, fmt, today) : sendMessage(inv, settings, user, fmt);
-    window.open(whatsappLink(inv.client.phone, text), "_blank");
-    if (!reminder) markSent(inv);
+  const sendWhatsApp = (doc, reminder) => {
+    if (!doc.client.phone) { toast("Add the client's phone number to send on WhatsApp."); startEdit(doc); return; }
+    window.open(whatsappLink(doc.client.phone, messageFor(doc, reminder)), "_blank");
+    if (!reminder) markSent(doc);
   };
-  const sendEmail = (inv, reminder) => {
-    if (!inv.client.email) { toast("Add the client's email address to send by email."); startEdit(inv); return; }
-    const subject = reminder ? `Reminder: invoice ${inv.number}` : `Invoice ${inv.number}`;
-    const body = reminder ? reminderMessage(inv, settings, user, fmt, today) : `${sendMessage(inv, settings, user, fmt)}\n\n(The invoice PDF is attached.)`;
-    window.location.href = `mailto:${encodeURIComponent(inv.client.email)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-    if (!reminder) markSent(inv);
+  const sendEmail = (doc, reminder) => {
+    if (!doc.client.email) { toast("Add the client's email address to send by email."); startEdit(doc); return; }
+    const what = doc.kind === "quote" ? "Quote" : "Invoice";
+    const subject = reminder ? `Reminder: invoice ${doc.number}` : `${what} ${doc.number}`;
+    const body = reminder ? messageFor(doc, true) : `${messageFor(doc, false)}\n\n(The ${what.toLowerCase()} PDF is attached.)`;
+    window.location.href = `mailto:${encodeURIComponent(doc.client.email)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+    if (!reminder) markSent(doc);
   };
-  const remind = (inv, via) => {
+  const remind = (doc, via) => {
     if (!subscribed) { toast("Payment reminders are a KROFT Plus feature."); onUpgrade?.(); return; }
-    if (via === "whatsapp") sendWhatsApp(inv, true); else sendEmail(inv, true);
+    if (via === "whatsapp") sendWhatsApp(doc, true); else sendEmail(doc, true);
   };
 
-  const markPaid = inv => {
-    const incomeId = onRecordIncome(inv);
-    update(inv.id, { status:"paid", paidDate:today, incomeId });
-    toast(`${inv.number} marked paid and added to your income.`);
+  // Each payment is also an income entry, dated when the money arrived.
+  const savePayment = inv => {
+    const amount = Math.round((parseFloat(String(payForm?.amount || "").replace(/[^\d.]/g, "")) || 0) * 100) / 100;
+    const date = /^\d{4}-\d{2}-\d{2}$/.test(payForm?.date || "") ? payForm.date : today;
+    const due = balanceDue(inv);
+    if (amount <= 0) { toast("Enter the amount you received."); return; }
+    if (amount > due + 0.005) { toast(`That's more than the ${fmt(due, inv.currency)} still due.`); return; }
+    if (date > today) { toast("The payment date can't be in the future."); return; }
+    const full = amount >= due - 0.005;
+    const id = String(uid());
+    const incomeId = onRecordPayment(inv, amount, date, !full || amountPaid(inv) > 0);
+    const next = recordPayment(inv, { id, amount, date, incomeId }, today);
+    update("invoice", inv.id, next);
+    setPayForm(null);
+    toast(next.status === "paid"
+      ? `${inv.number} is paid in full. ${fmt(amount, inv.currency)} added to your income.`
+      : `${fmt(amount, inv.currency)} recorded. ${fmt(balanceDue(next), inv.currency)} still due.`);
   };
-  const markUnpaid = inv => {
-    if (inv.incomeId) onRemoveIncome(inv.incomeId);
-    update(inv.id, { status:"sent", paidDate:null, incomeId:null, sentAt: inv.sentAt || today });
-    toast(`${inv.number} is unpaid again; its income entry was removed.`);
+  const undoPayment = (inv, p) => {
+    if (!window.confirm(`Remove the ${fmt(p.amount, inv.currency)} payment of ${prettyDate(p.date)}? Its income entry is removed too.`)) return;
+    if (p.incomeId) onRemoveIncome(p.incomeId);
+    update("invoice", inv.id, removePayment(inv, p.id, today));
+    toast("Payment removed.");
   };
-  const remove = inv => {
-    const extra = inv.status === "paid" ? " The income it recorded stays in your finances." : "";
-    if (!window.confirm(`Delete ${inv.number}?${extra}`)) return;
-    setInvoices(list => list.filter(i => i.id !== inv.id));
-    setCurrentId(null); setView("list");
-    toast(`${inv.number} deleted.`);
+  const convertQuote = q => {
+    if (!invAllowance.allowed) { toast(blockedMsg("invoice")); onUpgrade?.(); return; }
+    const { invoice } = invoiceFromQuote({ quote:q, settings, today, id:String(uid()) });
+    setInvoices(list => [invoice, ...list]);
+    setSettings(s => ({ ...s, nextNumber:(Number(s.nextNumber) || 1) + 1 }));
+    update("quote", q.id, { status:"invoiced", invoiceId:invoice.id });
+    setCurrentKind("invoice"); setCurrentId(invoice.id);
+    toast(`${q.number} turned into ${invoice.number}. Check the due date, then send it.`);
+  };
+  const remove = doc => {
+    const kind = doc.kind === "quote" ? "quote" : "invoice";
+    const extra = doc.kind !== "quote" && hasPayments(doc) ? " The payments it recorded stay in your income." : "";
+    if (!window.confirm(`Delete ${doc.number}?${extra}`)) return;
+    setListFor(kind)(list => list.filter(d => d.id !== doc.id));
+    backFromDoc();
+    toast(`${doc.number} deleted.`);
   };
 
   const header = (title, onBack, right) => (
@@ -2795,6 +3032,42 @@ function InvoicesScreen({ invoices, setInvoices, settings, setSettings, user, su
       <button onClick={onBack} aria-label="Back" style={{ background:"none", border:"none", color:C.white, cursor:"pointer", fontSize:20, padding:"2px 4px", lineHeight:1 }}>←</button>
       <h2 style={{ fontSize:17, fontWeight:700, color:C.white, letterSpacing:-.5, flex:1, minWidth:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{title}</h2>
       {right}
+    </div>
+  );
+  const linkBtn = (label, onClick) => <button onClick={onClick} style={{ background:"none", border:"none", color:C.accent, fontSize:14, fontWeight:600, cursor:"pointer", padding:"4px 2px" }}>{label}</button>;
+  const chips = (items, value, onChange, label) => (
+    <div role="tablist" aria-label={label} style={{ display:"flex", gap:6, flexWrap:"wrap", marginBottom:12 }}>
+      {items.map(([k, l]) => (
+        <button key={k} role="tab" aria-selected={value === k} onClick={() => onChange(k)}
+          style={{ background: value === k ? C.text : C.surface, color: value === k ? C.bg : C.soft, border:`1px solid ${value === k ? C.text : C.cardB}`, borderRadius:99, padding:"6px 12px", fontSize:12, fontWeight:600, cursor:"pointer", fontFamily:APP_FONT }}>{l}</button>
+      ))}
+    </div>
+  );
+  const docRow = (doc, from) => {
+    const st = statusOf(doc);
+    const sub = doc.kind === "quote"
+      ? `${doc.number} · ${st === "invoiced" ? "turned into an invoice" : `valid until ${prettyDate(doc.validUntil)}`}`
+      : `${doc.number} · ${st === "paid" ? `paid ${prettyDate(doc.paidDate)}` : `${amountPaid(doc) > 0 ? `${fmt(balanceDue(doc), doc.currency)} left · ` : ""}due ${prettyDate(doc.dueDate)}`}`;
+    return (
+      <Card key={doc.id} level="raised" style={{ cursor:"pointer", padding:"12px 14px" }} onClick={() => openDoc(doc, from)}>
+        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:10 }}>
+          <div style={{ minWidth:0 }}>
+            <div style={{ fontSize:14, fontWeight:600, color:C.white, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{doc.client.name || "No client yet"}</div>
+            <Mono style={{ display:"block", color:C.muted, marginTop:2 }}>{sub}</Mono>
+          </div>
+          <div style={{ textAlign:"right", flexShrink:0 }}>
+            <div style={{ fontSize:14, fontWeight:700, color:C.white }}>{fmt(invoiceTotals(doc).total, doc.currency)}</div>
+            <Tag tone={DOC_TONE[st]} style={{ marginTop:3, display:"inline-block" }}>{STATUS_LABEL[st].toUpperCase()}</Tag>
+          </div>
+        </div>
+      </Card>
+    );
+  };
+  const contactButtons = c => (
+    <div style={{ display:"flex", gap:8 }}>
+      {c.phone && <Btn sm v="outline" style={{ flex:1 }} onClick={() => window.open(whatsappLink(c.phone, `Hi ${c.name.split(/\s+/)[0]},`), "_blank")}>WhatsApp</Btn>}
+      {c.phone && <Btn sm v="outline" style={{ flex:1 }} onClick={() => { window.location.href = `tel:${c.phone.replace(/[^\d+]/g, "")}`; }}>Call</Btn>}
+      {c.email && <Btn sm v="outline" style={{ flex:1 }} onClick={() => { window.location.href = `mailto:${encodeURIComponent(c.email)}`; }}>Email</Btn>}
     </div>
   );
 
@@ -2806,7 +3079,7 @@ function InvoicesScreen({ invoices, setInvoices, settings, setSettings, user, su
       <>
         {header("Invoice details", () => { setSettingsDraft(null); setView(current ? "view" : "list"); })}
         <div style={{ flex:1, minHeight:0, overflowY:"auto", padding:16, display:"flex", flexDirection:"column", gap:12 }}>
-          <Mono style={{ color:C.soft, lineHeight:1.6 }}>These appear on every invoice you send.</Mono>
+          <Mono style={{ color:C.soft, lineHeight:1.6 }}>These appear on every invoice and quote you send.</Mono>
           <InvoiceField label="Business name"><Inp placeholder={user.businessName || user.name || "Your business"} value={d.businessName} onChange={e => set({ businessName:e.target.value })} /></InvoiceField>
           <InvoiceField label="Address (optional)"><Inp value={d.address} onChange={e => set({ address:e.target.value })} /></InvoiceField>
           <div style={{ display:"flex", gap:10 }}>
@@ -2817,7 +3090,7 @@ function InvoicesScreen({ invoices, setInvoices, settings, setSettings, user, su
           <InvoiceField label="Bank"><Inp placeholder="e.g. GTBank" value={d.bankName} onChange={e => set({ bankName:e.target.value })} /></InvoiceField>
           <InvoiceField label="Account name"><Inp value={d.accountName} onChange={e => set({ accountName:e.target.value })} /></InvoiceField>
           <InvoiceField label="Account number"><Inp inputMode="numeric" value={d.accountNumber} onChange={e => set({ accountNumber:e.target.value.replace(/[^\d ]/g, "") })} /></InvoiceField>
-          <div style={{ fontSize:12, fontWeight:600, color:C.muted, marginTop:8 }}>Defaults</div>
+          <div style={{ fontSize:12, fontWeight:600, color:C.muted, marginTop:8 }}>Invoices</div>
           <div style={{ display:"flex", gap:10 }}>
             <InvoiceField label="Number prefix" style={{ flex:1 }}><Inp value={d.prefix} onChange={e => set({ prefix:e.target.value.replace(/[^A-Za-z0-9]/g, "").slice(0, 8).toUpperCase() })} /></InvoiceField>
             <InvoiceField label="Next number" style={{ flex:1 }}><Inp inputMode="numeric" value={String(d.nextNumber)} onChange={e => set({ nextNumber: Math.max(1, parseInt(e.target.value.replace(/\D/g, "") || "1", 10)) })} /></InvoiceField>
@@ -2826,24 +3099,31 @@ function InvoicesScreen({ invoices, setInvoices, settings, setSettings, user, su
             <InvoiceField label="Payment due after (days)" style={{ flex:1 }}><Inp inputMode="numeric" value={String(d.dueDays)} onChange={e => set({ dueDays: Math.min(365, parseInt(e.target.value.replace(/\D/g, "") || "0", 10)) })} /></InvoiceField>
             <InvoiceField label="VAT % (0 if none)" style={{ flex:1 }}><Inp inputMode="decimal" value={String(d.vatRate)} onChange={e => set({ vatRate: Math.min(100, parseFloat(e.target.value.replace(/[^\d.]/g, "")) || 0) })} /></InvoiceField>
           </div>
-          <InvoiceField label="Note at the bottom"><Inp value={d.note} onChange={e => set({ note:e.target.value })} /></InvoiceField>
+          <div style={{ fontSize:12, fontWeight:600, color:C.muted, marginTop:8 }}>Quotes</div>
+          <div style={{ display:"flex", gap:10 }}>
+            <InvoiceField label="Number prefix" style={{ flex:1 }}><Inp value={d.quotePrefix} onChange={e => set({ quotePrefix:e.target.value.replace(/[^A-Za-z0-9]/g, "").slice(0, 8).toUpperCase() })} /></InvoiceField>
+            <InvoiceField label="Valid for (days)" style={{ flex:1 }}><Inp inputMode="numeric" value={String(d.quoteValidDays)} onChange={e => set({ quoteValidDays: Math.min(365, parseInt(e.target.value.replace(/\D/g, "") || "0", 10)) })} /></InvoiceField>
+          </div>
+          <InvoiceField label="Note at the bottom of invoices"><Inp value={d.note} onChange={e => set({ note:e.target.value })} /></InvoiceField>
           <Btn full onClick={() => { setSettings(d); setSettingsDraft(null); setView(current ? "view" : "list"); toast("Invoice details saved."); }}>Save</Btn>
         </div>
       </>
     );
   } else if (view === "edit" && draft) {
+    const isQuote = draft.kind === "quote";
     const setD = patch => setDraft(v => ({ ...v, ...patch }));
     const setItem = (idx, patch) => setDraft(v => ({ ...v, items: v.items.map((it, i) => i === idx ? { ...it, ...patch } : it) }));
     const t = invoiceTotals(draft);
     const pickContact = name => {
       const c = contacts.find(x => (x.name || "").toLowerCase() === name.trim().toLowerCase());
-      setD({ client: { ...draft.client, name, ...(c ? { email: draft.client.email || c.email || "", phone: draft.client.phone || c.phone || "" } : {}) } });
+      setD({ clientId: c ? c.id : null, client: { ...draft.client, name, ...(c ? { email: draft.client.email || c.email || "", phone: draft.client.phone || c.phone || "" } : {}) } });
     };
+    const what = isQuote ? "quote" : "invoice";
     body = (
       <>
-        {header(draft._new ? `New invoice · ${draft.number}` : `Edit ${draft.number}`, () => { setDraft(null); setView(current ? "view" : "list"); })}
+        {header(draft._new ? `New ${what} · ${draft.number}` : `Edit ${draft.number}`, () => { setDraft(null); setView(current ? "view" : returnTo === "client" && clientKeySel ? "client" : "list"); })}
         <div style={{ flex:1, minHeight:0, overflowY:"auto", padding:16, display:"flex", flexDirection:"column", gap:12 }}>
-          <div style={{ fontSize:12, fontWeight:600, color:C.muted }}>Bill to</div>
+          <div style={{ fontSize:12, fontWeight:600, color:C.muted }}>{isQuote ? "Quote for" : "Bill to"}</div>
           <InvoiceField label="Client name">
             <Inp list="kroft-invoice-contacts" placeholder="Who is this for?" value={draft.client.name} onChange={e => pickContact(e.target.value)} />
             <datalist id="kroft-invoice-contacts">{contacts.filter(c => c.name).map(c => <option key={c.id} value={c.name} />)}</datalist>
@@ -2870,8 +3150,10 @@ function InvoicesScreen({ invoices, setInvoices, settings, setSettings, user, su
           <Btn sm v="outline" onClick={() => setD({ items:[...draft.items, { id:`${draft.id}-${Date.now()}`, description:"", qty:1, price:0 }] })}>+ Add item</Btn>
 
           <div style={{ display:"flex", gap:10, marginTop:6 }}>
-            <InvoiceField label="Invoice date" style={{ flex:1 }}><Inp type="date" value={draft.issueDate} onChange={e => setD({ issueDate:e.target.value })} /></InvoiceField>
-            <InvoiceField label="Due date" style={{ flex:1 }}><Inp type="date" value={draft.dueDate} onChange={e => setD({ dueDate:e.target.value })} /></InvoiceField>
+            <InvoiceField label={isQuote ? "Quote date" : "Invoice date"} style={{ flex:1 }}><Inp type="date" value={draft.issueDate} onChange={e => setD({ issueDate:e.target.value })} /></InvoiceField>
+            {isQuote
+              ? <InvoiceField label="Valid until" style={{ flex:1 }}><Inp type="date" value={draft.validUntil} onChange={e => setD({ validUntil:e.target.value })} /></InvoiceField>
+              : <InvoiceField label="Due date" style={{ flex:1 }}><Inp type="date" value={draft.dueDate} onChange={e => setD({ dueDate:e.target.value })} /></InvoiceField>}
           </div>
           <div style={{ display:"flex", gap:10 }}>
             <InvoiceField label={`Discount (${draft.currency})`} style={{ flex:1 }}><Inp inputMode="decimal" value={draft.discount ? String(draft.discount) : ""} onChange={e => setD({ discount: parseFloat(e.target.value.replace(/[^\d.]/g, "")) || 0 })} /></InvoiceField>
@@ -2888,48 +3170,84 @@ function InvoicesScreen({ invoices, setInvoices, settings, setSettings, user, su
               <span style={{ fontSize:20, fontWeight:700, color:C.white, letterSpacing:-.6 }}>{fmt(t.total, draft.currency)}</span>
             </div>
           </Card>
-          <Btn full onClick={saveDraft}>Save invoice</Btn>
+          <Btn full onClick={saveDraft}>{isQuote ? "Save quote" : "Save invoice"}</Btn>
         </div>
       </>
     );
   } else if (view === "view" && current) {
+    const isQuote = current.kind === "quote";
     const st = statusOf(current);
     const t = invoiceTotals(current);
     const late = st === "overdue" ? daysBetween(current.dueDate, today) : 0;
+    const linkedInvoice = isQuote && current.invoiceId ? invoices.find(i => i.id === current.invoiceId) : null;
+    const fromQuote = !isQuote && current.quoteId ? quotes.find(q => q.id === current.quoteId) : null;
+    const subline = isQuote
+      ? (st === "invoiced" ? `Turned into ${linkedInvoice?.number || "an invoice"}` : st === "expired" ? `Expired ${prettyDate(current.validUntil)}` : `Valid until ${prettyDate(current.validUntil)}`)
+      : (st === "paid" ? `Paid ${prettyDate(current.paidDate)}`
+        : `${amountPaid(current) > 0 ? `${fmt(amountPaid(current), current.currency)} paid · ${fmt(balanceDue(current), current.currency)} left · ` : ""}${st === "overdue" ? `${late} day${late === 1 ? "" : "s"} overdue` : `due ${prettyDate(current.dueDate)}`}`);
     body = (
       <>
-        {header(current.number, () => { setCurrentId(null); setView("list"); }, (
-          <button onClick={() => startEdit(current)} style={{ background:"none", border:"none", color:C.accent, fontSize:14, fontWeight:600, cursor:"pointer", padding:"4px 2px" }}>Edit</button>
-        ))}
+        {header(current.number, backFromDoc, st !== "invoiced" && (isQuote || !hasPayments(current)) && linkBtn("Edit", () => startEdit(current)))}
         <div style={{ flex:1, minHeight:0, overflowY:"auto", padding:16, display:"flex", flexDirection:"column", gap:12 }}>
           <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:10 }}>
             <div style={{ minWidth:0 }}>
               <div style={{ fontSize:15, fontWeight:600, color:C.white, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{current.client.name}</div>
-              <Mono style={{ display:"block", color:C.muted, marginTop:2 }}>
-                {st === "paid" ? `Paid ${prettyDate(current.paidDate)}` : st === "overdue" ? `${late} day${late === 1 ? "" : "s"} overdue · due ${prettyDate(current.dueDate)}` : `Due ${prettyDate(current.dueDate)}`}
-              </Mono>
+              <Mono style={{ display:"block", color:C.muted, marginTop:2 }}>{subline}</Mono>
             </div>
             <div style={{ textAlign:"right", flexShrink:0 }}>
               <div style={{ fontSize:20, fontWeight:700, color:C.white, letterSpacing:-.6 }}>{fmt(t.total, current.currency)}</div>
-              <Tag tone={INVOICE_TONE[st]}>{STATUS_LABEL[st].toUpperCase()}</Tag>
+              <Tag tone={DOC_TONE[st]}>{STATUS_LABEL[st].toUpperCase()}</Tag>
             </div>
           </div>
 
-          {needsDetails && st !== "paid" && (
+          {!isQuote && needsDetails && st !== "paid" && (
             <Card level="inset" style={{ borderStyle:"dashed", borderColor:C.warning+"66", cursor:"pointer" }} onClick={() => setView("settings")}>
               <Mono style={{ color:C.text, lineHeight:1.6 }}>Add your bank details so clients know how to pay you. <span style={{ color:C.accent, fontWeight:600 }}>Add details</span></Mono>
             </Card>
           )}
+          {fromQuote && <Mono style={{ color:C.muted }}>From quote {fromQuote.number}.</Mono>}
 
           <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
-            <Btn full disabled={busy === "pdf"} onClick={() => sharePdf(current)}>{busy === "pdf" ? "Preparing PDF…" : isNativeApp ? "Share PDF" : "Share or download PDF"}</Btn>
-            <div style={{ display:"flex", gap:8 }}>
-              <Btn sm v="outline" style={{ flex:1 }} onClick={() => sendWhatsApp(current, false)}>WhatsApp</Btn>
-              <Btn sm v="outline" style={{ flex:1 }} onClick={() => sendEmail(current, false)}>Email</Btn>
-            </div>
-            {(st === "sent" || st === "overdue") && (
+            {st !== "invoiced" && (
               <>
-                <Btn full v="outline" onClick={() => markPaid(current)}>Mark as paid</Btn>
+                <Btn full disabled={busy === "pdf"} onClick={() => sharePdf(current)}>{busy === "pdf" ? "Preparing PDF…" : isNativeApp ? "Share PDF" : "Share or download PDF"}</Btn>
+                <div style={{ display:"flex", gap:8 }}>
+                  <Btn sm v="outline" style={{ flex:1 }} onClick={() => sendWhatsApp(current, false)}>WhatsApp</Btn>
+                  <Btn sm v="outline" style={{ flex:1 }} onClick={() => sendEmail(current, false)}>Email</Btn>
+                </div>
+              </>
+            )}
+            {isQuote && ["draft","sent","expired","accepted"].includes(st) && (
+              <Btn full v={st === "accepted" ? "solid" : "outline"} onClick={() => convertQuote(current)}>Turn into invoice</Btn>
+            )}
+            {isQuote && ["draft","sent","expired"].includes(st) && (
+              <div style={{ display:"flex", gap:8 }}>
+                <Btn sm v="outline" style={{ flex:1 }} onClick={() => { update("quote", current.id, { status:"accepted" }); toast(`${current.number} accepted.`); }}>Client accepted</Btn>
+                <Btn sm v="outline" style={{ flex:1 }} onClick={() => { update("quote", current.id, { status:"declined" }); toast(`${current.number} marked declined.`); }}>Declined</Btn>
+              </div>
+            )}
+            {isQuote && (st === "accepted" || st === "declined") && (
+              <Btn sm v="ghost" onClick={() => update("quote", current.id, { status:"sent" })}>Undo: back to sent</Btn>
+            )}
+            {linkedInvoice && <Btn full v="outline" onClick={() => openDoc(linkedInvoice, returnTo)}>Open {linkedInvoice.number}</Btn>}
+            {!isQuote && ["draft","sent","overdue","partial"].includes(st) && (payForm ? (
+              <Card level="inset" style={{ padding:12, display:"flex", flexDirection:"column", gap:10 }}>
+                <span style={{ fontSize:13, fontWeight:600, color:C.white }}>Record a payment</span>
+                <div style={{ display:"flex", gap:10 }}>
+                  <InvoiceField label={`Amount received (${current.currency})`} style={{ flex:1 }}><Inp inputMode="decimal" value={payForm.amount} onChange={e => setPayForm(f => ({ ...f, amount:e.target.value }))} /></InvoiceField>
+                  <InvoiceField label="Date received" style={{ flex:1 }}><Inp type="date" max={today} value={payForm.date} onChange={e => setPayForm(f => ({ ...f, date:e.target.value }))} /></InvoiceField>
+                </div>
+                <Mono style={{ color:C.muted }}>{fmt(balanceDue(current), current.currency)} still due. A smaller amount is recorded as a part payment.</Mono>
+                <div style={{ display:"flex", gap:8 }}>
+                  <Btn sm v="outline" style={{ flex:1 }} onClick={() => setPayForm(null)}>Cancel</Btn>
+                  <Btn sm style={{ flex:1 }} onClick={() => savePayment(current)}>Save payment</Btn>
+                </div>
+              </Card>
+            ) : (
+              <Btn full v="outline" onClick={() => setPayForm({ amount:String(balanceDue(current)), date:today })}>Record payment</Btn>
+            ))}
+            {!isQuote && (st === "sent" || st === "overdue" || st === "partial") && (
+              <>
                 <Card level="inset" style={{ padding:12 }}>
                   <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:8, marginBottom:8 }}>
                     <span style={{ fontSize:13, fontWeight:600, color:C.white }}>Payment reminder</span>
@@ -2943,12 +3261,26 @@ function InvoicesScreen({ invoices, setInvoices, settings, setSettings, user, su
                 </Card>
               </>
             )}
-            {st === "draft" && <Mono style={{ color:C.muted, lineHeight:1.6 }}>Sharing it marks it as sent, so KROFT can tell you when it's overdue.</Mono>}
-            {st === "paid" && <Btn full v="outline" onClick={() => markUnpaid(current)}>Mark as unpaid</Btn>}
+            {st === "draft" && <Mono style={{ color:C.muted, lineHeight:1.6 }}>{isQuote ? "Sharing it marks it as sent." : "Sharing it marks it as sent, so KROFT can tell you when it's overdue."}</Mono>}
+            {!isQuote && paymentsOf(current).length > 0 && (
+              <Card level="inset" style={{ padding:12 }}>
+                <div style={{ fontSize:13, fontWeight:600, color:C.white, marginBottom:6 }}>Payments</div>
+                {paymentsOf(current).map(p => (
+                  <div key={p.id} style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:8, padding:"6px 0", borderTop:`1px solid ${C.div}` }}>
+                    <Mono style={{ color:C.text }}>{prettyDate(p.date)}</Mono>
+                    <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                      <span style={{ fontSize:13, fontWeight:600, color:C.positive }}>{fmt(p.amount, current.currency)}</span>
+                      <button aria-label={`Remove payment of ${prettyDate(p.date)}`} onClick={() => undoPayment(current, p)} style={{ background:"none", border:"none", color:C.muted, cursor:"pointer", fontSize:15, padding:"2px 6px" }}>✕</button>
+                    </div>
+                  </div>
+                ))}
+                <Mono style={{ display:"block", color:C.muted, marginTop:6, lineHeight:1.6 }}>Each payment is in your income too. To change the invoice itself, remove its payments first.</Mono>
+              </Card>
+            )}
           </div>
 
           <div style={{ fontSize:12, fontWeight:600, color:C.muted, marginTop:6 }}>Preview</div>
-          <div style={{ background:"#fff", borderRadius:12, border:`1px solid ${C.cardB}`, overflow:"hidden", minHeight:120, display:"flex", alignItems:"center", justifyContent:"center" }}>
+          <div style={{ background:"#fff", borderRadius:12, border:`1px solid ${C.cardB}`, overflow:"hidden", minHeight:120, flexShrink:0, display:"flex", alignItems:"center", justifyContent:"center" }}>
             {preview ? <img src={preview} alt={`Preview of ${current.number}`} style={{ width:"100%", display:"block" }} /> : <Spinner size={16} color={C.muted} />}
           </div>
 
@@ -2960,41 +3292,110 @@ function InvoicesScreen({ invoices, setInvoices, settings, setSettings, user, su
         </div>
       </>
     );
-  } else {
+  } else if (view === "client" && clientKeySel) {
+    const c = clients.find(x => x.key === clientKeySel);
+    const docs = [...invoices, ...quotes].filter(d => clientKey(d) === clientKeySel).sort((a, b) => (b.issueDate || "").localeCompare(a.issueDate || ""));
     body = (
       <>
-        {header("Invoices", onClose, (
-          <button onClick={() => setView("settings")} style={{ background:"none", border:"none", color:C.accent, fontSize:14, fontWeight:600, cursor:"pointer", padding:"4px 2px" }}>Details</button>
-        ))}
-        <div style={{ flex:1, minHeight:0, overflowY:"auto", padding:16 }}>
-          <Btn full onClick={startNew}>New invoice</Btn>
+        {header(c?.name || "Client", () => { setClientKeySel(null); setView("list"); })}
+        <div style={{ flex:1, minHeight:0, overflowY:"auto", padding:16, display:"flex", flexDirection:"column", gap:12 }}>
+          {c && (
+            <>
+              <Card level="raised">
+                <div style={{ display:"flex", justifyContent:"space-between", gap:12 }}>
+                  <div>
+                    <Mono style={{ display:"block", color:C.muted, marginBottom:3 }}>Owes you</Mono>
+                    <div style={{ fontSize:22, fontWeight:700, color:Object.keys(c.owed).length ? C.white : C.muted, letterSpacing:-.8 }}>{sumByCur(c.owed, fmt) || fmt(0, user.currency)}</div>
+                    {c.overdueCount > 0 && <Mono style={{ display:"block", color:C.negative, marginTop:3 }}>{c.overdueCount} overdue</Mono>}
+                  </div>
+                  <div style={{ textAlign:"right" }}>
+                    <Mono style={{ display:"block", color:C.muted, marginBottom:3 }}>Paid so far</Mono>
+                    <div style={{ fontSize:16, fontWeight:700, color:C.positive }}>{sumByCur(c.paid, fmt) || fmt(0, user.currency)}</div>
+                    <Mono style={{ display:"block", color:C.muted, marginTop:3 }}>{c.invoiceCount} invoice{c.invoiceCount === 1 ? "" : "s"} · {c.quoteCount} quote{c.quoteCount === 1 ? "" : "s"}</Mono>
+                  </div>
+                </div>
+              </Card>
+              {(c.phone || c.email) ? contactButtons(c) : <Mono style={{ color:C.muted }}>No phone or email saved. Add them on an invoice or in Contacts.</Mono>}
+              <div style={{ display:"flex", gap:8 }}>
+                <Btn sm style={{ flex:1 }} onClick={() => startNew("invoice", c)}>New invoice</Btn>
+                <Btn sm v="outline" style={{ flex:1 }} onClick={() => startNew("quote", c)}>New quote</Btn>
+              </div>
+              <div style={{ fontSize:12, fontWeight:600, color:C.muted, marginTop:6 }}>History</div>
+              <div style={{ display:"flex", flexDirection:"column", gap:9 }}>{docs.map(d => docRow(d, "client"))}</div>
+            </>
+          )}
+        </div>
+      </>
+    );
+  } else {
+    // Lists: Invoices, Quotes, Clients
+    const unpaid = invoices.filter(inv => ["sent","overdue","partial"].includes(statusOf(inv)));
+    const overdueN = unpaid.filter(inv => statusOf(inv) === "overdue").length;
+    const outstanding = unpaid.reduce((acc, inv) => { acc[inv.currency] = (acc[inv.currency] || 0) + balanceDue(inv); return acc; }, {});
+    const sortDocs = list => list.slice().sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || "") || String(b.number).localeCompare(String(a.number)));
+    let content;
+    if (tab === "clients") {
+      content = clients.length === 0 ? (
+        <Card level="inset" style={{ textAlign:"center", padding:26, borderStyle:"dashed" }}>
+          <div style={{ fontSize:15, fontWeight:600, color:C.white, marginBottom:6 }}>No clients yet</div>
+          <Mono style={{ display:"block", color:C.soft, lineHeight:1.6 }}>Everyone you send an invoice or quote to appears here, with what they owe you and have paid.</Mono>
+        </Card>
+      ) : (
+        <div style={{ display:"flex", flexDirection:"column", gap:9 }}>
+          {clients.map(c => (
+            <Card key={c.key} level="raised" style={{ cursor:"pointer", padding:"12px 14px" }} onClick={() => { setClientKeySel(c.key); setView("client"); }}>
+              <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:10 }}>
+                <div style={{ minWidth:0 }}>
+                  <div style={{ fontSize:14, fontWeight:600, color:C.white, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{c.name}</div>
+                  <Mono style={{ display:"block", color:C.muted, marginTop:2 }}>{c.invoiceCount} invoice{c.invoiceCount === 1 ? "" : "s"}{c.openQuotes ? ` · ${c.openQuotes} open quote${c.openQuotes === 1 ? "" : "s"}` : ""}{c.lastDate ? ` · last ${prettyDate(c.lastDate)}` : ""}</Mono>
+                </div>
+                <div style={{ textAlign:"right", flexShrink:0 }}>
+                  {Object.keys(c.owed).length
+                    ? <><div style={{ fontSize:14, fontWeight:700, color:C.white }}>{sumByCur(c.owed, fmt)}</div><Tag tone={c.overdueCount ? "negative" : "accent"} style={{ marginTop:3, display:"inline-block" }}>{c.overdueCount ? "OVERDUE" : "OWES YOU"}</Tag></>
+                    : Object.keys(c.paid).length ? <Mono style={{ color:C.positive }}>All paid</Mono> : <Mono style={{ color:C.muted }}>Nothing owed</Mono>}
+                </div>
+              </div>
+            </Card>
+          ))}
+        </div>
+      );
+    } else if (tab === "quotes") {
+      const counts = quotes.reduce((acc, q) => { const s = statusOf(q); acc[s] = (acc[s] || 0) + 1; return acc; }, {});
+      const shown = sortDocs(quotes.filter(q => filter === "all" || (filter === "open" ? ["draft","sent","accepted"].includes(statusOf(q)) : statusOf(q) === filter)));
+      content = (
+        <>
+          <Btn full onClick={() => startNew("quote")}>New quote</Btn>
           <Mono style={{ display:"block", color:C.muted, margin:"8px 0 16px", textAlign:"center" }}>
-            {subscribed ? "Unlimited invoices with KROFT Plus." : `${allowance.used} of ${allowance.limit} free invoices used this month.`}
+            {subscribed ? "Unlimited quotes with KROFT Plus." : `${qAllowance.used} of ${qAllowance.limit} free quotes used this month.`}
           </Mono>
-
+          {quotes.length > 0 && chips([["all","All"],["open",`Open${(counts.draft||0)+(counts.sent||0)+(counts.accepted||0) ? ` ${(counts.draft||0)+(counts.sent||0)+(counts.accepted||0)}` : ""}`],["accepted","Accepted"],["invoiced","Invoiced"],["declined","Declined"]], filter, setFilter, "Filter quotes")}
+          {quotes.length === 0 ? (
+            <Card level="inset" style={{ textAlign:"center", padding:26, borderStyle:"dashed" }}>
+              <div style={{ fontSize:15, fontWeight:600, color:C.white, marginBottom:6 }}>No quotes yet</div>
+              <Mono style={{ display:"block", color:C.soft, lineHeight:1.6 }}>Send a price before you start the job. When the client agrees, turn it into an invoice in one tap.</Mono>
+            </Card>
+          ) : shown.length === 0 ? (
+            <Card level="inset" style={{ textAlign:"center", padding:22, borderStyle:"dashed" }}><Mono style={{ color:C.soft }}>Nothing here.</Mono></Card>
+          ) : <div style={{ display:"flex", flexDirection:"column", gap:9 }}>{shown.map(q => docRow(q, "list"))}</div>}
+        </>
+      );
+    } else {
+      const counts = invoices.reduce((acc, inv) => { const s = statusOf(inv); acc[s] = (acc[s] || 0) + 1; return acc; }, {});
+      const shown = sortDocs(invoices.filter(inv => filter === "all" || (filter === "unpaid" ? ["sent","overdue","partial"].includes(statusOf(inv)) : statusOf(inv) === filter)));
+      content = (
+        <>
+          <Btn full onClick={() => startNew("invoice")}>New invoice</Btn>
+          <Mono style={{ display:"block", color:C.muted, margin:"8px 0 16px", textAlign:"center" }}>
+            {subscribed ? "Unlimited invoices with KROFT Plus." : `${invAllowance.used} of ${invAllowance.limit} free invoices used this month.`}
+          </Mono>
           {unpaid.length > 0 && (
             <Card level="raised" style={{ marginBottom:14 }}>
               <Mono style={{ display:"block", color:C.muted, marginBottom:4 }}>Waiting to be paid</Mono>
-              <div style={{ fontSize:22, fontWeight:700, color:C.white, letterSpacing:-.8 }}>
-                {Object.entries(outstandingByCur).map(([cur, amt]) => fmt(amt, cur)).join(" + ")}
-              </div>
-              <Mono style={{ display:"block", color:counts.overdue ? C.negative : C.soft, marginTop:3 }}>
-                {unpaid.length} unpaid{counts.overdue ? ` · ${counts.overdue} overdue` : ""}
-              </Mono>
+              <div style={{ fontSize:22, fontWeight:700, color:C.white, letterSpacing:-.8 }}>{sumByCur(outstanding, fmt)}</div>
+              <Mono style={{ display:"block", color:overdueN ? C.negative : C.soft, marginTop:3 }}>{unpaid.length} unpaid{overdueN ? ` · ${overdueN} overdue` : ""}</Mono>
             </Card>
           )}
-
-          {invoices.length > 0 && (
-            <div role="tablist" aria-label="Filter invoices" style={{ display:"flex", gap:6, flexWrap:"wrap", marginBottom:12 }}>
-              {[["all","All"],["unpaid","Unpaid"],["overdue","Overdue"],["paid","Paid"],["draft","Drafts"]].map(([k, l]) => (
-                <button key={k} role="tab" aria-selected={filter === k} onClick={() => setFilter(k)}
-                  style={{ background: filter === k ? C.text : C.surface, color: filter === k ? C.bg : C.soft, border:`1px solid ${filter === k ? C.text : C.cardB}`, borderRadius:99, padding:"6px 12px", fontSize:12, fontWeight:600, cursor:"pointer", fontFamily:APP_FONT }}>
-                  {l}{k !== "all" && (k === "unpaid" ? unpaid.length : counts[k]) ? ` ${k === "unpaid" ? unpaid.length : counts[k]}` : ""}
-                </button>
-              ))}
-            </div>
-          )}
-
+          {invoices.length > 0 && chips([["all","All"],["unpaid",`Unpaid${unpaid.length ? ` ${unpaid.length}` : ""}`],["overdue",`Overdue${overdueN ? ` ${overdueN}` : ""}`],["paid",`Paid${counts.paid ? ` ${counts.paid}` : ""}`],["draft",`Drafts${counts.draft ? ` ${counts.draft}` : ""}`]], filter, setFilter, "Filter invoices")}
           {invoices.length === 0 ? (
             <Card level="inset" style={{ textAlign:"center", padding:26, borderStyle:"dashed" }}>
               <div style={{ fontSize:15, fontWeight:600, color:C.white, marginBottom:6 }}>No invoices yet</div>
@@ -3002,34 +3403,28 @@ function InvoicesScreen({ invoices, setInvoices, settings, setSettings, user, su
             </Card>
           ) : shown.length === 0 ? (
             <Card level="inset" style={{ textAlign:"center", padding:22, borderStyle:"dashed" }}><Mono style={{ color:C.soft }}>Nothing here.</Mono></Card>
-          ) : (
-            <div style={{ display:"flex", flexDirection:"column", gap:9 }}>
-              {shown.map(inv => {
-                const st = statusOf(inv);
-                return (
-                  <Card key={inv.id} level="raised" style={{ cursor:"pointer", padding:"12px 14px" }} onClick={() => { setCurrentId(inv.id); setView("view"); }}>
-                    <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:10 }}>
-                      <div style={{ minWidth:0 }}>
-                        <div style={{ fontSize:14, fontWeight:600, color:C.white, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{inv.client.name || "No client yet"}</div>
-                        <Mono style={{ display:"block", color:C.muted, marginTop:2 }}>{inv.number} · {st === "paid" ? `paid ${prettyDate(inv.paidDate)}` : `due ${prettyDate(inv.dueDate)}`}</Mono>
-                      </div>
-                      <div style={{ textAlign:"right", flexShrink:0 }}>
-                        <div style={{ fontSize:14, fontWeight:700, color:C.white }}>{fmt(invoiceTotals(inv).total, inv.currency)}</div>
-                        <Tag tone={INVOICE_TONE[st]} style={{ marginTop:3, display:"inline-block" }}>{STATUS_LABEL[st].toUpperCase()}</Tag>
-                      </div>
-                    </div>
-                  </Card>
-                );
-              })}
-            </div>
-          )}
+          ) : <div style={{ display:"flex", flexDirection:"column", gap:9 }}>{shown.map(inv => docRow(inv, "list"))}</div>}
+        </>
+      );
+    }
+    body = (
+      <>
+        {header("Invoices", onClose, linkBtn("Details", () => setView("settings")))}
+        <div style={{ flex:1, minHeight:0, overflowY:"auto", padding:16 }}>
+          <div role="tablist" aria-label="Invoices, quotes and clients" style={{ display:"flex", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:3, marginBottom:16 }}>
+            {[["invoices","Invoices"],["quotes","Quotes"],["clients","Clients"]].map(([k, l]) => (
+              <button key={k} role="tab" aria-selected={tab === k} onClick={() => { setTab(k); setFilter("all"); }}
+                style={{ flex:1, background: tab === k ? C.card : "transparent", color: tab === k ? C.white : C.soft, border:"none", borderRadius:9, padding:"8px 6px", fontSize:13, fontWeight:600, cursor:"pointer", fontFamily:APP_FONT, boxShadow: tab === k ? C.shadowBase : "none" }}>{l}</button>
+            ))}
+          </div>
+          {content}
         </div>
       </>
     );
   }
 
   return (
-    <div role="dialog" aria-modal="true" aria-label="Invoices" style={{ position:"fixed", inset:0, zIndex:310, background:C.bg, display:"flex", flexDirection:"column" }}>
+    <div role="dialog" aria-modal="true" aria-label="Invoices" style={{ position:"fixed", inset:0, zIndex:330, background:C.bg, display:"flex", flexDirection:"column" }}>
       {body}
     </div>
   );
@@ -3904,8 +4299,10 @@ function KroftApp({ onFullReset } = {}) {
   const [incomeCats, setIncomeCats] = useState(["Invoice","Sales","Consulting","Freelance","Other"]);
   // Invoices live with the rest of the finance data (see src/invoices/model.js).
   const [invoices, setInvoices] = useState([]);
+  const [quotes, setQuotes] = useState([]);
   const [invoiceSettings, setInvoiceSettings] = useState(DEFAULT_INVOICE_SETTINGS);
   const [showInvoices, setShowInvoices] = useState(false);
+  const [invoicesOpenDoc, setInvoicesOpenDoc] = useState(null); // { id, kind } to open straight to one (from a contact's profile)
   const [expenseCats, setExpenseCats] = useState(["Operations","Tech","Marketing","Travel","Rent","Other"]);
   // Monthly spending limits per category, as { [category]: amount }. Tracking spend without ever
   // warning about it means the app only tells you about a problem after the month is over.
@@ -4298,7 +4695,7 @@ function KroftApp({ onFullReset } = {}) {
       if (Array.isArray(p.incomeCats)) setIncomeCats(p.incomeCats);
       if (Array.isArray(p.expenseCats)) setExpenseCats(p.expenseCats);
     }
-    if (data.finance) { setIncome(data.finance.income||[]); setExpenses(data.finance.expenses||[]); setBudgets(data.finance.budgets||{}); setBudgetAlerts(data.finance.budgetAlerts||{}); setBudgetCarryover(data.finance.budgetCarryover||{}); if (data.finance.budgetRolloverMonth) setBudgetRolloverMonth(data.finance.budgetRolloverMonth); setInvoices(data.finance.invoices||[]); setInvoiceSettings({ ...DEFAULT_INVOICE_SETTINGS, ...(data.finance.invoiceSettings||{}) }); }
+    if (data.finance) { setIncome(data.finance.income||[]); setExpenses(data.finance.expenses||[]); setBudgets(data.finance.budgets||{}); setBudgetAlerts(data.finance.budgetAlerts||{}); setBudgetCarryover(data.finance.budgetCarryover||{}); if (data.finance.budgetRolloverMonth) setBudgetRolloverMonth(data.finance.budgetRolloverMonth); setInvoices(data.finance.invoices||[]); setQuotes(data.finance.quotes||[]); setInvoiceSettings({ ...DEFAULT_INVOICE_SETTINGS, ...(data.finance.invoiceSettings||{}) }); }
     if (data.productivity) {
       // Normalizes any task saved with a priority outside the app's real set (Urgent/High/
       // Normal/Low) back to Normal — Ask Kroft used to default to a nonexistent "Medium" here,
@@ -4438,9 +4835,17 @@ function KroftApp({ onFullReset } = {}) {
 
   useEffect(() => {
     if (!dataLoaded) return;
-    const t = setTimeout(() => { window.storage.set(STORAGE_KEYS.finance, JSON.stringify({ income, expenses, budgets, budgetAlerts, budgetCarryover, budgetRolloverMonth, invoices, invoiceSettings }), false).catch(()=>{}); }, 900);
+    const t = setTimeout(() => { window.storage.set(STORAGE_KEYS.finance, JSON.stringify({ income, expenses, budgets, budgetAlerts, budgetCarryover, budgetRolloverMonth, invoices, quotes, invoiceSettings }), false).catch(()=>{}); }, 900);
     return () => clearTimeout(t);
-  }, [dataLoaded, income, expenses, budgets, budgetAlerts, budgetCarryover, budgetRolloverMonth, invoices, invoiceSettings]);
+  }, [dataLoaded, income, expenses, budgets, budgetAlerts, budgetCarryover, budgetRolloverMonth, invoices, quotes, invoiceSettings]);
+
+  // Income entries are the record of money received. If one that came from an invoice payment
+  // is edited or deleted anywhere (Entry history, KROFT chat), the invoice follows, so the two
+  // never disagree. Returns the same array when nothing changed, so this doesn't loop.
+  useEffect(() => {
+    if (!dataLoaded) return;
+    setInvoices(prev => syncInvoicesWithIncome(prev, income, todayISO()));
+  }, [dataLoaded, income, invoices]);
 
   useEffect(() => {
     if (!dataLoaded) return;
@@ -5001,31 +5406,55 @@ function KroftApp({ onFullReset } = {}) {
     toast("Nice reset. Wellness score up.");
   };
 
+  const [resetSound, setResetSound] = useState(resetSoundOn);
   const startQuickReset = kindKey => {
     const cfg = QUICK_RESET_KINDS.find(k => k.key === kindKey);
     if (!cfg) return;
     haptic(8);
-    setActiveReset({ key: cfg.key, label: cfg.label, guide: cfg.guide, seconds: cfg.seconds, total: cfg.seconds });
+    // Sound is only allowed after a tap, and this is that tap.
+    unlockAudio();
+    const endsAt = Date.now() + cfg.seconds * 1000;
+    setActiveReset({ key: cfg.key, label: cfg.label, guide: cfg.guide, seconds: cfg.seconds, total: cfg.seconds, endsAt });
+    // In the Android app: a notification at the end time, in case the screen goes off anyway.
+    scheduleReminderAt(endsAt + 1500, `${cfg.label} done`, "Your Quick Reset is over.");
   };
-  const cancelQuickReset = () => setActiveReset(null);
+  const cancelQuickReset = () => { cancelReminderAt(); setActiveReset(null); };
+  const toggleResetSound = () => setResetSound(on => { setResetSoundOn(!on); if (!on) unlockAudio(); return !on; });
 
   // Ticks the active Quick Reset countdown once a second, same setInterval-in-an-effect shape as
   // the login lockout timer above — a dedicated 1s timer rather than the shared 30s heartbeat,
   // since this needs to visibly count down while its screen is open, not just wake periodically.
+  //
+  // The time left is worked out from the end time rather than counted down, so it stays right
+  // even if the phone slows the timer down. Each new second ticks; the end chimes. The screen is
+  // kept on while it runs, since a locked phone would pause the timer and the final sound.
+  const resetSoundRef = useRef(resetSound);
+  resetSoundRef.current = resetSound;
+  const activeResetKey = activeReset ? `${activeReset.key}:${activeReset.endsAt}` : null;
   useEffect(() => {
-    if (!activeReset || activeReset.seconds <= 0) return;
+    if (!activeReset) return;
+    const { key, total, endsAt } = activeReset;
+    let lastShown = activeReset.seconds;
+    let releaseScreen = () => {};
+    let stopped = false;
+    keepScreenOn().then(release => { if (stopped) release(); else releaseScreen = release; });
     const iv = setInterval(() => {
-      setActiveReset(prev => {
-        if (!prev) return prev;
-        if (prev.seconds <= 1) {
-          logQuickReset(prev.key, prev.total);
-          return null;
-        }
-        return { ...prev, seconds: prev.seconds - 1 };
-      });
-    }, 1000);
-    return () => clearInterval(iv);
-  }, [activeReset]);
+      const left = Math.max(0, Math.ceil((endsAt - Date.now()) / 1000));
+      if (left === lastShown) return;
+      lastShown = left;
+      if (left <= 0) {
+        clearInterval(iv);
+        if (resetSoundRef.current) playDone();
+        cancelReminderAt();
+        logQuickReset(key, total);
+        setActiveReset(null);
+        return;
+      }
+      if (resetSoundRef.current) playTick(left <= 3);
+      setActiveReset(prev => (prev && prev.endsAt === endsAt ? { ...prev, seconds: left } : prev));
+    }, 250);
+    return () => { stopped = true; clearInterval(iv); releaseScreen(); };
+  }, [activeResetKey]);
 
   // True only once an account actually exists on this device. Local-only-mode fallback only —
   // with Supabase configured, doLogin asks the server instead of checking anything local, since
@@ -6557,6 +6986,8 @@ Budgets this month: ${budgetStatus().length
 Recent income: ${list(income.slice().reverse(), 5, r => `${r.label} ${money(r.amount)} (${r.date})`)}
 Recent expenses: ${list(expenses.slice().reverse(), 5, r => `${r.label} ${money(r.amount)} ${r.cat} (${r.date})`)}
 Invoices: ${invoicesForAI(invoices, today, fmtCur)}
+Quotes: ${quotesForAI(quotes, today, fmtCur)}
+Clients who owe money: ${(() => { const owing = clientSummaries({ invoices, quotes, contacts, today }).filter(c => Object.keys(c.owed).length); return owing.length ? owing.slice(0, 8).map(c => `${c.name} ${Object.entries(c.owed).map(([cur, v]) => fmtCur(v, cur)).join(" + ")}${c.overdueCount ? " (overdue)" : ""}`).join("; ") : "none"; })()}
 
 SCHEDULE
 Today (${todays.length}): ${list(todays, 10, a => `${a.title} at ${a.time}${a.location?` — ${a.location}`:""}`)}
@@ -6573,7 +7004,7 @@ ${list(projects, 8, p => `${p.name} — ${p.status}${p.deadline?`, due ${p.deadl
 
 NOTES (${notes.length}): ${list(notes, 8, n => n.title || "untitled")}
 DOCUMENTS (${documents.length}): ${list(documents, 8, d => d.title || "untitled")}
-CONTACTS (${contacts.length}): ${list(contacts, 12, c => `${c.name}${c.email?` <${c.email}>`:""} (${c.category})`)}
+CONTACTS (${contacts.length}): ${list(contacts, 12, c => `${c.name}${c.email?` <${c.email}>`:""} (${[c.category, c.role, c.company].filter(Boolean).join(", ")})${c.note?` note: ${c.note.slice(0, 80)}`:""}`)}
 EMAIL: ${unread.length} unread${unread.length?` — recent: ${list(unread, 5, m => `"${m.subject}" from ${m.from}`)}`:""}
 
 WELLNESS
@@ -6638,7 +7069,8 @@ Valid types and their fields:
 {"type":"delete_note","title":"string"}
 {"type":"send_email","to":"string","subject":"string","body":"string"}
 {"type":"add_invoice","client":"string","items":[{"description":"string","qty":number,"price":number}],"due":"YYYY-MM-DD","notes":"string"}
-Rules: amounts are positive numbers with no currency symbol. Resolve relative dates ("tomorrow", "next Friday") against the current date above and emit an absolute YYYY-MM-DD. Expense categories to prefer: ${expenseCats.join(", ")}. Income categories to prefer: ${incomeCats.join(", ")}. add_invoice is for "invoice/bill [client] for …": it creates a draft invoice in ${user.currency} that the person reviews and sends from Finance › Invoices, so say it's ready to review, not that it was sent; price is per unit and qty defaults to 1; leave "due" out unless they gave a date. Getting paid for an invoice is marked there too, not with add_income. Emit at most one action per reply, only when clearly asked to save, change or remove something — never for a question like "how much did I spend?". complete_task, edit_appointment, and every delete_* type match an EXISTING item by its title/label/text against the lists above — use the shortest distinctive wording from that list, not a paraphrase, so the match is unambiguous. edit_appointment only needs the field(s) actually changing (e.g. just "time" to only move the time). Only set send_email's "to" to an address that actually appears in CONTACTS or EMAIL above — never guess or construct one; if you don't have a real address for who they mean, say so and ask for it instead of emitting the action.
+{"type":"add_quote","client":"string","items":[{"description":"string","qty":number,"price":number}],"valid_until":"YYYY-MM-DD","notes":"string"}
+Rules: amounts are positive numbers with no currency symbol. Resolve relative dates ("tomorrow", "next Friday") against the current date above and emit an absolute YYYY-MM-DD. Expense categories to prefer: ${expenseCats.join(", ")}. Income categories to prefer: ${incomeCats.join(", ")}. add_invoice is for "invoice/bill [client] for …": it creates a draft invoice in ${user.currency} that the person reviews and sends from Finance › Invoices, so say it's ready to review, not that it was sent; price is per unit and qty defaults to 1; leave "due" out unless they gave a date. Getting paid for an invoice is marked there too, not with add_income. add_quote is the same for "quote/estimate [client] for …" (a price before the work starts); turning an accepted quote into an invoice is done in Finance › Invoices › Quotes. Emit at most one action per reply, only when clearly asked to save, change or remove something — never for a question like "how much did I spend?". complete_task, edit_appointment, and every delete_* type match an EXISTING item by its title/label/text against the lists above — use the shortest distinctive wording from that list, not a paraphrase, so the match is unambiguous. edit_appointment only needs the field(s) actually changing (e.g. just "time" to only move the time). Only set send_email's "to" to an address that actually appears in CONTACTS or EMAIL above — never guess or construct one; if you don't have a real address for who they mean, say so and ask for it instead of emitting the action.
 ${voiceMode
   ? `You're in a spoken voice conversation right now. Never emit a delete_* or send_email action block here — that confirmation step needs a screen this voice UI doesn't have. If asked to delete or send something, say you'll get it ready but they'll need to confirm it in the app, and leave out the action block entirely.`
   : `delete_* and send_email are NOT executed immediately — the app shows a confirm/cancel step first, so word your sentence as an offer ("I'll have that ready to send — just confirm it") rather than a completed fact. Every other action type above already happened by the time your reply is read, so word those as done.`}`;
@@ -6713,16 +7145,31 @@ ${voiceMode
           undo:() => (isInc ? setIncome : setExpenses)(p => p.filter(x => x.id !== item.id)),
         };
       }
+      case "add_quote":
       case "add_invoice": {
+        const isQuote = action.type === "add_quote";
         const client = str(action.client); if (!client) return null;
         const items = (Array.isArray(action.items) ? action.items : [])
           .map(it => ({ description: str(it?.description), qty: Number(it?.qty) > 0 ? Number(it.qty) : 1, price: parseAmount(it?.price) ?? 0 }))
           .filter(it => it.description && it.price > 0);
-        if (!items.length) return { label:`I couldn't tell what to put on the invoice for ${client}. Try "invoice ${client} ₦50,000 for the logo design".` };
-        const allowance = invoiceAllowance({ subscribed, invoices, today:todayISO() });
-        if (!allowance.allowed) return { label:`You've used this month's ${FREE_INVOICES_PER_MONTH} free invoices. KROFT Plus gives you unlimited invoices.` };
+        if (!items.length) return { label:`I couldn't tell what to put on the ${isQuote ? "quote" : "invoice"} for ${client}. Try "${isQuote ? "quote" : "invoice"} ${client} ₦50,000 for the logo design".` };
+        const allowance = isQuote ? quoteAllowance({ subscribed, quotes, today:todayISO() }) : invoiceAllowance({ subscribed, invoices, today:todayISO() });
+        if (!allowance.allowed) return { label: isQuote ? `You've used this month's ${FREE_QUOTES_PER_MONTH} free quotes. KROFT Plus gives you unlimited quotes.` : `You've used this month's ${FREE_INVOICES_PER_MONTH} free invoices. KROFT Plus gives you unlimited invoices.` };
         const c = contacts.find(x => (x.name || "").toLowerCase() === client.toLowerCase());
-        const { invoice } = createInvoice({ settings:invoiceSettings, client:{ name:client, email:c?.email || "", phone:c?.phone || "" }, items, dueDate: validDate(action.due) ? action.due : undefined, notes: str(action.notes) || undefined, currency:user.currency, today:todayISO(), id:String(uid()) });
+        if (isQuote) {
+          const { quote } = createQuote({ settings:invoiceSettings, client:{ name:client, email:c?.email || "", phone:c?.phone || "" }, clientId:c?.id ?? null, items, validUntil: validDate(action.valid_until) ? action.valid_until : undefined, notes: str(action.notes) || undefined, currency:user.currency, today:todayISO(), id:String(uid()) });
+          setQuotes(p => [quote, ...p]);
+          setInvoiceSettings(s => ({ ...s, nextQuoteNumber:(Number(s.nextQuoteNumber) || 1) + 1 }));
+          return {
+            label:`Quote ${quote.number} drafted for ${client}: ${fmtCur(invoiceTotals(quote).total, quote.currency)}. Review and send it from Finance › Invoices › Quotes.`,
+            undo:() => {
+              setQuotes(p => p.filter(x => x.id !== quote.id));
+              setInvoiceSettings(s => (Number(s.nextQuoteNumber) === Number(quote.number.split("-").pop()) + 1 ? { ...s, nextQuoteNumber: s.nextQuoteNumber - 1 } : s));
+            },
+          };
+        }
+        const { invoice: created } = createInvoice({ settings:invoiceSettings, client:{ name:client, email:c?.email || "", phone:c?.phone || "" }, items, dueDate: validDate(action.due) ? action.due : undefined, notes: str(action.notes) || undefined, currency:user.currency, today:todayISO(), id:String(uid()) });
+        const invoice = { ...created, clientId:c?.id ?? null };
         setInvoices(p => [invoice, ...p]);
         setInvoiceSettings(s => ({ ...s, nextNumber:(Number(s.nextNumber) || 1) + 1 }));
         return {
@@ -7107,21 +7554,10 @@ ${voiceMode
         groups.profile = { ...groups.profile, user: safeUser };
       }
       const payload = { app:"KROFT", formatVersion:1, exportedAt:new Date().toISOString(), data:groups };
-      // The Android app's WebView ignores <a download>; the file goes to the share sheet instead.
-      if (isNativeApp) {
-        try { await saveFileFromApp(`kroft-backup-${todayISO()}.json`, JSON.stringify(payload, null, 2)); }
-        catch (err) { toast(err?.code === "needs-update" ? "Update the KROFT app to save files." : "Couldn't create the backup. Try again."); }
-        return;
-      }
-      const blob = new Blob([JSON.stringify(payload, null, 2)], { type:"application/json" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url; a.download = `kroft-backup-${todayISO()}.json`;
-      document.body.appendChild(a); a.click(); a.remove();
-      // Revoked on a delay — revoking immediately cancels the download on some browsers.
-      setTimeout(() => URL.revokeObjectURL(url), 10000);
-      toast("Backup downloaded.");
-    } catch { toast("Couldn't create the backup. Try again."); }
+      // Share sheet on phones and in the app, a download on computers (see saveFile.js).
+      const result = await saveFile({ name:`kroft-backup-${todayISO()}.json`, data:JSON.stringify(payload, null, 2), type:"application/json", title:"KROFT backup" });
+      if (result === "downloaded") toast("Backup downloaded. Check your Downloads folder.");
+    } catch (err) { toast(err?.code === "needs-update" ? "Update the KROFT app to save files." : "Couldn't create the backup. Try again."); }
   };
 
   // Permanently deletes the account (see api/account/delete.js), or, without Supabase, everything
@@ -8068,20 +8504,17 @@ ${voiceMode
     }
   };
 
+  // CSV export and document downloads. This used to revoke the file's URL the instant after
+  // clicking, which cancels the download in Chrome on Android while still saying "downloaded".
+  // Now: share sheet on phones and in the app, a download on computers (see saveFile.js).
   const downloadText = async (filename, content, doneMsg) => {
-    if (isNativeApp) {
-      // No downloads in the Android app's WebView: hand the file to the share sheet instead.
-      try { await saveFileFromApp(filename, content); }
-      catch (err) { toast(err?.code === "needs-update" ? "Update the KROFT app to save files." : "Couldn't save that file. Try again."); }
-      return;
+    try {
+      const type = filename.endsWith(".csv") ? "text/csv" : "text/plain";
+      const result = await saveFile({ name:filename, data:content, type });
+      if (result === "downloaded" && doneMsg) toast(`${doneMsg} Check your Downloads folder.`);
+    } catch (err) {
+      toast(err?.code === "needs-update" ? "Update the KROFT app to save files." : "Couldn't save that file. Try again.");
     }
-    const blob = new Blob([content], { type:"text/plain" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url; a.download = filename;
-    document.body.appendChild(a); a.click(); document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    if (doneMsg) toast(doneMsg);
   };
 
   // A field containing a comma, quote or newline has to be quoted, with any internal quote
@@ -8103,7 +8536,10 @@ ${voiceMode
         .map(r => [r.date||"", r.type, r.label, r.cat, r.amount, r.cur||user.currency, (r.repeat&&r.repeat!=="none")?r.repeat:""]),
     ];
     const csv = rows.map(row => row.map(csvField).join(",")).join("\r\n");
-    downloadText(`kroft-finance-${todayISO()}.csv`, csv, "CSV downloaded.");
+    // The leading byte-order mark tells Excel the file is UTF-8; without it Excel reads it as
+    // the old Windows character set and ₦ and accented names come out garbled. Google Sheets,
+    // Numbers and LibreOffice ignore it.
+    downloadText(`kroft-finance-${todayISO()}.csv`, `\uFEFF${csv}`, "CSV downloaded.");
   };
   // Frees a blob: URL's browser memory after a deleted item's Undo window has fully closed —
   // NOT immediately on delete, since the "Undo" toast can restore the item, and an object URL
@@ -8863,11 +9299,13 @@ ${voiceMode
         );
       })()}
       {showInvoices && (
-        <InvoicesScreen invoices={invoices} setInvoices={setInvoices} settings={invoiceSettings} setSettings={setInvoiceSettings}
-          user={user} subscribed={subscribed} contacts={contacts} toast={toast} onClose={() => setShowInvoices(false)}
-          onRecordIncome={inv => {
-            // Getting paid is income: recorded the same way as one added by hand.
-            const item = { id:uid(), label:`${inv.number} · ${inv.client.name}`, amount:invoiceTotals(inv).total, cat: incomeCats.includes("Invoice") ? "Invoice" : incomeCats[0], date:todayISO(), cur:inv.currency, invoiceId:inv.id };
+        <InvoicesScreen invoices={invoices} setInvoices={setInvoices} quotes={quotes} setQuotes={setQuotes} settings={invoiceSettings} setSettings={setInvoiceSettings}
+          user={user} subscribed={subscribed} contacts={contacts} setContacts={setContacts} toast={toast} onClose={() => { setShowInvoices(false); setInvoicesOpenDoc(null); }}
+          openId={invoicesOpenDoc?.id} openKind={invoicesOpenDoc?.kind}
+          onRecordPayment={(inv, amount, date, part) => {
+            // Getting paid is income: recorded the same way as one added by hand, on the day the
+            // money arrived.
+            const item = { id:uid(), label:`${inv.number} · ${inv.client.name}${part ? " (part payment)" : ""}`, amount, cat: incomeCats.includes("Invoice") ? "Invoice" : incomeCats[0], date, cur:inv.currency, invoiceId:inv.id };
             setIncome(p => [...p, item]);
             return item.id;
           }}
@@ -9104,21 +9542,40 @@ ${voiceMode
           </div>
         </>
       )}
-      {activeReset && <QuickResetModal session={activeReset} onCancel={cancelQuickReset} />}
+      {activeReset && <QuickResetModal session={activeReset} onCancel={cancelQuickReset} soundOn={resetSound} onToggleSound={toggleResetSound} />}
       {patternDetail && <PatternDetailModal pattern={patternDetail} onClose={() => setPatternDetail(null)} />}
-      {contactActivity && (
-        <ContactActivityModal
-          contact={contacts.find(c => c.id === contactActivity.id) || contactActivity}
-          tasks={tasks.filter(t => t.contactId === contactActivity.id)}
-          reminders={smartReminders.filter(r => r.contactId === contactActivity.id)}
-          appts={appts.filter(a => a.contactId === contactActivity.id)}
-          notes={notes.filter(n => n.contactId === contactActivity.id)}
-          files={files.filter(f => f.contactId === contactActivity.id)}
-          onToggleTask={id => setTasks(p => p.map(x => x.id===id ? {...x, done:!x.done} : x))}
-          onToggleReminder={id => setSmartReminders(p => p.map(x => x.id===id ? {...x, done:!x.done} : x))}
-          onClose={() => setContactActivity(null)}
-        />
-      )}
+      {contactActivity && (() => {
+        const c = contacts.find(x => x.id === contactActivity.id) || contactActivity;
+        return (
+          <ContactProfile
+            contact={c}
+            data={{ tasks, reminders:smartReminders, appts, notes, files, emails, invoices, quotes, currency:user.currency }}
+            fmt={fmtCur}
+            onBack={() => setContactActivity(null)}
+            onSave={updated => { setContacts(p => p.map(x => x.id === c.id ? updated : x)); toast("Contact updated."); }}
+            onDelete={() => {
+              if (!window.confirm(`Delete ${c.name}? Anything linked to them stays, but loses the link.`)) return;
+              const prev = contacts;
+              setContacts(prev.filter(x => x.id !== c.id));
+              setContactActivity(null);
+              toast(`${c.name} deleted.`, () => setContacts(prev));
+            }}
+            onCall={() => { logContactAction(c.id, "call"); window.location.href = `tel:${c.phone}`; }}
+            onEmail={() => { logContactAction(c.id, "email"); setComposeDraft({ to:c.email, subject:"", body:"" }); }}
+            onAskKroft={q => { setContactActivity(null); setAiInput(q); setTab("nova"); }}
+            onToggleTask={id => setTasks(p => p.map(x => x.id===id ? {...x, done:!x.done} : x))}
+            onToggleReminder={id => setSmartReminders(p => p.map(x => x.id===id ? {...x, done:!x.done} : x))}
+            onOpenDoc={d => { setInvoicesOpenDoc({ id:d.id, kind:d.kind === "quote" ? "quote" : "invoice" }); setShowInvoices(true); }}
+            onOpenFile={async f => {
+              try {
+                const bytes = new Uint8Array(await (await fetch(f.url)).arrayBuffer());
+                const result = await saveFile({ name:f.name, data:bytes, type:f.type || "application/octet-stream" });
+                if (result === "downloaded") toast("File downloaded. Check your Downloads folder.");
+              } catch (err) { toast(err?.code === "needs-update" ? "Update the KROFT app to save files." : "Couldn't open that file."); }
+            }}
+          />
+        );
+      })()}
 
       {toastStack}
       {offlineBanner}
@@ -10913,7 +11370,7 @@ ${voiceMode
                   title: c.name,
                   subtitle: [c.phone, c.email].filter(Boolean).join(" · ") || "No contact info",
                   actions: [
-                    { label:"View activity", onClick:() => setContactActivity(c) },
+                    { label:"Open profile", onClick:() => setContactActivity(c) },
                     { label:"Edit", onClick:() => setEditingContact({...c}) },
                     { label:"Delete", destructive:true, confirmText:"This removes their number, email and interaction history. Anything linked to them stays, but loses the link.", onClick:() => {
                       const prev = contacts;

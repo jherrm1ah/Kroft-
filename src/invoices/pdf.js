@@ -5,7 +5,7 @@
 // letters (ẹ, ọ, ṣ, ń …) and any other character print exactly as on screen; the standard PDF
 // fonts can't show ₦ at all, and embedding a font would mean shipping a large library.
 
-import { invoiceTotals, lineTotal, prettyDate, paymentLines, fromName, invoiceStatus, STATUS_LABEL } from "./model.js";
+import { invoiceTotals, lineTotal, prettyDate, paymentLines, fromName, docStatus, STATUS_LABEL, amountPaid, balanceDue } from "./model.js";
 
 const PAGE_W = 595.28, PAGE_H = 841.89;  // A4 in PDF points
 const SCALE = 2;                          // canvas pixels per point: sharp on phones and in print
@@ -106,7 +106,8 @@ export function drawInvoicePages(inv, settings, user, fmt, { font = "Inter, sans
   const pages = [];
   const t = invoiceTotals(inv);
   const money = n => fmt(n, inv.currency);
-  const status = invoiceStatus(inv, today || inv.issueDate);
+  const isQuote = inv.kind === "quote";
+  const status = docStatus(inv, today || inv.issueDate);
   const COL = { desc: M, qty: 372, price: 462, amount: PAGE_W - M };
   const DESC_W = COL.qty - 40 - M;
   const BOTTOM = PAGE_H - 70;
@@ -126,13 +127,13 @@ export function drawInvoicePages(inv, settings, user, fmt, { font = "Inter, sans
     setFont(9.5);
     for (const w of wrap(ctx, l, 300).slice(0, 3)) { y += 13; text(w, M, y, { size: 9.5, color: SOFT }); }
   }
-  text("INVOICE", PAGE_W - M, 72, { size: 24, weight: 700, color: ACCENT, align: "right" });
+  text(isQuote ? "QUOTE" : "INVOICE", PAGE_W - M, 72, { size: 24, weight: 700, color: ACCENT, align: "right" });
   text(inv.number, PAGE_W - M, 92, { size: 11, weight: 600, align: "right" });
   text(`Issued ${prettyDate(inv.issueDate)}`, PAGE_W - M, 110, { size: 9.5, color: SOFT, align: "right" });
-  text(`Due ${prettyDate(inv.dueDate)}`, PAGE_W - M, 124, { size: 9.5, weight: 600, align: "right" });
-  if (status === "paid" || status === "cancelled") {
+  text(isQuote ? `Valid until ${prettyDate(inv.validUntil)}` : `Due ${prettyDate(inv.dueDate)}`, PAGE_W - M, 124, { size: 9.5, weight: 600, align: "right" });
+  if (["paid", "cancelled", "accepted", "declined"].includes(status)) {
     const label = STATUS_LABEL[status].toUpperCase();
-    const color = status === "paid" ? "#2f7d4f" : "#a23b3b";
+    const color = status === "paid" || status === "accepted" ? "#2f7d4f" : "#a23b3b";
     setFont(12, 700);
     const w = ctx.measureText(label).width + 20;
     ctx.strokeStyle = color; ctx.lineWidth = 1.5;
@@ -178,10 +179,14 @@ export function drawInvoicePages(inv, settings, user, fmt, { font = "Inter, sans
   }
 
   // Totals, payment details and notes; moved to a new page if they don't fit.
-  const pay = paymentLines(settings);
+  const pay = isQuote ? [] : paymentLines(settings);
   setFont(9.5);
   const noteLines = inv.notes ? wrap(ctx, inv.notes, PAGE_W - 2 * M) : [];
-  const totalsRows = [["Subtotal", t.subtotal], ...(t.discount ? [["Discount", -t.discount]] : []), ...(t.vat ? [[`VAT (${t.vatRate}%)`, t.vat]] : [])];
+  // Part-paid invoices show the full total, what's been paid, and the balance as the amount due.
+  const paidSoFar = isQuote ? 0 : amountPaid(inv);
+  const partly = paidSoFar > 0 && status !== "paid";
+  const totalsRows = [["Subtotal", t.subtotal], ...(t.discount ? [["Discount", -t.discount]] : []), ...(t.vat ? [[`VAT (${t.vatRate}%)`, t.vat]] : []),
+    ...(partly ? [["Total", t.total], ["Paid so far", -paidSoFar]] : [])];
   const needed = 20 + totalsRows.length * 18 + 44 + (pay.length ? 30 + pay.length * 15 : 0) + (noteLines.length ? 30 + noteLines.length * 13 : 0);
   if (y + needed > BOTTOM) {
     page = newPage(font); pages.push(page); ({ ctx, text, setFont } = page);
@@ -196,8 +201,8 @@ export function drawInvoicePages(inv, settings, user, fmt, { font = "Inter, sans
     y += 18;
   }
   ctx.fillStyle = ACCENT; ctx.fillRect(labelX - 12, y - 6, COL.amount - labelX + 20, 32);
-  text("Total due", labelX, y + 15, { size: 11, weight: 600, color: "#ffffff" });
-  text(money(t.total), COL.amount, y + 15, { size: 13, weight: 700, color: "#ffffff", align: "right" });
+  text(isQuote ? "Total" : partly ? "Balance due" : "Total due", labelX, y + 15, { size: 11, weight: 600, color: "#ffffff" });
+  text(money(partly ? balanceDue(inv) : t.total), COL.amount, y + 15, { size: 13, weight: 700, color: "#ffffff", align: "right" });
   y += 44;
 
   if (pay.length) {
@@ -227,11 +232,19 @@ const dataUrlBytes = url => {
 };
 
 // The finished PDF, plus a preview image of the first page.
-export async function invoicePdf(inv, settings, user, fmt, { font, today } = {}) {
-  try { await document.fonts?.ready; } catch { /* draw with whatever is loaded */ }
+export async function invoicePdf(inv, settings, user, fmt, { font = "Inter, sans-serif", today } = {}) {
+  // A canvas draws nothing for text whose web font is still downloading, so load every weight
+  // used, for every character on this document (accented names need a different font file than
+  // plain English), before drawing.
+  try {
+    const sample = [fromName(settings, user), settings.address, settings.email, settings.phone, inv.client?.name, inv.client?.email, inv.notes,
+      ...(inv.items || []).map(it => it.description), "INVOICE QUOTE 0123456789 ₦$€£,.-()%", ...paymentLines(settings)].filter(Boolean).join(" ");
+    await Promise.all([400, 600, 700].map(w => document.fonts?.load(`${w} 16px ${font}`, sample)));
+    await document.fonts?.ready;
+  } catch { /* draw with whatever is loaded */ }
   const canvases = drawInvoicePages(inv, settings, user, fmt, { font, today });
   const pages = canvases.map(c => ({ jpeg: dataUrlBytes(c.toDataURL("image/jpeg", 0.9)), width: c.width, height: c.height }));
-  const bytes = buildPdf(pages, { title: `Invoice ${inv.number}`, author: fromName(settings, user) });
+  const bytes = buildPdf(pages, { title: `${inv.kind === "quote" ? "Quote" : "Invoice"} ${inv.number}`, author: fromName(settings, user) });
   return { bytes, preview: canvases[0].toDataURL("image/jpeg", 0.85), pageCount: canvases.length };
 }
 
