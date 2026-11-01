@@ -2478,6 +2478,42 @@ function ConnectedApps({ google, microsoft }) {
   );
 }
 
+// Inline editor for one of the person's own chat messages: change it and resend, and KROFT answers
+// again from that point. Anything after the message is replaced, and the editor says so.
+function MessageEditor({ initial, replacesLater, disabled, onCancel, onSend }) {
+  const [text, setText] = useState(initial);
+  const ref = useRef(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.focus();
+    el.setSelectionRange(el.value.length, el.value.length);
+  }, []);
+  useEffect(() => {
+    const el = ref.current;
+    if (el) { el.style.height = "auto"; el.style.height = `${Math.min(el.scrollHeight, 260)}px`; }
+  }, [text]);
+  const changed = text.trim() && text.trim() !== initial.trim();
+  return (
+    <div style={{ width:"100%", maxWidth:560, alignSelf:"flex-end", background:C.card, border:`1.5px solid ${C.accent}`, borderRadius:18, padding:"10px 12px 10px", boxSizing:"border-box", boxShadow:`0 0 0 4px ${C.accentBg}` }}>
+      <textarea ref={ref} value={text} aria-label="Edit your message" rows={1}
+        onChange={e => setText(e.target.value)}
+        onKeyDown={e => {
+          if (e.key === "Escape") { e.preventDefault(); onCancel(); }
+          if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && changed && !disabled) { e.preventDefault(); onSend(text); }
+        }}
+        style={{ width:"100%", boxSizing:"border-box", border:"none", outline:"none", resize:"none", background:"transparent", color:C.text, fontSize:15, lineHeight:1.55, fontFamily:APP_FONT, padding:"2px 2px", maxHeight:260, overflowY:"auto" }} />
+      {replacesLater && <div style={{ fontSize:12.5, color:C.muted, margin:"4px 2px 0", lineHeight:1.4 }}>Sending replaces KROFT's replies after this message.</div>}
+      <div style={{ display:"flex", justifyContent:"flex-end", gap:8, marginTop:10 }}>
+        <button type="button" onClick={onCancel}
+          style={{ height:36, padding:"0 16px", borderRadius:999, border:`1px solid ${C.cardB}`, background:"transparent", color:C.text, fontSize:14, fontWeight:600, fontFamily:APP_FONT, cursor:"pointer" }}>Cancel</button>
+        <button type="button" onClick={() => onSend(text)} disabled={!changed || disabled}
+          style={{ height:36, padding:"0 18px", borderRadius:999, border:"none", background:C.text, color:C.bg, fontSize:14, fontWeight:600, fontFamily:APP_FONT, cursor:!changed || disabled ? "not-allowed" : "pointer", opacity:!changed || disabled ? .4 : 1 }}>Send</button>
+      </div>
+    </div>
+  );
+}
+
 // Confirmation before signing out. Logging out of a synced account ends the session on this
 // device, so it asks first rather than acting on a single stray tap.
 function LogoutDialog({ onConfirm, onCancel }) {
@@ -3582,6 +3618,8 @@ function KroftApp({ onFullReset } = {}) {
   // bubble's only long-press action is Copy, so a compact popup right where you pressed (like
   // ChatGPT's own message menu) reads better than a full-width sheet for a single option.
   const [copyPopup, setCopyPopup] = useState(null);
+  // Index of the person's own message being edited in place, or null.
+  const [editingMsg, setEditingMsg] = useState(null);
   // Which long user messages (by id) are expanded past the truncated preview — see
   // USER_MSG_TRUNCATE_LEN's own comment below for why only user bubbles ever truncate.
   const [expandedUserMsgs, setExpandedUserMsgs] = useState(() => new Set());
@@ -7111,6 +7149,7 @@ ${voiceMode
   // undo button, and only until that toast faded) — now it's saved into history first, so nothing
   // typed is ever actually lost, and it can be reopened any time from the history panel.
   const startNewChat = () => {
+    setEditingMsg(null);
     const prev = aiMessages;
     const hadContent = prev.some(m => m.role === "user");
     let savedEntry = null;
@@ -7182,6 +7221,7 @@ ${voiceMode
   const openHistoryChat = (id, jumpIdx = null) => {
     const target = chatHistory.find(c => c.id === id);
     if (!target) return;
+    setEditingMsg(null);
     const current = aiMessages;
     const currentHadContent = current.some(m => m.role === "user");
     setChatHistory(h => {
@@ -7238,6 +7278,20 @@ ${voiceMode
     // entirely, letting someone who'd already hit it keep regenerating the last reply forever
     // with the on-screen counter never reflecting it.
     await runNormalCompletion(upToUser);
+  };
+
+  // Replaces one of the person's own messages with an edited version and answers again from there.
+  // Messages after it are dropped, like Retry does for the last reply; it goes through the same
+  // quota-checked path as every other reply.
+  useEffect(() => { if (editingMsg != null && aiMessages[editingMsg]?.role !== "user") setEditingMsg(null); }, [aiMessages, editingMsg]);
+  const editAndResend = async (i, text) => {
+    const t = text.trim();
+    if (aiLoading || !t || aiMessages[i]?.role !== "user") return;
+    const { feedback, ...orig } = aiMessages[i];
+    const convo = [...aiMessages.slice(0, i), { ...orig, content:t, id:uid() }];
+    setEditingMsg(null);
+    setAiMessages(convo);
+    await runNormalCompletion(convo);
   };
 
   const setMsgFeedback = (i, val) => {
@@ -8367,21 +8421,25 @@ ${voiceMode
       {copyPopup && (
         <>
           <div onClick={() => setCopyPopup(null)} style={{ position:"fixed", inset:0, zIndex:960 }} />
-          <button
-            onClick={() => { copyMsg(copyPopup.content, { markdown:false }); setCopyPopup(null); }}
-            style={{
+          {/* Copy, and Edit for the person's own message (not while KROFT is still replying). */}
+          <div role="menu" style={{
               position:"fixed", zIndex:961,
-              left: Math.min(Math.max(copyPopup.x - 55, 12), window.innerWidth - 122),
-              top: Math.max(copyPopup.y - 56, 12),
-              display:"flex", alignItems:"center", gap:8, background:C.card, border:`1px solid ${C.cardB}`,
-              borderRadius:12, padding:"10px 16px", cursor:"pointer", boxShadow:C.shadowRaised,
-              color:C.text, fontSize:13, fontWeight:600, fontFamily:APP_FONT,
-              animation:"pop .15s ease",
-            }}
-          >
-            <NavIcon id="copy" size={14} color={C.text} />
-            Copy
-          </button>
+              left: Math.min(Math.max(copyPopup.x - 90, 12), window.innerWidth - 192),
+              top: Math.max(copyPopup.y - 60, 12),
+              display:"flex", gap:4, padding:4, background:C.card, border:`1px solid ${C.cardB}`,
+              borderRadius:14, boxShadow:C.shadowRaised, animation:"pop .15s ease",
+            }}>
+            {[
+              { id:"copy", label:"Copy", run:() => copyMsg(copyPopup.content, { markdown:false }) },
+              ...(copyPopup.idx != null && !aiLoading ? [{ id:"edit", label:"Edit", run:() => setEditingMsg(copyPopup.idx) }] : []),
+            ].map(a => (
+              <button key={a.id} role="menuitem" onClick={() => { setCopyPopup(null); a.run(); }}
+                style={{ display:"flex", alignItems:"center", gap:8, background:"none", border:"none", borderRadius:10, padding:"9px 14px", cursor:"pointer", color:C.text, fontSize:13.5, fontWeight:600, fontFamily:APP_FONT }}>
+                <NavIcon id={a.id} size={15} color={C.text} />
+                {a.label}
+              </button>
+            ))}
+          </div>
         </>
       )}
       {activeReset && <QuickResetModal session={activeReset} onCancel={cancelQuickReset} />}
@@ -10861,7 +10919,11 @@ ${voiceMode
                   const displayContent = isLongUserMsg && !isExpanded ? m.content.slice(0, USER_MSG_TRUNCATE_LEN).trimEnd() + "…" : m.content;
                   return (
                   <div key={m.id || i} data-msg-idx={i} style={{ display:"flex", flexDirection:"column", alignItems:m.role==="user"?"flex-end":"flex-start", animation:"fadeUp .3s ease", borderRadius:14, transition:"background .5s ease, box-shadow .5s ease", ...(flashMsg===i ? { background:C.accentBg, boxShadow:`0 0 0 8px ${C.accentBg}` } : {}) }}>
-                    <div {...(m.role==="user" ? longPress((x,y) => setCopyPopup({ x, y, content:m.content })) : {})}
+                    {editingMsg === i && (
+                      <MessageEditor initial={m.content} replacesLater={i < aiMessages.length - 1} disabled={aiLoading}
+                        onCancel={() => setEditingMsg(null)} onSend={text => editAndResend(i, text)} />
+                    )}
+                    <div hidden={editingMsg === i} {...(m.role==="user" ? longPress((x,y) => setCopyPopup({ x, y, content:m.content, idx:i })) : {})}
                       // Only the user's own messages sit in a bubble; KROFT's replies are plain
                       // full-width text, so the answer reads like a page rather than a chat card.
                       style={m.role==="user"
