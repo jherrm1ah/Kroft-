@@ -12,9 +12,9 @@ import { SHELLS, check, startServer, signUp, newShellContext, failureCount, URL 
 // A stand-in for the Web Audio API that records the frequency of every note started.
 const FAKE_AUDIO = `
   window.__notes = [];
-  class FakeParam { setValueAtTime(v) { this.v = v; } exponentialRampToValueAtTime() {} }
+  class FakeParam { setValueAtTime(v) { this.v = v; } exponentialRampToValueAtTime(v) { this.v = v; } }
   class FakeNode { connect(n) { return n; } }
-  class FakeOsc extends FakeNode { constructor() { super(); this.frequency = new FakeParam(); } start() { window.__notes.push(this.frequency.v); } stop() {} }
+  class FakeOsc extends FakeNode { constructor() { super(); this.frequency = new FakeParam(); } start() { window.__notes.push({ f: Math.round(this.frequency.v), type: this.type }); } stop() {} }
   class FakeGain extends FakeNode { constructor() { super(); this.gain = new FakeParam(); } }
   window.AudioContext = class { constructor() { this.state = "running"; this.destination = new FakeNode(); } get currentTime() { return 0; }
     resume() { return Promise.resolve(); } createOscillator() { return new FakeOsc(); } createGain() { return new FakeGain(); } };
@@ -43,11 +43,13 @@ async function run(browser, label, shell) {
   check("countdown shows with the sound switch on", await page.getByRole("button", { name: "Turn countdown sound off" }).isVisible());
   await page.clock.runFor(61000);
   const notes = await page.evaluate(() => window.__notes);
-  const ticks = notes.filter(f => f === 990 || f === 1320);
-  const chime = notes.filter(f => [1046.5, 1318.5, 1568].includes(f));
+  // Ticks are KROFT's wooden tone (triangle); the end chime is its signature (sine).
+  const ticks = notes.filter(n => n.type === "triangle").map(n => n.f);
+  const lastTick = notes.map(n => n.type).lastIndexOf("triangle");
+  const chime = notes.slice(lastTick + 1).filter(n => n.type === "sine").map(n => n.f);
   check("a tick every second", ticks.length === 59, `ticks=${ticks.length}`);
-  check("the last three ticks are higher", JSON.stringify(ticks.slice(-3)) === "[1320,1320,1320]" && ticks.slice(0, -3).every(f => f === 990));
-  check("a chime when it's over", chime.length === 3 && notes.indexOf(1046.5) > notes.lastIndexOf(1320));
+  check("the last three ticks are higher", JSON.stringify(ticks.slice(-3)) === "[1568,1568,1568]" && ticks.slice(0, -3).every(f => f === 1175), JSON.stringify(ticks.slice(-4)));
+  check("the KROFT chime when it's over", chime.includes(784) && chime.includes(1175) && chime.includes(988) && chime.includes(1568), JSON.stringify(chime));
   check("countdown closes and is logged", !(await page.getByRole("button", { name: "End early" }).isVisible()) && await page.getByText(/1 session completed/).isVisible());
 
   if (shell) {

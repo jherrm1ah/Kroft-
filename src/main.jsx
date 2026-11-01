@@ -5,6 +5,11 @@ import Kroft from "./Kroft.jsx";
 import { isNativeApp, installNativeShims } from "./native.js";
 import { createRecorderRecognition } from "./voiceRecorder.js";
 import { watchForNewVersion } from "./webUpdate.js";
+import { unlockSounds } from "./sounds/player.js";
+
+// Browsers only allow sound after a tap on the page. Unlocking on the first one means sounds that
+// happen on their own later (a reminder alarm, a notification while KROFT is open) can play.
+window.addEventListener("pointerdown", unlockSounds, { once: true, capture: true });
 
 const mount = () => createRoot(document.getElementById("root")).render(
   <StrictMode>
