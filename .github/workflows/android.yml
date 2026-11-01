@@ -131,3 +131,22 @@ jobs:
           git add -A
           git commit -q -m "KROFT debug APK from ${GITHUB_SHA::7}"
           git push -q -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" android-apk
+
+      # Merged builds only: the installable APK as a GitHub Release, one per app version
+      # (android/version.properties). The newest is always at
+      # https://github.com/<owner>/<repo>/releases/latest/download/KROFT.apk
+      - name: Publish the GitHub Release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          NAME=$(sed -n 's/^VERSION_NAME=//p' android/version.properties)
+          TAG="android-v$NAME"
+          cp out/KROFT-debug.apk out/KROFT.apk
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release upload "$TAG" out/KROFT.apk out/BUILD-INFO.txt --clobber
+          else
+            gh release create "$TAG" out/KROFT.apk out/BUILD-INFO.txt --target "$GITHUB_SHA" --latest \
+              --title "KROFT for Android $NAME" \
+              --notes "Install KROFT.apk on your Android phone. It updates an existing KROFT install and keeps you signed in. Build details (commit, SHA-256, signature) are in BUILD-INFO.txt. Test build signed with KROFT's debug key; not the Play Store version."
+          fi

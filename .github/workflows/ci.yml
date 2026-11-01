@@ -35,3 +35,26 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  # The real build, run as the website and as older and current copies of the Android app
+  # (tests/e2e/native-shells.mjs). Stands in for a staging environment: a change that breaks
+  # any of them can't be merged unnoticed.
+  app-shells:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Install the test browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Website and Android app shells
+        run: npm run test:e2e
