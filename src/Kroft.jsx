@@ -6,9 +6,10 @@ import { Markdown } from "./markdown/Markdown.jsx";
 import { toPlainText, toSpeechText } from "./markdown/parse.js";
 import { copyRich, copyPlain } from "./markdown/clipboard.js";
 import { offlineUserId, flushPending, clearOfflineData, hasUnsyncedChanges, unreadableKeys } from "./storageShim.js";
-import { DEFAULT_INVOICE_SETTINGS, invoiceTotals, invoiceStatus, invoiceAllowance, quoteAllowance, createInvoice, createQuote, invoiceFromQuote, invoiceProblem, FREE_INVOICES_PER_MONTH, FREE_QUOTES_PER_MONTH, whatsappLink, sendMessage, reminderMessage, quoteMessage, prettyDate, STATUS_LABEL, invoicesForAI, quotesForAI, daysBetween, docStatus, clientSummaries, clientKey, recordPayment, removePayment, amountPaid, balanceDue, paymentsOf, hasPayments, syncInvoicesWithIncome } from "./invoices/model.js";
+import { DEFAULT_INVOICE_SETTINGS, invoiceTotals, invoiceStatus, invoiceAllowance, quoteAllowance, createInvoice, createQuote, invoiceFromQuote, invoiceProblem, FREE_INVOICES_PER_MONTH, FREE_QUOTES_PER_MONTH, whatsappLink, sendMessage, reminderMessage, quoteMessage, prettyDate, STATUS_LABEL, invoicesForAI, quotesForAI, daysBetween, docStatus, clientSummaries, clientKey, recordPayment, removePayment, amountPaid, balanceDue, paymentsOf, hasPayments, syncInvoicesWithIncome, quoteStatus } from "./invoices/model.js";
 import { invoicePdf, invoiceFileName } from "./invoices/pdf.js";
 import { saveFile } from "./saveFile.js";
+import { contactRecords, contactMoney, contactSummary, initials, relativeDay } from "./contacts/profile.js";
 import { isNativeApp, nativeRedirect, openInSystemBrowser, scheduleDeviceReminders, verifyBiometric, getAppPermissions, requestAppPermission, saveFileFromApp, exactAlarmStatus, openExactAlarmSetting, getClientHeader, scheduleReminderAt, cancelReminderAt } from "./native.js";
 import { unlockAudio, playTick, playDone, resetSoundOn, setResetSoundOn, keepScreenOn } from "./resetSounds.js";
 
@@ -2235,71 +2236,249 @@ const ContactSelect = ({ value, onChange, contacts, style }) => {
   );
 };
 
-// Drill-down for a single contact — shows their KROFT call/email history plus everything
-// linked to them (tasks, reminders, appointments, notes, files) in one place.
-function ContactActivityModal({ contact, tasks, reminders, appts, notes, files, onToggleTask, onToggleReminder, onClose }) {
-  const Section = ({ label, items, render }) => items.length === 0 ? null : (
-    <div style={{ marginBottom:16 }}>
-      <div style={{ fontSize:12, fontWeight:600, color:C.muted, marginBottom:8 }}>{label} ({items.length})</div>
-      <div style={{ display:"flex", flexDirection:"column", gap:8 }}>{items.map(render)}</div>
+// A contact's profile: who they are, and everything KROFT knows about them, from the records
+// linked to them (see src/contacts/profile.js). Opened by tapping a contact in Workspace › Contacts.
+function ContactProfile({ contact, data, fmt, onBack, onSave, onDelete, onCall, onEmail, onAskKroft, onToggleTask, onToggleReminder, onOpenDoc, onOpenFile }) {
+  const today = todayISO();
+  const records = contactRecords(contact, data, today);
+  const money = contactMoney(records, today);
+  const summary = contactSummary(contact, records, money, today, fmt);
+  const [editing, setEditing] = useState(null);
+  const first = (contact.name || "").split(/\s+/)[0] || "them";
+  const sum = obj => Object.entries(obj).filter(([, v]) => v > 0).map(([cur, v]) => fmt(v, cur)).join(" + ");
+
+  const Section = ({ title, count, children }) => (
+    <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+      <div style={{ fontSize:12, fontWeight:600, color:C.muted }}>{title}{count != null ? ` (${count})` : ""}</div>
+      {children}
     </div>
   );
-  const modalRef = useModalA11y(onClose);
-  const empty = tasks.length===0 && reminders.length===0 && appts.length===0 && notes.length===0 && files.length===0 && (contact.log||[]).length===0;
+  const Row = ({ children, onClick, style }) => (
+    <div onClick={onClick} role={onClick ? "button" : undefined} tabIndex={onClick ? 0 : undefined}
+      style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:10, padding:"10px 12px", borderRadius:12, border:`1px solid ${C.cardB}`, background:C.card, cursor:onClick ? "pointer" : "default", ...style }}>
+      {children}
+    </div>
+  );
+  const Check = ({ done, onClick, label }) => (
+    <button onClick={onClick} aria-label={label} aria-pressed={done} style={{ width:20, height:20, borderRadius:6, border:`1.5px solid ${done ? C.white : C.soft}`, background:done ? C.white : "transparent", cursor:"pointer", flexShrink:0, color:C.bg, fontSize:12, lineHeight:1, padding:0 }}>{done ? "✓" : ""}</button>
+  );
+  const header = (title, right) => (
+    <div style={{ display:"flex", alignItems:"center", gap:10, padding:"calc(12px + env(safe-area-inset-top)) 16px 12px", borderBottom:`1px solid ${C.cardB}`, flexShrink:0 }}>
+      <button onClick={editing ? () => setEditing(null) : onBack} aria-label="Back" style={{ background:"none", border:"none", color:C.white, cursor:"pointer", fontSize:20, padding:"2px 4px", lineHeight:1 }}>←</button>
+      <h2 style={{ fontSize:17, fontWeight:700, color:C.white, letterSpacing:-.5, flex:1, minWidth:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{title}</h2>
+      {right}
+    </div>
+  );
+
+  if (editing) {
+    const set = patch => setEditing(v => ({ ...v, ...patch }));
+    const field = (label, key, props = {}) => (
+      <label style={{ display:"block" }}>
+        <Mono style={{ display:"block", color:C.muted, marginBottom:5 }}>{label}</Mono>
+        <Inp value={editing[key] || ""} onChange={e => set({ [key]: e.target.value })} {...props} />
+      </label>
+    );
+    return (
+      <div role="dialog" aria-modal="true" aria-label={`Edit ${contact.name}`} style={{ position:"fixed", inset:0, zIndex:320, background:C.bg, display:"flex", flexDirection:"column" }}>
+        {header("Edit contact")}
+        <div style={{ flex:1, minHeight:0, overflowY:"auto", padding:16, display:"flex", flexDirection:"column", gap:12 }}>
+          {field("Name", "name")}
+          <div style={{ display:"flex", gap:10 }}>
+            <div style={{ flex:1 }}>{field("Phone", "phone", { type:"tel", inputMode:"tel" })}</div>
+            <div style={{ flex:1 }}>{field("Email", "email", { type:"email", inputMode:"email" })}</div>
+          </div>
+          <div style={{ display:"flex", gap:10 }}>
+            <div style={{ flex:1 }}>{field("Company (optional)", "company")}</div>
+            <div style={{ flex:1 }}>{field("Role (optional)", "role", { placeholder:"e.g. Marketing manager" })}</div>
+          </div>
+          {field("Address (optional)", "address")}
+          <div style={{ display:"flex", gap:10, alignItems:"flex-end" }}>
+            <div style={{ flex:1 }}>{field("Birthday (optional)", "birthday", { type:"date" })}</div>
+            <label style={{ flex:1, display:"block" }}>
+              <Mono style={{ display:"block", color:C.muted, marginBottom:5 }}>Group</Mono>
+              <select value={editing.category || "business"} onChange={e => set({ category:e.target.value })} style={{ width:"100%", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 12px", color:C.text, fontSize:13, fontFamily:APP_FONT }}>
+                <option value="business">Business</option>
+                <option value="family">Family</option>
+              </select>
+            </label>
+          </div>
+          {field("Note", "note", { placeholder:"Anything worth remembering" })}
+          <Btn full onClick={() => { if (!editing.name?.trim()) return; onSave({ ...editing, name:editing.name.trim() }); setEditing(null); }}>Save</Btn>
+          <Btn full v="ghost" style={{ color:C.negative }} onClick={onDelete}>Delete contact</Btn>
+        </div>
+      </div>
+    );
+  }
+
+  const hasMoney = records.invoices.length > 0 || records.quotes.length > 0;
+  const details = [["Phone", contact.phone], ["Email", contact.email], ["Company", contact.company], ["Role", contact.role], ["Address", contact.address], ["Birthday", contact.birthday && prettyDate(contact.birthday)], ["Note", contact.note]].filter(([, v]) => v);
+
   return (
-    <div ref={modalRef} role="dialog" aria-modal="true" aria-label={`Activity for ${contact.name}`} tabIndex={-1} style={{ position:"fixed", inset:0, zIndex:950, background:"rgba(0,0,0,.93)", display:"flex", alignItems:"center", justifyContent:"center", padding:24 }} onClick={onClose}>
-      <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:18, padding:26, maxWidth:460, width:"100%", maxHeight:"80vh", overflowY:"auto", animation:"pop .3s ease" }} onClick={e => e.stopPropagation()}>
-        <div style={{ fontSize:19, fontWeight:700, color:C.text, letterSpacing:-.3, marginBottom:2 }}>{contact.name}</div>
-        <Mono style={{ display:"block", color:C.muted, marginBottom:18 }}>Everything linked to this contact</Mono>
-        {empty ? (
-          <Mono style={{ display:"block", color:C.soft, marginBottom:18 }}>Nothing here yet. Calls and emails you place from KROFT show up here, along with any task, reminder, appointment, note or file you assign to {contact.name}. Calls dialled outside KROFT aren't visible to the app.</Mono>
-        ) : (
-          <>
-            <Section label="Calls & emails" items={contact.log||[]} render={l => (
-              <div key={l.id} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:10, padding:"9px 11px", borderRadius:10, border:`1px solid ${C.cardB}` }}>
-                <div style={{ fontSize:12, color:C.text }}>{l.type==="call" ? "Called from KROFT" : "Emailed from KROFT"}</div>
-                <Mono style={{ color:C.muted, flexShrink:0 }}>{new Date(l.at).toLocaleString("en-US", { month:"short", day:"numeric", hour:"2-digit", minute:"2-digit" })}</Mono>
-              </div>
-            )} />
-            <Section label="Tasks" items={tasks} render={t => (
-              <div key={t.id} style={{ display:"flex", alignItems:"center", gap:10, padding:"9px 11px", borderRadius:10, border:`1px solid ${C.cardB}` }}>
-                <button onClick={() => onToggleTask(t.id)} style={{ width:18, height:18, borderRadius:5, border:`1.5px solid ${t.done?C.white:C.soft}`, background:t.done?C.white:"transparent", cursor:"pointer", flexShrink:0, display:"flex", alignItems:"center", justifyContent:"center", color:C.black, fontSize:11, fontWeight:900 }}>{t.done?"✓":""}</button>
-                <div style={{ fontSize:12, color:C.text, textDecoration:t.done?"line-through":"none" }}>{t.title}</div>
-              </div>
-            )} />
-            <Section label="Reminders" items={reminders} render={r => (
-              <div key={r.id} style={{ display:"flex", alignItems:"center", gap:10, padding:"9px 11px", borderRadius:10, border:`1px solid ${C.cardB}` }}>
-                <button onClick={() => onToggleReminder(r.id)} style={{ width:18, height:18, borderRadius:5, border:`1.5px solid ${r.done?C.white:C.soft}`, background:r.done?C.white:"transparent", cursor:"pointer", flexShrink:0, display:"flex", alignItems:"center", justifyContent:"center", color:C.black, fontSize:11, fontWeight:900 }}>{r.done?"✓":""}</button>
-                <div style={{ flex:1, minWidth:0 }}>
-                  <div style={{ fontSize:12, color:C.text, textDecoration:r.done?"line-through":"none" }}>{r.text}</div>
-                  <Mono style={{ color:C.muted }}>{r.when}</Mono>
-                </div>
-              </div>
-            )} />
-            <Section label="Appointments" items={appts} render={a => (
-              <div key={a.id} style={{ padding:"9px 11px", borderRadius:10, border:`1px solid ${C.cardB}` }}>
-                <div style={{ fontSize:12, fontWeight:700, color:C.text }}>{a.title}</div>
-                <Mono style={{ color:C.muted }}>{a.time} · {fmtDate(a.date)||a.date}</Mono>
-              </div>
-            )} />
-            <Section label="Notes" items={notes} render={n => (
-              <div key={n.id} style={{ padding:"9px 11px", borderRadius:10, border:`1px solid ${C.cardB}` }}>
-                <div style={{ fontSize:12, fontWeight:700, color:C.text, marginBottom:2 }}>{n.title || "Untitled note"}</div>
-                <Mono style={{ color:C.muted }}>{n.date}</Mono>
-              </div>
-            )} />
-            <Section label="Files" items={files} render={f => (
-              <div key={f.id} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:10, padding:"9px 11px", borderRadius:10, border:`1px solid ${C.cardB}` }}>
-                <div style={{ minWidth:0, flex:1 }}>
-                  <div style={{ fontSize:12, fontWeight:700, color:C.text, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{f.name}</div>
-                  <Mono style={{ color:C.muted }}>{(f.size/1024).toFixed(0)} KB · {f.date}</Mono>
-                </div>
-                <a href={f.url} download={f.name} style={{ textDecoration:"none", flexShrink:0 }}><Btn sm v="outline">Open</Btn></a>
-              </div>
-            )} />
-          </>
+    <div role="dialog" aria-modal="true" aria-label={contact.name} style={{ position:"fixed", inset:0, zIndex:320, background:C.bg, display:"flex", flexDirection:"column" }}>
+      {header(contact.name, <button onClick={() => setEditing({ ...contact })} style={{ background:"none", border:"none", color:C.accent, fontSize:14, fontWeight:600, cursor:"pointer", padding:"4px 2px" }}>Edit</button>)}
+      <div style={{ flex:1, minHeight:0, overflowY:"auto", padding:16, display:"flex", flexDirection:"column", gap:18 }}>
+        {/* Who they are */}
+        <div style={{ display:"flex", alignItems:"center", gap:14 }}>
+          <div aria-hidden="true" style={{ width:60, height:60, borderRadius:"50%", background:C.accentBg, border:`1px solid ${C.accent}44`, color:C.accent, display:"flex", alignItems:"center", justifyContent:"center", fontSize:22, fontWeight:700, flexShrink:0 }}>{initials(contact.name)}</div>
+          <div style={{ minWidth:0 }}>
+            <div style={{ fontSize:20, fontWeight:700, color:C.white, letterSpacing:-.5, overflow:"hidden", textOverflow:"ellipsis" }}>{contact.name}</div>
+            <div style={{ display:"flex", gap:6, alignItems:"center", marginTop:4, flexWrap:"wrap" }}>
+              <Tag>{contact.category === "family" ? "FAMILY" : "BUSINESS"}</Tag>
+              {(contact.role || contact.company) && <Mono style={{ color:C.soft }}>{[contact.role, contact.company].filter(Boolean).join(" · ")}</Mono>}
+            </div>
+          </div>
+        </div>
+        <div style={{ display:"flex", gap:8 }}>
+          {contact.phone && <Btn sm style={{ flex:1 }} onClick={onCall}>Call</Btn>}
+          {contact.phone && <Btn sm v="outline" style={{ flex:1 }} onClick={() => window.open(whatsappLink(contact.phone, `Hi ${first},`), "_blank")}>WhatsApp</Btn>}
+          {contact.email && <Btn sm v="outline" style={{ flex:1 }} onClick={onEmail}>Email</Btn>}
+        </div>
+
+        {/* What KROFT knows */}
+        <Card level="raised" style={{ display:"flex", flexDirection:"column", gap:8 }}>
+          <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:8 }}>
+            <span style={{ fontSize:13, fontWeight:700, color:C.white }}>What KROFT knows</span>
+            <NavIcon id="nova" size={14} color={C.accent} />
+          </div>
+          {summary.length ? summary.map((l, i) => (
+            <div key={i} style={{ display:"flex", gap:8, alignItems:"flex-start" }}>
+              <span aria-hidden="true" style={{ width:5, height:5, borderRadius:"50%", background:C.accent, marginTop:7, flexShrink:0 }} />
+              <span style={{ fontSize:13.5, color:C.text, lineHeight:1.5 }}>{l}</span>
+            </div>
+          )) : (
+            <Mono style={{ color:C.soft, lineHeight:1.6 }}>Nothing yet. As you send {first} invoices, book meetings, add tasks or notes about them, it builds up here.</Mono>
+          )}
+          <Btn sm v="outline" onClick={() => onAskKroft(`What do you know about ${contact.name}?`)} style={{ marginTop:4 }}>Ask KROFT about {first}</Btn>
+        </Card>
+
+        {hasMoney && (
+          <Section title="Money">
+            <div style={{ display:"flex", gap:8 }}>
+              <Card level="inset" style={{ flex:1, padding:12 }}>
+                <Mono style={{ display:"block", color:C.muted, marginBottom:3 }}>Owes you</Mono>
+                <div style={{ fontSize:17, fontWeight:700, color:sum(money.owed) ? (money.overdue ? C.negative : C.white) : C.muted }}>{sum(money.owed) || fmt(0, data.currency)}</div>
+              </Card>
+              <Card level="inset" style={{ flex:1, padding:12 }}>
+                <Mono style={{ display:"block", color:C.muted, marginBottom:3 }}>Paid you</Mono>
+                <div style={{ fontSize:17, fontWeight:700, color:sum(money.paid) ? C.positive : C.muted }}>{sum(money.paid) || fmt(0, data.currency)}</div>
+              </Card>
+            </div>
+            {[...records.invoices, ...records.quotes].sort((a, b) => (b.issueDate || "").localeCompare(a.issueDate || "")).slice(0, 8).map(d => {
+              const st = d.kind === "quote" ? quoteStatus(d, today) : invoiceStatus(d, today);
+              return (
+                <Row key={d.id} onClick={() => onOpenDoc(d)}>
+                  <div style={{ minWidth:0 }}>
+                    <div style={{ fontSize:13, fontWeight:600, color:C.white }}>{d.number}</div>
+                    <Mono style={{ color:C.muted }}>{d.kind === "quote" ? "Quote" : "Invoice"} · {prettyDate(d.issueDate)}</Mono>
+                  </div>
+                  <div style={{ textAlign:"right" }}>
+                    <div style={{ fontSize:13, fontWeight:700, color:C.white }}>{fmt(invoiceTotals(d).total, d.currency)}</div>
+                    <Tag tone={DOC_TONE[st]} style={{ marginTop:2, display:"inline-block" }}>{STATUS_LABEL[st].toUpperCase()}</Tag>
+                  </div>
+                </Row>
+              );
+            })}
+          </Section>
         )}
-        <Btn v="outline" full onClick={onClose}>Close</Btn>
+
+        {(records.upcoming.length > 0 || records.past.length > 0) && (
+          <Section title="Meetings" count={records.upcoming.length + records.past.length}>
+            {[...records.upcoming, ...records.past.slice(0, 3)].map(a => (
+              <Row key={a.id} style={a.date < today ? { opacity:.7 } : null}>
+                <div style={{ minWidth:0 }}>
+                  <div style={{ fontSize:13, fontWeight:600, color:C.white }}>{a.title}</div>
+                  <Mono style={{ color:C.muted }}>{[a.time, a.location].filter(Boolean).join(" · ")}</Mono>
+                </div>
+                <Mono style={{ color:a.date >= today ? C.accent : C.muted, flexShrink:0 }}>{relativeDay(a.date, today)}</Mono>
+              </Row>
+            ))}
+          </Section>
+        )}
+
+        {(records.tasks.length > 0 || records.reminders.length > 0) && (
+          <Section title="To do" count={records.tasks.filter(t => !t.done).length + records.reminders.filter(r => !r.done).length}>
+            {records.tasks.map(t => (
+              <Row key={t.id} style={{ justifyContent:"flex-start" }}>
+                <Check done={t.done} onClick={() => onToggleTask(t.id)} label={`${t.done ? "Reopen" : "Complete"} ${t.title}`} />
+                <span style={{ fontSize:13, color:C.text, textDecoration:t.done ? "line-through" : "none" }}>{t.title}</span>
+              </Row>
+            ))}
+            {records.reminders.map(r => (
+              <Row key={r.id} style={{ justifyContent:"flex-start" }}>
+                <Check done={r.done} onClick={() => onToggleReminder(r.id)} label={`${r.done ? "Reopen" : "Complete"} ${r.text}`} />
+                <div style={{ minWidth:0 }}>
+                  <div style={{ fontSize:13, color:C.text, textDecoration:r.done ? "line-through" : "none" }}>{r.text}</div>
+                  {r.when && <Mono style={{ color:C.muted }}>{r.when}</Mono>}
+                </div>
+              </Row>
+            ))}
+          </Section>
+        )}
+
+        {records.notes.length > 0 && (
+          <Section title="Notes" count={records.notes.length}>
+            {records.notes.map(n => (
+              <Row key={n.id} style={{ flexDirection:"column", alignItems:"stretch", gap:3 }}>
+                <div style={{ fontSize:13, fontWeight:600, color:C.white }}>{n.title || "Note"}</div>
+                {n.body && <Mono style={{ color:C.soft, lineHeight:1.5, display:"-webkit-box", WebkitLineClamp:3, WebkitBoxOrient:"vertical", overflow:"hidden" }}>{n.body}</Mono>}
+                <Mono style={{ color:C.muted }}>{n.date}</Mono>
+              </Row>
+            ))}
+          </Section>
+        )}
+
+        {records.files.length > 0 && (
+          <Section title="Files" count={records.files.length}>
+            {records.files.map(f => (
+              <Row key={f.id}>
+                <div style={{ minWidth:0 }}>
+                  <div style={{ fontSize:13, fontWeight:600, color:C.white, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{f.name}</div>
+                  <Mono style={{ color:C.muted }}>{Math.max(1, Math.round((f.size || 0) / 1024))} KB · {f.date}</Mono>
+                </div>
+                <Btn sm v="outline" onClick={() => onOpenFile(f)}>Save</Btn>
+              </Row>
+            ))}
+          </Section>
+        )}
+
+        {records.emails.length > 0 && (
+          <Section title="Emails from them" count={records.emails.length}>
+            {records.emails.slice(0, 5).map(e => (
+              <Row key={e.id}>
+                <div style={{ minWidth:0 }}>
+                  <div style={{ fontSize:13, fontWeight:e.read ? 500 : 700, color:C.white, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{e.subject || "(no subject)"}</div>
+                  <Mono style={{ color:C.muted }}>{e.time}</Mono>
+                </div>
+                {!e.read && <Tag tone="accent">NEW</Tag>}
+              </Row>
+            ))}
+          </Section>
+        )}
+
+        {records.log.length > 0 && (
+          <Section title="Contact history" count={records.log.length}>
+            {records.log.slice(0, 8).map(l => (
+              <Row key={l.id}>
+                <span style={{ fontSize:13, color:C.text }}>{l.type === "call" ? "Called from KROFT" : "Emailed from KROFT"}</span>
+                <Mono style={{ color:C.muted }}>{new Date(l.at).toLocaleString("en-GB", { day:"numeric", month:"short", hour:"2-digit", minute:"2-digit" })}</Mono>
+              </Row>
+            ))}
+          </Section>
+        )}
+
+        {details.length > 0 && (
+          <Section title="Details">
+            <Card level="inset" style={{ padding:"4px 14px" }}>
+              {details.map(([label, value], i) => (
+                <div key={label} style={{ display:"flex", justifyContent:"space-between", gap:14, padding:"10px 0", borderTop:i ? `1px solid ${C.div}` : "none" }}>
+                  <Mono style={{ color:C.muted, flexShrink:0 }}>{label}</Mono>
+                  <span style={{ fontSize:13, color:C.text, textAlign:"right", wordBreak:"break-word" }}>{value}</span>
+                </div>
+              ))}
+            </Card>
+          </Section>
+        )}
+        <div style={{ height:8 }} />
       </div>
     </div>
   );
@@ -2668,13 +2847,13 @@ function InvoiceField({ label, children, style }) {
   );
 }
 
-function InvoicesScreen({ invoices, setInvoices, quotes, setQuotes, settings, setSettings, user, subscribed, contacts, setContacts, onClose, toast, onUpgrade, onRecordPayment, onRemoveIncome, openId }) {
+function InvoicesScreen({ invoices, setInvoices, quotes, setQuotes, settings, setSettings, user, subscribed, contacts, setContacts, onClose, toast, onUpgrade, onRecordPayment, onRemoveIncome, openId, openKind }) {
   const today = todayISO();
   const fmt = fmtCur;
   const [tab, setTab] = useState("invoices");          // invoices | quotes | clients
   const [view, setView] = useState(openId ? "view" : "list");  // list | edit | view | settings | client
   const [currentId, setCurrentId] = useState(openId || null);
-  const [currentKind, setCurrentKind] = useState("invoice");
+  const [currentKind, setCurrentKind] = useState(openKind || "invoice");
   const [clientKeySel, setClientKeySel] = useState(null);
   const [draft, setDraft] = useState(null);
   const [settingsDraft, setSettingsDraft] = useState(null);
@@ -2704,7 +2883,11 @@ function InvoicesScreen({ invoices, setInvoices, quotes, setQuotes, settings, se
   const statusOf = doc => docStatus(doc, today);
   const update = (kind, id, patch) => setListFor(kind)(list => list.map(d => d.id === id ? { ...d, ...patch } : d));
   const openDoc = (doc, from = "list") => { setPayForm(null); setCurrentKind(doc.kind === "quote" ? "quote" : "invoice"); setCurrentId(doc.id); setReturnTo(from); setView("view"); };
-  const backFromDoc = () => { setCurrentId(null); setView(returnTo === "client" && clientKeySel ? "client" : "list"); };
+  const backFromDoc = () => {
+    // Opened straight to this document (from a contact's profile): Back goes back there.
+    if (openId && currentId === openId) { onClose(); return; }
+    setCurrentId(null); setView(returnTo === "client" && clientKeySel ? "client" : "list");
+  };
 
   // The client on a saved invoice/quote becomes (or links to) a Business contact, so their phone
   // and email are remembered and everything for them can be seen together.
@@ -3241,7 +3424,7 @@ function InvoicesScreen({ invoices, setInvoices, quotes, setQuotes, settings, se
   }
 
   return (
-    <div role="dialog" aria-modal="true" aria-label="Invoices" style={{ position:"fixed", inset:0, zIndex:310, background:C.bg, display:"flex", flexDirection:"column" }}>
+    <div role="dialog" aria-modal="true" aria-label="Invoices" style={{ position:"fixed", inset:0, zIndex:330, background:C.bg, display:"flex", flexDirection:"column" }}>
       {body}
     </div>
   );
@@ -4119,6 +4302,7 @@ function KroftApp({ onFullReset } = {}) {
   const [quotes, setQuotes] = useState([]);
   const [invoiceSettings, setInvoiceSettings] = useState(DEFAULT_INVOICE_SETTINGS);
   const [showInvoices, setShowInvoices] = useState(false);
+  const [invoicesOpenDoc, setInvoicesOpenDoc] = useState(null); // { id, kind } to open straight to one (from a contact's profile)
   const [expenseCats, setExpenseCats] = useState(["Operations","Tech","Marketing","Travel","Rent","Other"]);
   // Monthly spending limits per category, as { [category]: amount }. Tracking spend without ever
   // warning about it means the app only tells you about a problem after the month is over.
@@ -6820,7 +7004,7 @@ ${list(projects, 8, p => `${p.name} — ${p.status}${p.deadline?`, due ${p.deadl
 
 NOTES (${notes.length}): ${list(notes, 8, n => n.title || "untitled")}
 DOCUMENTS (${documents.length}): ${list(documents, 8, d => d.title || "untitled")}
-CONTACTS (${contacts.length}): ${list(contacts, 12, c => `${c.name}${c.email?` <${c.email}>`:""} (${c.category})`)}
+CONTACTS (${contacts.length}): ${list(contacts, 12, c => `${c.name}${c.email?` <${c.email}>`:""} (${[c.category, c.role, c.company].filter(Boolean).join(", ")})${c.note?` note: ${c.note.slice(0, 80)}`:""}`)}
 EMAIL: ${unread.length} unread${unread.length?` — recent: ${list(unread, 5, m => `"${m.subject}" from ${m.from}`)}`:""}
 
 WELLNESS
@@ -9116,7 +9300,8 @@ ${voiceMode
       })()}
       {showInvoices && (
         <InvoicesScreen invoices={invoices} setInvoices={setInvoices} quotes={quotes} setQuotes={setQuotes} settings={invoiceSettings} setSettings={setInvoiceSettings}
-          user={user} subscribed={subscribed} contacts={contacts} setContacts={setContacts} toast={toast} onClose={() => setShowInvoices(false)}
+          user={user} subscribed={subscribed} contacts={contacts} setContacts={setContacts} toast={toast} onClose={() => { setShowInvoices(false); setInvoicesOpenDoc(null); }}
+          openId={invoicesOpenDoc?.id} openKind={invoicesOpenDoc?.kind}
           onRecordPayment={(inv, amount, date, part) => {
             // Getting paid is income: recorded the same way as one added by hand, on the day the
             // money arrived.
@@ -9359,19 +9544,38 @@ ${voiceMode
       )}
       {activeReset && <QuickResetModal session={activeReset} onCancel={cancelQuickReset} soundOn={resetSound} onToggleSound={toggleResetSound} />}
       {patternDetail && <PatternDetailModal pattern={patternDetail} onClose={() => setPatternDetail(null)} />}
-      {contactActivity && (
-        <ContactActivityModal
-          contact={contacts.find(c => c.id === contactActivity.id) || contactActivity}
-          tasks={tasks.filter(t => t.contactId === contactActivity.id)}
-          reminders={smartReminders.filter(r => r.contactId === contactActivity.id)}
-          appts={appts.filter(a => a.contactId === contactActivity.id)}
-          notes={notes.filter(n => n.contactId === contactActivity.id)}
-          files={files.filter(f => f.contactId === contactActivity.id)}
-          onToggleTask={id => setTasks(p => p.map(x => x.id===id ? {...x, done:!x.done} : x))}
-          onToggleReminder={id => setSmartReminders(p => p.map(x => x.id===id ? {...x, done:!x.done} : x))}
-          onClose={() => setContactActivity(null)}
-        />
-      )}
+      {contactActivity && (() => {
+        const c = contacts.find(x => x.id === contactActivity.id) || contactActivity;
+        return (
+          <ContactProfile
+            contact={c}
+            data={{ tasks, reminders:smartReminders, appts, notes, files, emails, invoices, quotes, currency:user.currency }}
+            fmt={fmtCur}
+            onBack={() => setContactActivity(null)}
+            onSave={updated => { setContacts(p => p.map(x => x.id === c.id ? updated : x)); toast("Contact updated."); }}
+            onDelete={() => {
+              if (!window.confirm(`Delete ${c.name}? Anything linked to them stays, but loses the link.`)) return;
+              const prev = contacts;
+              setContacts(prev.filter(x => x.id !== c.id));
+              setContactActivity(null);
+              toast(`${c.name} deleted.`, () => setContacts(prev));
+            }}
+            onCall={() => { logContactAction(c.id, "call"); window.location.href = `tel:${c.phone}`; }}
+            onEmail={() => { logContactAction(c.id, "email"); setComposeDraft({ to:c.email, subject:"", body:"" }); }}
+            onAskKroft={q => { setContactActivity(null); setAiInput(q); setTab("nova"); }}
+            onToggleTask={id => setTasks(p => p.map(x => x.id===id ? {...x, done:!x.done} : x))}
+            onToggleReminder={id => setSmartReminders(p => p.map(x => x.id===id ? {...x, done:!x.done} : x))}
+            onOpenDoc={d => { setInvoicesOpenDoc({ id:d.id, kind:d.kind === "quote" ? "quote" : "invoice" }); setShowInvoices(true); }}
+            onOpenFile={async f => {
+              try {
+                const bytes = new Uint8Array(await (await fetch(f.url)).arrayBuffer());
+                const result = await saveFile({ name:f.name, data:bytes, type:f.type || "application/octet-stream" });
+                if (result === "downloaded") toast("File downloaded. Check your Downloads folder.");
+              } catch (err) { toast(err?.code === "needs-update" ? "Update the KROFT app to save files." : "Couldn't open that file."); }
+            }}
+          />
+        );
+      })()}
 
       {toastStack}
       {offlineBanner}
@@ -11166,7 +11370,7 @@ ${voiceMode
                   title: c.name,
                   subtitle: [c.phone, c.email].filter(Boolean).join(" · ") || "No contact info",
                   actions: [
-                    { label:"View activity", onClick:() => setContactActivity(c) },
+                    { label:"Open profile", onClick:() => setContactActivity(c) },
                     { label:"Edit", onClick:() => setEditingContact({...c}) },
                     { label:"Delete", destructive:true, confirmText:"This removes their number, email and interaction history. Anything linked to them stays, but loses the link.", onClick:() => {
                       const prev = contacts;
