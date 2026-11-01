@@ -13,16 +13,21 @@ export default async function handler(req) {
   const code = url.searchParams.get("code");
   const state = url.searchParams.get("state");
   const oauthError = url.searchParams.get("error"); // e.g. "access_denied"
+  // Started from the Android app (see ../microsoft/start.js)? Then every outcome, including a cancel,
+  // returns to the app through its deep link rather than to the website. Read from the signed
+  // state, so a forged flag is ignored.
+  const fromApp = state ? (await verifyState(state))?.app === true : false;
+  const dest = fromApp ? "com.orynthra.kroft://oauth-return" : origin;
 
-  if (oauthError) return redirectTo(origin, "error", oauthError);
-  if (!code || !state) return redirectTo(origin, "error", "missing_code_or_state");
+  if (oauthError) return redirectTo(dest, "error", oauthError);
+  if (!code || !state) return redirectTo(dest, "error", "missing_code_or_state");
 
   const payload = await verifyState(state);
-  if (!payload?.uid) return redirectTo(origin, "error", "invalid_or_expired_state");
+  if (!payload?.uid) return redirectTo(dest, "error", "invalid_or_expired_state");
 
   const redirectUri = `${origin}/api/microsoft/callback`; // must exactly match the one used in start.js
   const tokens = await exchangeMicrosoftCode(code, redirectUri);
-  if (!tokens) return redirectTo(origin, "error", "token_exchange_failed");
+  if (!tokens) return redirectTo(dest, "error", "token_exchange_failed");
 
   const admin = supabaseAdmin();
   const expiresAt = new Date(Date.now() + tokens.expires_in * 1000).toISOString();
@@ -41,9 +46,9 @@ export default async function handler(req) {
     },
     { onConflict: "user_id,provider" }
   );
-  if (upsertError) return redirectTo(origin, "error", "storage_failed");
+  if (upsertError) return redirectTo(dest, "error", "storage_failed");
 
-  return redirectTo(origin, "success", "microsoft");
+  return redirectTo(dest, "success", "microsoft");
 }
 
 function redirectTo(origin, status, detail) {

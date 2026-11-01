@@ -1,0 +1,21 @@
+{
+  "appId": "com.orynthra.kroft",
+  "appName": "KROFT",
+  "webDir": "dist",
+  "server": {
+    "url": "https://kroft-pied.vercel.app",
+    "androidScheme": "https",
+    "errorPath": "app-offline.html"
+  },
+  "android": {
+    "backgroundColor": "#f4f2ee",
+    "allowMixedContent": false,
+    "appendUserAgent": "KROFTAndroid"
+  },
+  "plugins": {
+    "LocalNotifications": {
+      "smallIcon": "ic_stat_kroft",
+      "iconColor": "#4f5389"
+    }
+  }
+}

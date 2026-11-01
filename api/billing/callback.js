@@ -15,21 +15,24 @@ export default async function handler(req) {
   const origin = url.origin;
   const status = url.searchParams.get("status");
   const transactionId = url.searchParams.get("transaction_id");
+  // Checkouts started in the Android app carry a "kroftapp_" tx_ref (see initializeCheckout) and
+  // return there through its deep link; everything else returns to the website as before.
+  const appReturn = (url.searchParams.get("tx_ref") || "").startsWith("kroftapp_") ? "com.orynthra.kroft://billing-return" : null;
 
   if (status !== "successful" || !transactionId) {
-    return redirectTo(origin, "cancelled");
+    return redirectTo(appReturn || origin, "cancelled");
   }
 
   const secretKey = process.env.FLUTTERWAVE_SECRET_KEY;
-  if (!secretKey) return redirectTo(origin, "error", "not_configured");
+  if (!secretKey) return redirectTo(appReturn || origin, "error", "not_configured");
 
   const verifyResult = await verifyTransaction(secretKey, transactionId);
-  if (!verifyResult.ok) return redirectTo(origin, "error", "verification_failed");
+  if (!verifyResult.ok) return redirectTo(appReturn || origin, "error", "verification_failed");
 
   const transaction = verifyResult.transaction;
   // Belt-and-suspenders on top of the verify call itself: confirm Flutterwave's own record
   // agrees the charge succeeded, not just that the API call to check it succeeded.
-  if (transaction.status !== "successful") return redirectTo(origin, "error", "payment_not_successful");
+  if (transaction.status !== "successful") return redirectTo(appReturn || origin, "error", "payment_not_successful");
 
   const admin = supabaseAdmin();
   const applyResult = await applyChargeEvent(admin, transaction, secretKey);
@@ -44,7 +47,7 @@ export default async function handler(req) {
     // "payment failed". The charge itself is real (verified above); leave it for
     // api/billing/webhook.js's retried delivery to finish activating Plus rather than risk
     // double-applying it here, and tell the user honestly that confirmation is still pending.
-    return redirectTo(origin, "error", "processing_delayed");
+    return redirectTo(appReturn || origin, "error", "processing_delayed");
   }
 
   if (applyResult.duplicate && applyResult.userId) {
@@ -53,10 +56,10 @@ export default async function handler(req) {
     // this race). Confirm the real subscriptions row before telling the user Plus is active,
     // rather than trusting a claim that could still be in flight or could have just failed.
     const { data } = await admin.from("subscriptions").select("status").eq("user_id", applyResult.userId).maybeSingle();
-    if (data?.status !== "active") return redirectTo(origin, "error", "processing_delayed");
+    if (data?.status !== "active") return redirectTo(appReturn || origin, "error", "processing_delayed");
   }
 
-  return redirectTo(origin, "success");
+  return redirectTo(appReturn || origin, "success");
 }
 
 function redirectTo(origin, status, detail) {

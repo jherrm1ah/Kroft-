@@ -12,7 +12,10 @@ export default async function handler(req) {
   const user = await getAuthedUser(req);
   if (!user) return jsonResponse({ error: "Not authenticated" }, 401);
 
-  const state = await signState({ uid: user.id, exp: Date.now() + 10 * 60 * 1000 });
+  // ?app=1: started from the Android app, so the callback returns there (com.orynthra.kroft://)
+  // instead of to the website. Carried inside the signed state so it can't be tampered with.
+  const app = new URL(req.url).searchParams.get("app") === "1";
+  const state = await signState({ uid: user.id, exp: Date.now() + 10 * 60 * 1000, ...(app ? { app: true } : {}) });
   const redirectUri = `${new URL(req.url).origin}/api/microsoft/callback`;
   return jsonResponse({ url: buildMicrosoftAuthUrl(redirectUri, state) });
 }

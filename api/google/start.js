@@ -15,7 +15,10 @@ export default async function handler(req) {
   // 10-minute window to complete the consent flow — long enough for a real person clicking
   // through Google's screens, short enough that an intercepted/logged URL is useless soon
   // after.
-  const state = await signState({ uid: user.id, exp: Date.now() + 10 * 60 * 1000 });
+  // ?app=1: started from the Android app, so the callback returns there (com.orynthra.kroft://)
+  // instead of to the website. Carried inside the signed state so it can't be tampered with.
+  const app = new URL(req.url).searchParams.get("app") === "1";
+  const state = await signState({ uid: user.id, exp: Date.now() + 10 * 60 * 1000, ...(app ? { app: true } : {}) });
 
   const redirectUri = `${new URL(req.url).origin}/api/google/callback`;
   const url = new URL("https://accounts.google.com/o/oauth2/v2/auth");

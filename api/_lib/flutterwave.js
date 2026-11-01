@@ -46,8 +46,10 @@ export async function flutterwaveRequest(secretKey, method, path, body) {
 // not something this code creates on the fly — same reasoning as Stripe's pre-created Price
 // object (STRIPE_PRICE_ID before this swap): a merchant-configured plan is simpler and more
 // auditable than dynamically creating billing plans from application code.
-export async function initializeCheckout(secretKey, { planId, email, name, userId, redirectUrl }) {
-  const txRef = `kroft_${userId}_${Date.now()}`;
+export async function initializeCheckout(secretKey, { planId, email, name, userId, redirectUrl, fromApp = false }) {
+  // "kroftapp_" marks a checkout started in the Android app: Flutterwave echoes tx_ref back on
+  // every outcome (including a cancel), which tells api/billing/callback.js to return to the app.
+  const txRef = `${fromApp ? "kroftapp" : "kroft"}_${userId}_${Date.now()}`;
   const { ok, data } = await flutterwaveRequest(secretKey, "POST", "/payments", {
     tx_ref: txRef,
     amount: undefined, // omitted deliberately — payment_plan supplies the amount/currency/interval; setting one here would conflict with the plan's own terms
