@@ -8,7 +8,7 @@ self.addEventListener("push", event => {
   const title = data.title || "KROFT";
   const body = data.body || "";
   const tag = data.tag || "kroft:notification";
-  event.waitUntil(self.registration.showNotification(title, { body, tag, requireInteraction: true }));
+  event.waitUntil(self.registration.showNotification(title, { body, tag, requireInteraction: true, icon: "/icons/icon-192.png", badge: "/icons/badge-96.png" }));
 });
 
 // Tapping the notification brings an existing KROFT tab to the front rather than opening a

@@ -1005,7 +1005,7 @@ const sendNotification = (title, body, tag, opts = {}) => {
     // closest a background/closed-tab notification can get to "won't let you ignore it", since
     // sound and a full-screen takeover (see ReminderAlarmScreen) only work while the app itself
     // is open.
-    const n = new Notification(title, { body, tag, badge:undefined, icon:undefined, requireInteraction: !!opts.requireInteraction });
+    const n = new Notification(title, { body, tag, badge:"/icons/badge-96.png", icon:"/icons/icon-192.png", requireInteraction: !!opts.requireInteraction });
     n.onclick = () => { window.focus(); n.close(); };
     return true;
   } catch { return false; }
@@ -3037,6 +3037,10 @@ function KroftApp({ onFullReset } = {}) {
     appliedTheme.current = theme;
   }
   useEffect(() => { setThemeTick(t => t + 1); }, [theme]);
+  // Keeps the phone's status bar / browser bar the same colour as the app in light and dark mode.
+  useEffect(() => {
+    document.querySelector('meta[name="theme-color"]')?.setAttribute("content", (theme === "dark" ? DARK : LIGHT).bg);
+  }, [theme]);
   // Which Profile screen is open and which of its rows is expanded. Held here rather than inside
   // ProfileSection because a theme change remounts everything under key={themeTick} — switching
   // to dark mode from Profile → General used to throw you back to the Profile hub. Reset when
