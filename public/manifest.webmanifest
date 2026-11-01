@@ -1,7 +1,7 @@
 {
   "name": "KROFT",
   "short_name": "KROFT",
-  "description": "Your personal assistant for money, schedule, contacts, notes and wellbeing. By Orynthra.",
+  "description": "Your money, schedule, contacts, notes and wellbeing in one assistant. By Orynthra.",
   "id": "/",
   "start_url": "/",
   "scope": "/",
