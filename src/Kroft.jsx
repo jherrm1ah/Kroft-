@@ -1320,8 +1320,10 @@ function WelcomeScreen({ onPhone, onGoogle, onEmail, onLogIn, googleLoading }) {
         <h1 style={{ fontSize:42, fontWeight:700, color:ink, letterSpacing:-1.4, margin:0 }}>Kroft</h1>
       </div>
       <div style={{ width:"100%", maxWidth:480, margin:"0 auto", boxSizing:"border-box", padding:"0 clamp(16px, 6vw, 28px) calc(18px + env(safe-area-inset-bottom))", display:"flex", flexDirection:"column", gap:12 }}>
-        <button onClick={onPhone} style={{ ...pill, background:ink, color:paper, border:"none" }}>
-          <svg viewBox="0 0 24 24" width={20} height={20} aria-hidden="true"><path fill={paper} d="M6.6 3h2.7c.4 0 .8.3.9.7l1 3.6c.1.4 0 .8-.3 1L9.2 9.8a13 13 0 0 0 5 5l1.5-1.7c.3-.3.7-.4 1-.3l3.6 1c.4.1.7.5.7.9v2.7c0 1-.8 1.8-1.8 1.8C10.4 19.2 3.8 12.6 3.8 4.8 3.8 3.8 4.6 3 5.6 3z" /></svg>
+        {/* The one filled button is KROFT indigo, the brand accent, so the welcome screen carries the
+            brand colour rather than a generic black. White on #4f5389 is about 7:1 contrast. */}
+        <button onClick={onPhone} style={{ ...pill, background:LIGHT.accent, color:"#fff", border:"none", boxShadow:"0 10px 24px rgba(79,83,137,.28)" }}>
+          <svg viewBox="0 0 24 24" width={20} height={20} aria-hidden="true"><path fill="#fff" d="M6.6 3h2.7c.4 0 .8.3.9.7l1 3.6c.1.4 0 .8-.3 1L9.2 9.8a13 13 0 0 0 5 5l1.5-1.7c.3-.3.7-.4 1-.3l3.6 1c.4.1.7.5.7.9v2.7c0 1-.8 1.8-1.8 1.8C10.4 19.2 3.8 12.6 3.8 4.8 3.8 3.8 4.6 3 5.6 3z" /></svg>
           Continue with phone number
         </button>
         <button onClick={onGoogle} disabled={googleLoading} style={{ ...outlinePill, cursor:googleLoading?"wait":"pointer" }}>
