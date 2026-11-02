@@ -3501,6 +3501,105 @@ function InvoicesScreen({ invoices, setInvoices, quotes, setQuotes, settings, se
   );
 }
 
+// The owner's admin page: how KROFT is doing, from api/admin.js. Read-only apart from ticking
+// feedback off as dealt with.
+function AdminScreen({ fetcher, onClose, toast }) {
+  const [data, setData] = useState(null);
+  const [failed, setFailed] = useState(false);
+  const load = () => { setFailed(false); fetcher("/api/admin").then(r => (r.ok ? r.json() : Promise.reject())).then(setData).catch(() => setFailed(true)); };
+  useEffect(load, []);
+  const markDone = async (f, done) => {
+    const r = await fetcher("/api/admin", { method:"POST", body:JSON.stringify({ action:"feedbackDone", id:f.id, done }) }).catch(() => null);
+    if (r?.ok) setData(d => ({ ...d, feedback: d.feedback.map(x => x.id === f.id ? { ...x, done } : x) })); else toast("Couldn't update that. Try again.");
+  };
+  const when = iso => { const d = new Date(iso); return isNaN(d) ? "" : d.toLocaleString(userLocale(), { day:"numeric", month:"short", hour:"2-digit", minute:"2-digit" }); };
+  const section = (title, children) => (
+    <div style={{ marginBottom:18 }}>
+      <div style={{ fontSize:12, fontWeight:700, color:C.muted, letterSpacing:.6, marginBottom:8 }}>{title.toUpperCase()}</div>
+      {children}
+    </div>
+  );
+  const stat = (label, value, tone) => (
+    <Card level="raised" style={{ flex:1, minWidth:130, padding:"12px 14px" }}>
+      <Mono style={{ display:"block", color:C.muted, marginBottom:3 }}>{label}</Mono>
+      <div style={{ fontSize:20, fontWeight:700, color: tone || C.white }}>{value}</div>
+    </Card>
+  );
+  let body;
+  if (failed) body = <Card level="inset" style={{ textAlign:"center", padding:22 }}><Mono style={{ color:C.soft }}>Couldn't load. </Mono><Btn sm v="outline" onClick={load}>Try again</Btn></Card>;
+  else if (!data) body = <div style={{ display:"flex", justifyContent:"center", padding:30 }}><Spinner size={18} color={C.muted} /></div>;
+  else {
+    const ai = data.ai.last24;
+    const aiBad = ai.failed > 0 && ai.failed * 2 >= ai.requests;
+    body = (
+      <>
+        {section("People", <div style={{ display:"flex", gap:10, flexWrap:"wrap" }}>{stat("Accounts", data.people.total)}{stat("New this week", data.people.new7)}{stat("Active today", data.active.today)}{stat("Active this week", data.active.week)}</div>)}
+        {section("AI, last 24 hours", (
+          <Card level="raised" style={{ borderColor: aiBad ? C.negative : undefined }}>
+            <div style={{ fontSize:15, fontWeight:700, color: aiBad ? C.negative : C.white }}>{ai.requests ? `${ai.requests - ai.failed} of ${ai.requests} worked` : "No AI requests"}</div>
+            {ai.failed > 0 && <Mono style={{ display:"block", color:C.negative, marginTop:4 }}>{ai.failed} failed{ai.lastError ? `: ${ai.lastError}` : ""}</Mono>}
+            {data.ai.days.length > 0 && (
+              <div style={{ marginTop:10, paddingTop:8, borderTop:`1px solid ${C.div}` }}>
+                {data.ai.days.map(d => (
+                  <div key={d.day} style={{ display:"flex", justifyContent:"space-between", padding:"3px 0" }}>
+                    <Mono style={{ color:C.text }}>{d.day}</Mono>
+                    <Mono style={{ color:C.text }}>{d.requests} requests · {d.failed} failed · ${d.cost.toFixed(4)}</Mono>
+                  </div>
+                ))}
+              </div>
+            )}
+          </Card>
+        ))}
+        {section(`Feedback (${data.feedback.filter(f => !f.done).length} to look at)`, data.feedback.length === 0 ? <Mono style={{ color:C.soft }}>None yet.</Mono> : (
+          <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+            {data.feedback.map(f => (
+              <Card key={f.id} level="raised" style={{ padding:"10px 12px", opacity: f.done ? .55 : 1 }}>
+                <div style={{ display:"flex", justifyContent:"space-between", gap:8, marginBottom:4 }}>
+                  <Tag tone={f.kind === "problem" ? "negative" : f.kind === "praise" ? "positive" : "accent"}>{({ problem:"SOMETHING'S WRONG", idea:"IDEA", praise:"PRAISE" })[f.kind] || "FEEDBACK"}</Tag>
+                  <Mono style={{ color:C.muted }}>{when(f.created_at)}</Mono>
+                </div>
+                <div style={{ fontSize:13, color:C.text, lineHeight:1.5, whiteSpace:"pre-wrap" }}>{f.message}</div>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:8, marginTop:6 }}>
+                  <Mono style={{ color:C.muted }}>{[f.screen, f.email].filter(Boolean).join(" · ")}</Mono>
+                  <Btn sm v="outline" onClick={() => markDone(f, !f.done)}>{f.done ? "Reopen" : "Done"}</Btn>
+                </div>
+              </Card>
+            ))}
+          </div>
+        ))}
+        {section("Errors, last 7 days", data.errors.length === 0 ? <Mono style={{ color:C.soft }}>No errors reported.</Mono> : (
+          <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+            {data.errors.map((e, i) => (
+              <Card key={i} level="raised" style={{ padding:"10px 12px" }}>
+                <div style={{ fontSize:13, color:C.text, wordBreak:"break-word" }}>{e.message}</div>
+                <Mono style={{ display:"block", color:C.muted, marginTop:4 }}>{e.kind} · {e.times}× · {e.people} {e.people === 1 ? "person" : "people"} · last {when(e.last_seen)}{e.source ? ` · ${e.source}` : ""}</Mono>
+              </Card>
+            ))}
+          </div>
+        ))}
+        {section("Alerts sent to you", data.alerts.length === 0 ? <Mono style={{ color:C.soft }}>None.</Mono> : data.alerts.map((a, i) => (
+          <div key={i} style={{ padding:"6px 0", borderTop: i ? `1px solid ${C.div}` : "none" }}>
+            <div style={{ fontSize:13, fontWeight:600, color:C.text }}>{a.title}</div>
+            <Mono style={{ display:"block", color:C.muted }}>{when(a.created_at)} · {a.delivered > 0 ? `sent to ${a.delivered} device${a.delivered === 1 ? "" : "s"}` : a.delivered < 0 ? "not sent: turn on notifications on your phone's browser" : "sending…"}</Mono>
+            {a.body && <Mono style={{ display:"block", color:C.soft, marginTop:2, lineHeight:1.5 }}>{a.body}</Mono>}
+          </div>
+        )))}
+        {section("Backup", <Mono style={{ color: data.lastBackup ? C.text : C.warning }}>{data.lastBackup ? `Last backup copy: ${data.lastBackup}. Kept 7 days.` : "No backup copy yet. The first one is taken within a day."}</Mono>)}
+      </>
+    );
+  }
+  return (
+    <div role="dialog" aria-modal="true" aria-label="Admin" style={{ position:"fixed", inset:0, zIndex:330, background:C.bg, display:"flex", flexDirection:"column" }}>
+      <div style={{ display:"flex", alignItems:"center", gap:10, padding:"calc(12px + env(safe-area-inset-top)) 16px 12px", borderBottom:`1px solid ${C.cardB}` }}>
+        <button onClick={onClose} aria-label="Back" style={{ background:"none", border:"none", color:C.white, cursor:"pointer", fontSize:20, padding:"2px 4px", lineHeight:1 }}>←</button>
+        <h2 style={{ fontSize:17, fontWeight:700, color:C.white, letterSpacing:-.5, flex:1 }}>Admin</h2>
+        <button onClick={load} style={{ background:"none", border:"none", color:C.accent, fontSize:14, fontWeight:600, cursor:"pointer" }}>Refresh</button>
+      </div>
+      <div style={{ flex:1, overflowY:"auto", padding:16 }}>{body}</div>
+    </div>
+  );
+}
+
 // Right after sign-up: what does this person want KROFT for? Their answer opens that part of
 // the app and puts three matching steps on Home (src/gettingStarted.js).
 function GoalPicker({ name, onPick, onSkip }) {
@@ -3976,7 +4075,7 @@ function ProfileSwitch({ value, onChange }) {
   );
 }
 
-function ProfileSection({ onFeedback, nav, onNav, connections, user, onUpdateName, onEditBusinessDetails, onSignOut, theme, onToggleTheme, toast, subscribed, subscriptionStatus, autoRenews, billingLoading, onUpgrade, onManageBilling, usageStats, voiceReplies, onSetVoiceReplies, proactiveInsights, onSetProactiveInsights, wellnessAiContext, onSetWellnessAiContext, voicePref, onSetVoicePref, voiceSpeed, onSetVoiceSpeed, onSetupBiometric, onRemoveBiometric, biometricOn, onExportData, onImportData, onDeleteAccount, notifPermission, notifPrefs, onEnableNotifications, onSetNotifPref, onTestNotification, voiceTurnsCount, voiceLimit }) {
+function ProfileSection({ onFeedback, isAdmin, onAdmin, nav, onNav, connections, user, onUpdateName, onEditBusinessDetails, onSignOut, theme, onToggleTheme, toast, subscribed, subscriptionStatus, autoRenews, billingLoading, onUpgrade, onManageBilling, usageStats, voiceReplies, onSetVoiceReplies, proactiveInsights, onSetProactiveInsights, wellnessAiContext, onSetWellnessAiContext, voicePref, onSetVoicePref, voiceSpeed, onSetVoiceSpeed, onSetupBiometric, onRemoveBiometric, biometricOn, onExportData, onImportData, onDeleteAccount, notifPermission, notifPrefs, onEnableNotifications, onSetNotifPref, onTestNotification, voiceTurnsCount, voiceLimit }) {
   // nav.screen is null for the main hub, otherwise a key of SCREENS below. Held in KroftApp (see
   // profileNav there) so it survives the remount a theme change triggers.
   const { screen, openRow } = nav;
@@ -4409,7 +4508,9 @@ function ProfileSection({ onFeedback, nav, onNav, connections, user, onUpdateNam
       { key:"data", icon:"cloud", label:"History and data", value:isSupabaseConfigured ? "Synced" : "This device" },
       { key:"report", icon:"flag", label:"Report a problem" },
       { key:"feedback", icon:"nova", label:"Send feedback", onClick:onFeedback },
-    ] },
+      // Only for the accounts in ADMIN_EMAILS (api/admin.js says who).
+      isAdmin && { key:"admin", icon:"eye", label:"Admin", value:"Owner only", onClick:onAdmin },
+    ].filter(Boolean) },
   ];
 
   return (
@@ -4796,7 +4897,9 @@ function KroftApp({ onFullReset } = {}) {
   const [showBills, setShowBills] = useState(false);
   const [showPlans, setShowPlans] = useState(null);     // the plan picker: null closed, else why it opened ("" from Upgrade)
   const [feedbackFrom, setFeedbackFrom] = useState(null); // the feedback sheet: null closed, else the screen it was opened from
-  const [showGoalPick, setShowGoalPick] = useState(false); // "what do you want KROFT for?", once, right after sign-up
+  const [showGoalPick, setShowGoalPick] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);           // the owner: sees Profile › Admin (api/admin.js decides)
+  const [showAdmin, setShowAdmin] = useState(false); // "what do you want KROFT for?", once, right after sign-up
   const [invoicesOpenDoc, setInvoicesOpenDoc] = useState(null); // { id, kind } to open straight to one (from a contact's profile)
   const [expenseCats, setExpenseCats] = useState(["Operations","Tech","Marketing","Travel","Rent","Other"]);
   // Monthly spending limits per category, as { [category]: amount }. Tracking spend without ever
@@ -6352,6 +6455,14 @@ function KroftApp({ onFullReset } = {}) {
       return true;
     }
   };
+  // Is this the owner? Asked once per sign-in; the server answers 404 for everyone else.
+  useEffect(() => {
+    // Test builds only (VITE_E2E=1): a test can play the owner. Never set in the real app.
+    if (dataLoaded && import.meta.env.VITE_E2E === "1" && (() => { try { return localStorage.getItem("kroft-e2e-admin") === "1"; } catch { return false; } })()) { setIsAdmin(true); return; }
+    if (!dataLoaded || !isSupabaseConfigured) return;
+    aiFetch("/api/admin?probe=1").then(r => setIsAdmin(r.ok)).catch(() => setIsAdmin(false));
+  }, [dataLoaded]);
+
   // Getting started: the chosen goal's steps, and what each one opens.
   const startData = { invoiceSettings, invoices, income, expenses, budgets, bills, projects, tasks, appts, notes, aiMessages, chatHistory, smartReminders, voiceTurnsCount };
   const runStartStep = (goalId, stepId) => {
@@ -10001,6 +10112,7 @@ ${voiceMode
         </div>
       )}
       {showGoalPick && step === "dashboard" && <GoalPicker name={firstNameOf(user.name)} onPick={pickGoal} onSkip={() => { setShowGoalPick(false); toast(`Welcome to KROFT, ${firstNameOf(user.name) || "there"}.`); }} />}
+      {showAdmin && <AdminScreen fetcher={aiFetch} onClose={() => setShowAdmin(false)} toast={toast} />}
       {feedbackFrom !== null && <FeedbackSheet screen={feedbackFrom} onClose={() => setFeedbackFrom(null)} onSend={sendFeedback} />}
       {showPlans !== null && (
         <PlansSheet user={user} current={currentPlan({ subscribed })} onClose={() => setShowPlans(null)} toast={toast} />
@@ -13121,7 +13233,7 @@ ${voiceMode
         {tab==="profile" && (
           <div style={{ animation:"fadeUp .4s ease" }}>
             <ProfileSection
-              nav={profileNav} onNav={setProfileNav} onFeedback={openFeedback}
+              nav={profileNav} onNav={setProfileNav} onFeedback={openFeedback} isAdmin={isAdmin} onAdmin={() => setShowAdmin(true)}
               connections={{
                 google: { status:googleStatus, linking:googleLinking, connect:() => connectGoogle("connected"), disconnect:disconnectGoogle },
                 microsoft: { status:microsoftStatus, linking:microsoftLinking, connect:() => connectMicrosoft("connected"), disconnect:disconnectMicrosoft },

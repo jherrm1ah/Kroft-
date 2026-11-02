@@ -11,6 +11,7 @@
 // marked `sent` is simply skipped, so there's no double-delivery risk from having both.
 import { supabaseAdmin } from "../_lib/supabaseAdmin.js";
 import { sendPush } from "../_lib/webpush.js";
+import { runOps } from "../_lib/opsRun.js";
 
 export default async function handler(req, res) {
   const auth = req.headers.authorization || "";
@@ -27,6 +28,9 @@ export default async function handler(req, res) {
   // Daily housekeeping: AI usage records (tokens and timing only, used to measure cost) are kept
   // for 90 days. Ignored if the table doesn't exist.
   await admin.from("ai_request_log").delete().lt("created_at", new Date(Date.now() - 90 * 86400000).toISOString()).then(() => {}, () => {});
+  // Alerts to the owner, and the daily backup copy (api/_lib/opsRun.js). Never blocks reminders.
+  const ops = await runOps(admin).catch(() => ({}));
+
   // The error log only needs recent errors: 30 days.
   await admin.from("client_error_log").delete().lt("created_at", new Date(Date.now() - 30 * 86400000).toISOString()).then(() => {}, () => {});
 
@@ -37,7 +41,7 @@ export default async function handler(req, res) {
     .lte("fires_at", nowIso)
     .limit(200);
   if (error) return res.status(500).json({ error: "Couldn't read due notifications" });
-  if (!due?.length) return res.status(200).json({ delivered: 0 });
+  if (!due?.length) return res.status(200).json({ delivered: 0, ops });
 
   let delivered = 0, failed = 0;
   for (const notif of due) {
@@ -63,5 +67,5 @@ export default async function handler(req, res) {
     if (anySent) delivered++; else failed++;
   }
 
-  return res.status(200).json({ delivered, failed, checked: due.length });
+  return res.status(200).json({ delivered, failed, checked: due.length, ops });
 }

@@ -6,6 +6,7 @@ export const config = { runtime: "edge" };
 
 import { getAuthedUser, supabaseAdmin, jsonResponse } from "./_lib/supabaseAdmin.js";
 import { scrub, scrubStack } from "../src/errorLog.js";
+import { ipHash, sentLastHour, LIMITS } from "./_lib/ops.js";
 
 const KINDS = new Set(["error", "promise", "crash", "save"]);
 
@@ -37,6 +38,11 @@ export default async function handler(req) {
   const user = await getAuthedUser(req).catch(() => null);
   const rows = toRows(body, { userId: user?.id || null, clientHeader: req.headers.get("x-kroft-client") });
   if (!rows.length) return jsonResponse({ ok: true, stored: 0 });
-  const { error } = await supabaseAdmin().from("client_error_log").insert(rows);
+  const admin = supabaseAdmin();
+  const hash = await ipHash(req);
+  // At most LIMITS.errors rows an hour from one device or account; past that, accepted but not kept.
+  if (await sentLastHour(admin, "client_error_log", { hash, userId: user?.id }) >= LIMITS.errors) return jsonResponse({ ok: true, stored: 0, limited: true });
+  let { error } = await admin.from("client_error_log").insert(rows.map(r => ({ ...r, ip_hash: hash })));
+  if (error && /ip_hash/.test(error.message || "")) ({ error } = await admin.from("client_error_log").insert(rows));
   return jsonResponse({ ok: !error, stored: error ? 0 : rows.length }, error ? 500 : 200);
 }
