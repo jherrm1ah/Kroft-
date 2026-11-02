@@ -50,6 +50,31 @@ async function computer(browser) {
   const [bk] = await Promise.all([page.waitForEvent("download", { timeout: 10000 }), exportBackup(page)]);
   const backup = JSON.parse(await readDownload(bk));
   check("backup downloads as KROFT JSON with the income in it", backup.app === "KROFT" && JSON.stringify(backup.data.finance).includes("Logo design"));
+
+  // Invoices and bills are in the CSV too, each in its own section.
+  await page.locator('nav button[title="Home"]').click();
+  await page.getByText(/^Finance$/).first().click();
+  await page.getByRole("button", { name: /^Invoices/ }).click();
+  await page.getByRole("button", { name: "New invoice" }).click();
+  await page.locator("label", { hasText: "Client name" }).locator("input").fill("Chidi, Ltd");
+  await page.getByLabel("Item 1 description").fill("Website");
+  await page.getByLabel("Item 1 price").fill("120000");
+  await page.getByRole("button", { name: "Save invoice" }).click();
+  await page.getByRole("dialog", { name: "Invoices" }).getByRole("button", { name: "Back" }).click();
+  await page.getByRole("dialog", { name: "Invoices" }).getByRole("button", { name: "Back" }).click();
+  await page.getByRole("button", { name: /^Bills/ }).click();
+  await page.getByRole("button", { name: "New bill" }).click();
+  await page.locator("label", { hasText: "Who it's from" }).locator("input").fill("Dangote");
+  await page.locator("label", { hasText: "Amount" }).first().locator("input").fill("250000");
+  await page.getByRole("button", { name: "Save bill" }).click();
+  await page.getByRole("dialog", { name: "Bills" }).getByRole("button", { name: "Back" }).click();
+  await page.getByRole("dialog", { name: "Bills" }).getByRole("button", { name: "Back" }).click();
+  const [csv2] = await Promise.all([page.waitForEvent("download", { timeout: 10000 }), exportCsv(page)]);
+  const lines = (await readDownload(csv2)).replace(/^\uFEFF/, "").split("\r\n");
+  const after = title => lines[lines.indexOf(title) + 2] || "";
+  check("CSV has income first, then INVOICES and BILLS sections", lines[0].startsWith("Date,Type,Description") && lines.includes("INVOICES") && lines.includes("BILLS"), lines.join(" | ").slice(0, 300));
+  check("the invoice row: number, client (comma kept in one cell), total", /^INV-0001,"Chidi, Ltd",\d{4}-\d{2}-\d{2},\d{4}-\d{2}-\d{2},Draft,120000,0,0,,120000,0,120000,USD,$/.test(after("INVOICES")), after("INVOICES"));
+  check("the bill row: supplier, amount, still owed", /^Dangote,,,\d{4}-\d{2}-\d{2},\d{4}-\d{2}-\d{2},Due soon,250000,0,250000,USD,$/.test(after("BILLS")), after("BILLS"));
   await ctx.close();
 }
 

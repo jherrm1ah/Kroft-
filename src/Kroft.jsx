@@ -9,6 +9,7 @@ import { offlineUserId, flushPending, clearOfflineData, hasUnsyncedChanges, unre
 import { DEFAULT_INVOICE_SETTINGS, taxName, userLocale, invoiceTotals, invoiceStatus, invoiceAllowance, quoteAllowance, createInvoice, createQuote, invoiceFromQuote, invoiceProblem, FREE_INVOICES_PER_MONTH, FREE_QUOTES_PER_MONTH, whatsappLink, sendMessage, reminderMessage, quoteMessage, prettyDate, STATUS_LABEL, invoicesForAI, quotesForAI, daysBetween, docStatus, clientSummaries, clientKey, recordPayment, removePayment, amountPaid, balanceDue, paymentsOf, hasPayments, syncInvoicesWithIncome, quoteStatus, fromName } from "./invoices/model.js";
 import { invoicePdf, invoiceFileName, receiptPdf, statementPdf } from "./invoices/pdf.js";
 import { reportError } from "./errorLog.js";
+import { financeCsvRows, toCsv, hasAnythingToExport } from "./finance/exportCsv.js";
 import { PLANS, PAYMENTS_READY, planPrice, monthsFree, currentPlan, featureText } from "./plans.js";
 import { projectMoney, milestoneState, milestoneWhen, milestoneInvoice, milestoneInvoiceProblem, milestoneInvoiceItems, milestoneReminders, projectLineForAI } from "./projects/money.js";
 import { receiptPrompt, parseReceiptReply, shrinkPhoto, SCAN_PROBLEM } from "./receipts/scan.js";
@@ -9083,20 +9084,10 @@ ${voiceMode
   // spreadsheet columns on open. A leading =, +, -, or @ gets a guarding leading apostrophe too —
   // Excel/Sheets treat those as the start of a formula, so a label typed as `=1+1` would otherwise
   // execute as one instead of showing as the plain text it is (CSV formula injection).
-  const csvField = v => {
-    let s = String(v ?? "");
-    if (/^[=+\-@]/.test(s)) s = `'${s}`;
-    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-  };
   const exportFinanceCsv = () => {
-    if (income.length === 0 && expenses.length === 0) { toast("Nothing to export yet."); return; }
-    const rows = [
-      ["Date","Type","Description","Category","Amount","Currency","Repeats"],
-      ...[...income.map(r => ({ ...r, type:"Income" })), ...expenses.map(r => ({ ...r, type:"Expense" }))]
-        .sort((a,b) => (a.date||"").localeCompare(b.date||""))
-        .map(r => [r.date||"", r.type, r.label, r.cat, r.amount, r.cur||user.currency, (r.repeat&&r.repeat!=="none")?r.repeat:""]),
-    ];
-    const csv = rows.map(row => row.map(csvField).join(",")).join("\r\n");
+    const data = { income, expenses, invoices, quotes, bills, projects, today:todayISO(), currency:user.currency };
+    if (!hasAnythingToExport(data)) { toast("Nothing to export yet."); return; }
+    const csv = toCsv(financeCsvRows(data));
     // The leading byte-order mark tells Excel the file is UTF-8; without it Excel reads it as
     // the old Windows character set and ₦ and accented names come out garbled. Google Sheets,
     // Numbers and LibreOffice ignore it.
