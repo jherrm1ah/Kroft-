@@ -9,6 +9,7 @@ import { offlineUserId, flushPending, clearOfflineData, hasUnsyncedChanges, unre
 import { DEFAULT_INVOICE_SETTINGS, taxName, userLocale, invoiceTotals, invoiceStatus, invoiceAllowance, quoteAllowance, createInvoice, createQuote, invoiceFromQuote, invoiceProblem, FREE_INVOICES_PER_MONTH, FREE_QUOTES_PER_MONTH, whatsappLink, sendMessage, reminderMessage, quoteMessage, prettyDate, STATUS_LABEL, invoicesForAI, quotesForAI, daysBetween, docStatus, clientSummaries, clientKey, recordPayment, removePayment, amountPaid, balanceDue, paymentsOf, hasPayments, syncInvoicesWithIncome, quoteStatus, fromName } from "./invoices/model.js";
 import { invoicePdf, invoiceFileName, receiptPdf, statementPdf } from "./invoices/pdf.js";
 import { PLANS, PAYMENTS_READY, planPrice, monthsFree, currentPlan, featureText } from "./plans.js";
+import { projectMoney, milestoneState, milestoneWhen, milestoneInvoice, milestoneInvoiceProblem, milestoneInvoiceItems, milestoneReminders, projectLineForAI } from "./projects/money.js";
 import { createBill, billProblem, billStatus, billBalance, billPaid, billPayments, billWhen, billIsOpen, recordBillPayment, removeBillPayment, syncBillsWithExpenses, billsSummary, supplierSummaries, sortBills, billReminders, billsForAI, billExpenseLabel, BILL_STATUS_LABEL } from "./bills/model.js";
 import { receiptFor, receiptMessage, receiptFileName, statementCurrencies, statementFor, statementMessage, statementFileName, periodStart } from "./invoices/documents.js";
 import { saveFile } from "./saveFile.js";
@@ -4844,7 +4845,7 @@ function KroftApp({ onFullReset } = {}) {
 
   // Workspace — Projects
   const [projects, setProjects] = useState([]);
-  const [newProject, setNewProject] = useState({ name:"", deadline:"", description:"", status:"Not Started" });
+  const [newProject, setNewProject] = useState({ name:"", deadline:"", description:"", status:"Not Started", clientName:"", value:"" });
   const [showAddProject, setShowAddProject] = useState(false);
   const [openProject, setOpenProject] = useState(null);
   const [editingProject, setEditingProject] = useState(null);
@@ -4860,6 +4861,8 @@ function KroftApp({ onFullReset } = {}) {
   // Owned by the project itself, not linked from a shared pool, so no linkPicker entry for it.
   const [addingMilestoneToProject, setAddingMilestoneToProject] = useState(null);
   const [milestoneDraft, setMilestoneDraft] = useState("");
+  const [milestoneDue, setMilestoneDue] = useState("");          // optional due date for a new milestone
+  const [milestoneAmount, setMilestoneAmount] = useState("");    // optional amount (what it's invoiced for)
   // Same "+ New, auto-linked" pattern as Tasks/Milestones, extended to every other kind of
   // project content — a note, document, file, or Finance entry made from inside a project
   // never needs to be found again in the shared list, though it still lives in the one real
@@ -7456,7 +7459,7 @@ REMINDERS (${openReminders.length} open)
 ${list(openReminders, 8, r => `${r.text}${r.when?` (${r.when})`:""}`)}
 
 PROJECTS (${projects.length})
-${list(projects, 8, p => `${p.name} — ${p.status}${p.deadline?`, due ${p.deadline}`:""}`)}
+${list(projects, 8, p => projectLineForAI(p, invoices, todayISO(), fmtCur))}
 
 NOTES (${notes.length}): ${list(notes, 8, n => n.title || "untitled")}
 DOCUMENTS (${documents.length}): ${list(documents, 8, d => d.title || "untitled")}
@@ -8341,6 +8344,16 @@ ${voiceMode
     return () => clearTimeout(t);
   }, [dataLoaded, bills]);
 
+  // Project milestones: a phone reminder at 9am on the day each open one is due.
+  useEffect(() => {
+    if (!dataLoaded || (!isSupabaseConfigured && !isNativeApp)) return;
+    const items = milestoneReminders(projects, todayISO(), Date.now());
+    const t = setTimeout(() => {
+      (isNativeApp ? scheduleDeviceReminders("milestone:", items) : authedFetch("/api/push/schedule", { method:"POST", body:JSON.stringify({ prefix:"milestone:", items }) })).catch(() => {});
+    }, 1500);
+    return () => clearTimeout(t);
+  }, [dataLoaded, projects]);
+
   // Plus: scheduled calls. Kept independent of notifPermission — the in-app ringing overlay
   // doesn't need OS notification permission at all, only the accompanying system notification
   // does (sendNotification no-ops quietly if that permission isn't granted). Folding this into
@@ -8965,6 +8978,22 @@ ${voiceMode
   };
   const removeMilestone = (projectId, milestoneId) => {
     setProjects(p => p.map(pr => pr.id!==projectId ? pr : { ...pr, milestones:(pr.milestones||[]).filter(m => m.id!==milestoneId) }));
+  };
+  // A milestone's invoice: a draft for the project's client, one line "<project> — <milestone>",
+  // linked both ways, then opened so it can be checked and sent. Counts toward the free plan's
+  // invoices like any other.
+  const invoiceMilestone = (pr, m) => {
+    const problem = milestoneInvoiceProblem(pr, m);
+    if (problem) { toast(problem); return; }
+    if (!invoiceAllowance({ subscribed, invoices, today:todayISO() }).allowed) { toast(`You've used this month's ${FREE_INVOICES_PER_MONTH} free invoices.`); setShowPlans("business"); return; }
+    const c = contacts.find(x => (pr.clientId != null && String(x.id) === String(pr.clientId)) || (x.name || "").toLowerCase() === pr.clientName.trim().toLowerCase());
+    const { invoice: created } = createInvoice({ settings:invoiceSettings, client:{ name:pr.clientName.trim(), email:c?.email || "", phone:c?.phone || "" }, items:milestoneInvoiceItems(pr, m), currency:pr.currency || user.currency, today:todayISO(), id:String(uid()) });
+    const invoice = { ...created, clientId:c?.id ?? null, projectId:pr.id, milestoneId:m.id };
+    setInvoices(p => [invoice, ...p]);
+    setInvoiceSettings(s => ({ ...s, nextNumber:(Number(s.nextNumber) || 1) + 1 }));
+    setProjects(p => p.map(x => x.id !== pr.id ? x : { ...x, milestones:(x.milestones||[]).map(y => y.id === m.id ? { ...y, invoiceId:invoice.id } : y) }));
+    toast(`Invoice ${invoice.number} drafted for ${m.title}. Check it and send it.`);
+    setInvoicesOpenDoc({ id:invoice.id, kind:"invoice" }); setShowInvoices(true);
   };
 
   const toggleNotePinned = noteId => setNotes(p => p.map(n => n.id===noteId ? { ...n, pinned:!n.pinned } : n));
@@ -11419,11 +11448,16 @@ ${voiceMode
                     <input type="date" value={newProject.deadline} onChange={e=>setNewProject(v=>({...v,deadline:e.target.value}))} style={{ flex:1, minWidth:120, background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 12px", color:newProject.deadline?C.text:C.muted, fontSize:13, fontFamily:APP_FONT, outline:"none", colorScheme:theme }} />
                   </div>
                   <Inp placeholder="What's this project about? (optional)" value={newProject.description} onChange={e=>setNewProject(v=>({...v,description:e.target.value}))} />
+                  <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+                    <Inp list="kroft-project-clients" aria-label="Client" placeholder="Client (optional)" value={newProject.clientName} onChange={e=>setNewProject(v=>({...v,clientName:e.target.value}))} style={{ flex:2, minWidth:140 }} />
+                    <Inp aria-label="Project value" inputMode="decimal" placeholder={`Value, ${user.currency} (optional)`} value={newProject.value} onChange={e=>setNewProject(v=>({...v,value:e.target.value}))} style={{ flex:1, minWidth:120 }} />
+                  </div>
+                  <datalist id="kroft-project-clients">{[...new Set([...contacts.map(c => c.name), ...invoices.map(i => i.client?.name)].filter(Boolean))].slice(0, 60).map(n => <option key={n} value={n} />)}</datalist>
                   <div style={{ display:"flex", gap:8, alignItems:"center" }}>
                     <select value={newProject.status} onChange={e=>setNewProject(v=>({...v,status:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"10px 12px", color:C.text, fontSize:12, fontFamily:APP_FONT, outline:"none" }}>
                       {["Not Started","In Progress","On Hold","Completed"].map(s => <option key={s}>{s}</option>)}
                     </select>
-                    <Btn onClick={() => { if (!newProject.name.trim()) return; setProjects(p=>[{id:uid(),...newProject,taskIds:[],noteIds:[],fileIds:[],documentIds:[],expenseIds:[],incomeIds:[],contactIds:[],milestones:[]},...p]); setNewProject({name:"",deadline:"",description:"",status:"Not Started"}); setShowAddProject(false); toast("Project created."); }}>Create</Btn>
+                    <Btn onClick={() => { if (!newProject.name.trim()) return; const clientName = (newProject.clientName||"").trim(); const client = contacts.find(c => (c.name||"").toLowerCase() === clientName.toLowerCase()); setProjects(p=>[{id:uid(),...newProject,clientName,clientId:client?.id ?? null,value:parseAmount(newProject.value) || 0,currency:user.currency,taskIds:[],noteIds:[],fileIds:[],documentIds:[],expenseIds:[],incomeIds:[],contactIds:[],milestones:[]},...p]); setNewProject({name:"",deadline:"",description:"",status:"Not Started",clientName:"",value:""}); setShowAddProject(false); toast("Project created."); }}>Create</Btn>
                   </div>
                 </div>
               </Card>
@@ -11479,12 +11513,16 @@ ${voiceMode
                       <input type="date" value={editingProject.deadline||""} onChange={e=>setEditingProject(v=>({...v,deadline:e.target.value}))} style={{ flex:1, minWidth:120, background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 12px", color:C.text, fontSize:13, fontFamily:APP_FONT, outline:"none", colorScheme:theme }} />
                     </div>
                     <Inp placeholder="Description" value={editingProject.description||""} onChange={e=>setEditingProject(v=>({...v,description:e.target.value}))} />
+                    <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+                      <Inp list="kroft-project-clients" aria-label="Client" placeholder="Client (optional)" value={editingProject.clientName||""} onChange={e=>setEditingProject(v=>({...v,clientName:e.target.value}))} style={{ flex:2, minWidth:140 }} />
+                      <Inp aria-label="Project value" inputMode="decimal" placeholder={`Value, ${editingProject.currency || user.currency} (optional)`} value={editingProject.value ? String(editingProject.value) : ""} onChange={e=>setEditingProject(v=>({...v,value:e.target.value}))} style={{ flex:1, minWidth:120 }} />
+                    </div>
                     <select value={editingProject.status} onChange={e=>setEditingProject(v=>({...v,status:e.target.value}))} style={{ background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"10px 12px", color:C.text, fontSize:12, fontFamily:APP_FONT, outline:"none" }}>
                       {["Not Started","In Progress","On Hold","Completed"].map(s => <option key={s}>{s}</option>)}
                     </select>
                     <div style={{ display:"flex", gap:8 }}>
                       <Btn sm v="outline" onClick={() => setEditingProject(null)} style={{ flex:1 }}>Cancel</Btn>
-                      <Btn sm onClick={() => { if (!editingProject.name.trim()) return; setProjects(p=>p.map(x=>x.id===pr.id?editingProject:x)); setEditingProject(null); toast("Project updated."); }} style={{ flex:1 }}>Save</Btn>
+                      <Btn sm onClick={() => { if (!editingProject.name.trim()) return; const clientName = (editingProject.clientName||"").trim(); const client = contacts.find(c => (c.name||"").toLowerCase() === clientName.toLowerCase()); setProjects(p=>p.map(x=>x.id===pr.id?{ ...editingProject, clientName, clientId:client?.id ?? editingProject.clientId ?? null, value:parseAmount(editingProject.value) || 0, currency:editingProject.currency || user.currency }:x)); setEditingProject(null); toast("Project updated."); }} style={{ flex:1 }}>Save</Btn>
                     </div>
                   </div>
                 ) : (
@@ -11497,6 +11535,7 @@ ${voiceMode
                       {isOverdue && <Tag tone="negative">Overdue</Tag>}
                     </div>
                     {pr.description && <div style={{ fontSize:12, color:C.soft, marginBottom:6, lineHeight:1.5 }}>{pr.description}</div>}
+                    {(pr.clientName || pr.value > 0) && <Mono style={{ display:"block", color:C.soft, marginBottom:3 }}>{[pr.clientName && `For ${pr.clientName}`, pr.value > 0 && fmtCur(pr.value, pr.currency || user.currency)].filter(Boolean).join(" · ")}</Mono>}
                     {pr.deadline && <Mono style={{ color:isOverdue?C.negative:C.soft }}>Due {fmtDate(pr.deadline)}</Mono>}
                   </div>
                   <div style={{ display:"flex", gap:6, flexShrink:0 }}>
@@ -11524,32 +11563,49 @@ ${voiceMode
                 )}
                 {openProject===pr.id && (
                   <div style={{ marginTop:12, paddingTop:12, borderTop:`1px solid ${C.div}`, display:"flex", flexDirection:"column", gap:14 }}>
-                    {/* Real numbers only — pulled from Finance entries actually linked below, never
-                        estimated. Hidden entirely until something's linked, same as every other
-                        section here, so an untouched project doesn't show a false $0 budget. */}
-                    {(linkedExpenses.length>0 || linkedIncome.length>0) && (
-                      <div style={{ display:"flex", gap:16, flexWrap:"wrap" }}>
-                        {linkedIncome.length>0 && <div><Mono style={{ display:"block", color:C.muted, marginBottom:2 }}>EARNED</Mono><div style={{ fontSize:15, fontWeight:700, color:C.positive }}>{fmtCur(totalEarned,user.currency)}</div></div>}
-                        {linkedExpenses.length>0 && <div><Mono style={{ display:"block", color:C.muted, marginBottom:2 }}>SPENT</Mono><div style={{ fontSize:15, fontWeight:700, color:C.negative }}>{fmtCur(totalSpent,user.currency)}</div></div>}
-                        {linkedIncome.length>0 && linkedExpenses.length>0 && <div><Mono style={{ display:"block", color:C.muted, marginBottom:2 }}>NET</Mono><div style={{ fontSize:15, fontWeight:700, color:(totalEarned-totalSpent)>=0?C.positive:C.negative }}>{fmtCur(totalEarned-totalSpent,user.currency)}</div></div>}
-                      </div>
-                    )}
+                    {/* Real numbers only, from invoices made for this project and the Finance entries
+                        linked below, never estimated. Hidden until there's something to show, so an
+                        untouched project doesn't show a false 0. */}
+                    {(() => {
+                      const pm = projectMoney({ project:pr, invoices, income, expenses });
+                      const cur = pr.currency || user.currency;
+                      const cells = [
+                        pm.value > 0 && ["VALUE", pm.value, C.white],
+                        pm.invoiced > 0 && ["INVOICED", pm.invoiced, C.white],
+                        pm.earned > 0 && ["PAID", pm.earned, C.positive],
+                        pm.owed > 0 && ["OWED", pm.owed, C.warning],
+                        pm.value > 0 && pm.toInvoice > 0 && ["TO INVOICE", pm.toInvoice, C.soft],
+                        pm.spent > 0 && ["SPENT", pm.spent, C.negative],
+                        pm.earned > 0 && pm.spent > 0 && ["PROFIT", pm.profit, pm.profit >= 0 ? C.positive : C.negative],
+                      ].filter(Boolean);
+                      if (!cells.length) return null;
+                      return (
+                        <div style={{ display:"flex", gap:16, flexWrap:"wrap" }}>
+                          {cells.map(([l, v, color]) => <div key={l}><Mono style={{ display:"block", color:C.muted, marginBottom:2 }}>{l}</Mono><div style={{ fontSize:15, fontWeight:700, color }}>{fmtCur(v, cur)}</div></div>)}
+                        </div>
+                      );
+                    })()}
                     {/* Milestones: the project's own goal checkpoints, not a link to a shared
                         pool — so this gets bespoke rendering (a checkbox + a real delete)
                         instead of the generic link/unlink pattern the sections below use. */}
                     <div>
                       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:7 }}>
                         <Mono style={{ color:C.white, letterSpacing:.8 }}>MILESTONES ({milestones.length})</Mono>
-                        <button onClick={() => { setAddingMilestoneToProject(addingMilestoneToProject===pr.id?null:pr.id); setMilestoneDraft(""); }} style={{ background:"none", border:"none", color:C.soft, cursor:"pointer", fontSize:11, fontFamily:APP_FONT, textDecoration:"underline" }}>+ New</button>
+                        <button onClick={() => { setAddingMilestoneToProject(addingMilestoneToProject===pr.id?null:pr.id); setMilestoneDraft(""); setMilestoneDue(""); setMilestoneAmount(""); }} style={{ background:"none", border:"none", color:C.soft, cursor:"pointer", fontSize:11, fontFamily:APP_FONT, textDecoration:"underline" }}>+ New</button>
                       </div>
                       {addingMilestoneToProject===pr.id && (
-                        <div style={{ display:"flex", gap:7, marginBottom:8 }}>
-                          <Inp placeholder="e.g. Beta shipped" value={milestoneDraft} onChange={e=>setMilestoneDraft(e.target.value)} style={{ flex:1 }} />
-                          <Btn sm onClick={() => {
-                            if (!milestoneDraft.trim()) return;
-                            setProjects(p=>p.map(x=>x.id===pr.id?{...x,milestones:[...(x.milestones||[]),{id:uid(),title:milestoneDraft.trim(),done:false}]}:x));
-                            setMilestoneDraft(""); setAddingMilestoneToProject(null);
-                          }}>Add</Btn>
+                        <div style={{ display:"flex", flexDirection:"column", gap:7, marginBottom:8 }}>
+                          <Inp aria-label="Milestone" placeholder="e.g. Design approved" value={milestoneDraft} onChange={e=>setMilestoneDraft(e.target.value)} />
+                          <div style={{ display:"flex", gap:7, flexWrap:"wrap" }}>
+                            <Inp aria-label="Milestone due date" type="date" value={milestoneDue} onChange={e=>setMilestoneDue(e.target.value)} style={{ flex:1, minWidth:130 }} />
+                            <Inp aria-label="Milestone amount" inputMode="decimal" placeholder={`Amount to invoice (optional)`} value={milestoneAmount} onChange={e=>setMilestoneAmount(e.target.value)} style={{ flex:1, minWidth:130 }} />
+                            <Btn sm onClick={() => {
+                              if (!milestoneDraft.trim()) return;
+                              const amount = parseAmount(milestoneAmount);
+                              setProjects(p=>p.map(x=>x.id===pr.id?{...x,milestones:[...(x.milestones||[]),{id:uid(),title:milestoneDraft.trim(),done:false,...(milestoneDue ? { dueDate:milestoneDue } : {}),...(amount ? { amount } : {})}]}:x));
+                              setMilestoneDraft(""); setMilestoneDue(""); setMilestoneAmount(""); setAddingMilestoneToProject(null);
+                            }}>Add</Btn>
+                          </div>
                         </div>
                       )}
                       {milestones.length===0 ? (
@@ -11557,7 +11613,22 @@ ${voiceMode
                       ) : milestones.map(m => (
                         <div key={m.id} style={{ display:"flex", alignItems:"center", gap:10, padding:"6px 0" }}>
                           <button onClick={() => toggleMilestone(pr.id, m.id)} style={{ width:18, height:18, borderRadius:5, border:`1.5px solid ${m.done?C.accent:C.soft}`, background:m.done?C.accent:"transparent", cursor:"pointer", flexShrink:0, display:"flex", alignItems:"center", justifyContent:"center", color:C.black, fontSize:11, fontWeight:900 }}>{m.done?"✓":""}</button>
-                          <div style={{ flex:1, fontSize:12, color:C.text, textDecoration:m.done?"line-through":"none", opacity:m.done?.6:1 }}>{m.title}</div>
+                          <div style={{ flex:1, minWidth:0 }}>
+                            <div style={{ fontSize:12, color:C.text, textDecoration:m.done?"line-through":"none", opacity:m.done?.6:1 }}>{m.title}</div>
+                            {(m.dueDate || m.amount > 0) && (() => {
+                              const state = milestoneState(m, todayISO());
+                              return <Mono style={{ display:"block", color: state === "overdue" ? C.negative : state === "soon" ? C.warning : C.muted, marginTop:2 }}>{[milestoneWhen(m, todayISO(), fmtDate), m.amount > 0 && fmtCur(m.amount, pr.currency || user.currency)].filter(Boolean).join(" · ")}</Mono>;
+                            })()}
+                          </div>
+                          {(() => {
+                            const linked = milestoneInvoice(m, invoices, todayISO());
+                            if (linked) return (
+                              <button aria-label={`Open invoice ${linked.invoice.number}`} onClick={() => { setInvoicesOpenDoc({ id:linked.invoice.id, kind:"invoice" }); setShowInvoices(true); }} style={{ background:"none", border:"none", cursor:"pointer", padding:0, flexShrink:0 }}>
+                                <Tag tone={DOC_TONE[linked.status]}>{`${linked.invoice.number} · ${STATUS_LABEL[linked.status]}`.toUpperCase()}</Tag>
+                              </button>
+                            );
+                            return m.amount > 0 ? <button aria-label={`Invoice milestone ${m.title}`} onClick={() => invoiceMilestone(pr, m)} style={{ background:"none", border:`1px solid ${C.cardB}`, borderRadius:99, color:C.accent, cursor:"pointer", fontSize:11, fontWeight:600, padding:"3px 9px", fontFamily:APP_FONT, flexShrink:0 }}>Invoice</button> : null;
+                          })()}
                           <button onClick={()=>removeMilestone(pr.id, m.id)} style={{ background:"none", border:"none", color:C.soft, cursor:"pointer", fontSize:11 }}>Remove</button>
                         </div>
                       ))}

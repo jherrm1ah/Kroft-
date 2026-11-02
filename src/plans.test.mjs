@@ -12,7 +12,7 @@ eq("every paid plan costs less a year than 12 months", ["NGN", "USD"].every(c =>
 eq("Pro costs more than Plus", ["NGN", "USD"].every(c => P.PRICES[c].pro.month > P.PRICES[c].plus.month), true);
 eq("current plan", [P.currentPlan({ subscribed: false }), P.currentPlan({ subscribed: true }), P.currentPlan({ subscribed: true, plan: "pro" })], ["free", "plus", "pro"]);
 eq("features read as text, planned ones marked", [P.featureText("A"), P.featureText({ t: "B", soon: true })], ["A", "B"]);
-eq("Pro's unbuilt features are marked soon", P.PLANS.find(p => p.id === "pro").features.filter(f => f.soon).length, 4);
+eq("Pro's unbuilt features are marked soon", P.PLANS.find(p => p.id === "pro").features.filter(f => f.soon).length, 3);
 eq("payments aren't switched on until Google is connected", P.PAYMENTS_READY, false);
 
 console.log(fail ? `\n${fail} FAILED` : "\nALL PASSED");
