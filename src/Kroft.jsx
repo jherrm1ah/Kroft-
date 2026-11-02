@@ -19,6 +19,7 @@ import { receiptPrompt, parseReceiptReply, shrinkPhoto, SCAN_PROBLEM } from "./r
 import { createBill, billProblem, billStatus, billBalance, billPaid, billPayments, billWhen, billIsOpen, recordBillPayment, removeBillPayment, syncBillsWithExpenses, billsSummary, supplierSummaries, sortBills, billReminders, billsForAI, billExpenseLabel, BILL_STATUS_LABEL } from "./bills/model.js";
 import { receiptFor, receiptMessage, receiptFileName, statementCurrencies, statementFor, statementMessage, statementFileName, periodStart } from "./invoices/documents.js";
 import { saveFile } from "./saveFile.js";
+import { RIDE_APPS, rideOrder, rideLink, rideHint, rideDescription } from "./rides.js";
 import { contactRecords, contactMoney, contactSummary, initials, relativeDay } from "./contacts/profile.js";
 import { isNativeApp, nativeRedirect, openInSystemBrowser, scheduleDeviceReminders, verifyBiometric, getAppPermissions, requestAppPermission, saveFileFromApp, exactAlarmStatus, openExactAlarmSetting, getClientHeader, scheduleReminderAt, cancelReminderAt, appPlaysNotificationSound } from "./native.js";
 import { unlockAudio, playTick, playDone, resetSoundOn, setResetSoundOn, keepScreenOn } from "./resetSounds.js";
@@ -2005,22 +2006,14 @@ function MinimizedVoiceBar({ state, levelRef, onExpand, onStop }) {
   );
 }
 
-// Uber's ride-booking API (real fare estimates, in-app booking) requires their business
-// partner program — a business/legal agreement, not something any amount of code can obtain.
-// Faking a price table and an "requested" toast instead, as this used to, means a real user
-// would get a confirmation for a ride that was never actually booked — worse than not having
-// the feature at all. Uber does, however, publish a public, keyless "Ride Request Deeplink"
-// (https://developer.uber.com/docs/riders/ride-requests/tutorials/deep-links/introduction)
-// specifically for third-party apps to hand off to Uber's own app or m.uber.com with a
-// destination pre-filled — no API key, no partnership, no approval process. That's what this
-// does: real pricing and real booking happen on Uber's side, honestly.
-function buildUberDeepLink(address) {
-  const url = new URL("https://m.uber.com/ul/");
-  url.searchParams.set("action", "setPickup");
-  url.searchParams.set("pickup", "my_location");
-  if (address) url.searchParams.set("dropoff[formatted_address]", address);
-  return url.toString();
-}
+// Getting a ride: Uber, Bolt or inDrive (src/rides.js). KROFT has no ride pricing or booking of
+// its own; it hands over to the ride app and the booking happens there.
+// The round badge used for each ride app, here and in Profile › Connected apps.
+const RideBadge = ({ id, size=44 }) => {
+  const a = RIDE_APPS[id];
+  return <div aria-hidden="true" style={{ width:size, height:size, borderRadius:"50%", background:a.bg, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, color:a.fg, fontSize:a.name.length > 5 ? 10.5 : 12, fontWeight:700, letterSpacing:-.2 }}>{a.name}</div>;
+};
+const onAndroid = () => isNativeApp || (typeof navigator !== "undefined" && /Android/i.test(navigator.userAgent || ""));
 
 // The Add Income/Add Expense buttons live in the Finance header, but the form itself used to
 // render inline, deep in the page (near the ledger, well below Summary/budgets/charts) — so
@@ -2055,17 +2048,36 @@ function AddEntryModal({ kind, theme, value, onChange, cats, onAddCategory, onSu
   );
 }
 
-function UberModal({ dest, onClose }) {
+function RideModal({ dest, currency, onClose, toast }) {
   const address = dest.location || dest.name || "";
+  const go = async id => {
+    if (!RIDE_APPS[id].fillsDestination && address) { try { await navigator.clipboard.writeText(address); } catch { /* still open the app */ } }
+    window.open(rideLink(id, address, { android: onAndroid() }), "_blank", "noopener,noreferrer");
+    const hint = rideHint(id, address);
+    if (hint) toast?.(hint);
+    onClose();
+  };
   return (
-    <div style={{ position:"fixed", inset:0, zIndex:950, background:"rgba(0,0,0,.93)", display:"flex", alignItems:"center", justifyContent:"center", padding:24 }} onClick={onClose}>
-      <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:18, padding:28, maxWidth:380, width:"100%", animation:"pop .3s ease" }} onClick={e => e.stopPropagation()}>
+    <div role="dialog" aria-modal="true" aria-label="Get a ride" style={{ position:"fixed", inset:0, zIndex:950, background:"rgba(0,0,0,.93)", display:"flex", alignItems:"center", justifyContent:"center", padding:24 }} onClick={onClose}>
+      <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:18, padding:24, maxWidth:380, width:"100%", boxSizing:"border-box", animation:"pop .3s ease" }} onClick={e => e.stopPropagation()}>
         <div style={{ fontSize:12, fontWeight:600, color:C.muted, marginBottom:6 }}>Get a ride</div>
-        <div style={{ fontSize:19, fontWeight:700, color:C.white, marginBottom:3 }}>To: {address || "your destination"}</div>
-        <Mono style={{ display:"block", color:C.soft, marginBottom:18 }}>{dest.time ? `${dest.time} · ${dest.date}` : dest.dist ? `${dest.dist} away` : "Nearby"}</Mono>
-        <Mono style={{ display:"block", color:C.muted, marginBottom:22, lineHeight:1.6 }}>Opens Uber with your pickup location and this destination filled in. Real pricing, ETA and booking happen there — KROFT doesn't have its own ride pricing or booking.</Mono>
-        <Btn full onClick={() => { window.open(buildUberDeepLink(address), "_blank", "noopener,noreferrer"); onClose(); }}>Continue to Uber</Btn>
-        <Btn v="outline" full onClick={onClose} style={{ marginTop:10 }}>Cancel</Btn>
+        <div style={{ fontSize:19, fontWeight:700, color:C.white, marginBottom:3, overflowWrap:"anywhere" }}>To: {address || "your destination"}</div>
+        <Mono style={{ display:"block", color:C.soft, marginBottom:16 }}>{dest.time ? `${dest.time} · ${dest.date}` : dest.dist ? `${dest.dist} away` : "Nearby"}</Mono>
+        <div style={{ display:"flex", flexDirection:"column", gap:8, marginBottom:14 }}>
+          {rideOrder(currency).map(id => (
+            <button key={id} onClick={() => go(id)} aria-label={`Continue to ${RIDE_APPS[id].name}`}
+              style={{ display:"flex", alignItems:"center", gap:12, width:"100%", padding:"10px 12px", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:14, cursor:"pointer", textAlign:"left", fontFamily:APP_FONT }}>
+              <RideBadge id={id} size={38} />
+              <div style={{ flex:1, minWidth:0 }}>
+                <div style={{ fontSize:14.5, fontWeight:600, color:C.text }}>{RIDE_APPS[id].name}</div>
+                <Mono style={{ color:C.muted }}>{RIDE_APPS[id].fillsDestination ? "Opens with your destination filled in" : "Copies your destination to paste in"}</Mono>
+              </div>
+              <span style={{ color:C.muted, fontSize:18 }}>›</span>
+            </button>
+          ))}
+        </div>
+        <Mono style={{ display:"block", color:C.muted, lineHeight:1.6, marginBottom:14 }}>Prices, drivers and booking happen in the ride app. KROFT doesn't book or price rides itself.</Mono>
+        <Btn v="outline" full onClick={onClose}>Cancel</Btn>
       </div>
     </div>
   );
@@ -2657,13 +2669,15 @@ function ConnectedApps({ google, microsoft }) {
           </div>
         );
       })}
-      <div style={{ background:C.card, border:`1px solid ${C.cardB}`, borderRadius:24, padding:"16px 18px", display:"flex", alignItems:"center", gap:13 }}>
-        <div style={{ width:44, height:44, borderRadius:"50%", background:"#000", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, color:"#fff", fontSize:12, fontWeight:700, letterSpacing:-.2 }}>Uber</div>
-        <div style={{ flex:1, minWidth:0 }}>
-          <div style={{ fontSize:16.5, fontWeight:600, color:C.text }}>Uber</div>
-          <div style={{ fontSize:13.5, color:C.muted, lineHeight:1.45, marginTop:1 }}>No connection needed. KROFT opens Uber with your destination filled in, and you book there.</div>
+      {["uber", "bolt", "indrive"].map(id => (
+        <div key={id} style={{ background:C.card, border:`1px solid ${C.cardB}`, borderRadius:24, padding:"16px 18px", display:"flex", alignItems:"center", gap:13 }}>
+          <RideBadge id={id} />
+          <div style={{ flex:1, minWidth:0 }}>
+            <div style={{ fontSize:16.5, fontWeight:600, color:C.text }}>{RIDE_APPS[id].name}</div>
+            <div style={{ fontSize:13.5, color:C.muted, lineHeight:1.45, marginTop:1 }}>{rideDescription(id)}</div>
+          </div>
         </div>
-      </div>
+      ))}
     </div>
   );
 }
@@ -10287,7 +10301,7 @@ ${voiceMode
           </div>
         </div>
       )}
-      {uberDest && <UberModal dest={uberDest} onClose={() => setUberDest(null)} />}
+      {uberDest && <RideModal dest={uberDest} currency={user.currency} toast={toast} onClose={() => setUberDest(null)} />}
       {composeDraft && <ComposeModal draft={composeDraft} onChange={setComposeDraft} onSend={async d => {
         // Real send when a real email account is connected — otherwise fall back to the
         // original simulated send (a toast plus a scripted fake reply a few seconds later), so
@@ -10623,7 +10637,7 @@ ${voiceMode
                     <div style={{ fontWeight:700, fontSize:14, color:C.white, marginBottom:4 }}>{upcomingAppts[0].title}</div>
                     <Mono style={{ display:"block", color:C.soft, marginBottom:2 }}>{upcomingAppts[0].time} · {fmtDate(upcomingAppts[0].date)||upcomingAppts[0].date}</Mono>
                     <Mono style={{ display:"block", color:C.muted, marginBottom:13 }}>{upcomingAppts[0].location}</Mono>
-                    {/* Remind and Uber's natural widths don't reliably both fit on one line at
+                    {/* Remind and Ride's natural widths don't reliably both fit on one line at
                         default button padding on a narrow phone — flexWrap:"wrap" let Uber drop
                         to its own line. A 2-column grid always keeps them side by side, but
                         `1fr 1fr` tracks default to `minmax(auto, 1fr)` — each column's floor is
@@ -10634,7 +10648,7 @@ ${voiceMode
                         own line below rather than competing for space in that same row. */}
                     <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:7 }}>
                       <Btn sm onClick={() => remind(upcomingAppts[0])} style={{ width:"100%", minWidth:0 }}>Remind</Btn>
-                      <Btn sm v="outline" onClick={() => setUberDest(upcomingAppts[0])} style={{ width:"100%", minWidth:0 }}>Uber</Btn>
+                      <Btn sm v="outline" onClick={() => setUberDest(upcomingAppts[0])} style={{ width:"100%", minWidth:0 }}>Ride</Btn>
                     </div>
                     {(() => {
                       // A live status line filling the space left under the buttons — ticks on
@@ -11329,7 +11343,7 @@ ${voiceMode
                     {a.contactId && contacts.find(c=>c.id===a.contactId)?.phone && <Btn sm v="outline" onClick={e=>{e.stopPropagation();window.location.href=`tel:${contacts.find(c=>c.id===a.contactId).phone}`;}}>Call</Btn>}
                     {a.contactId && contacts.find(c=>c.id===a.contactId)?.email && <Btn sm v="outline" onClick={e=>{e.stopPropagation();setComposeDraft({to:contacts.find(c=>c.id===a.contactId).email,subject:a.title,body:""});}}>Email</Btn>}
                     <Btn sm onClick={e=>{e.stopPropagation();remind(a);}}>Remind</Btn>
-                    <Btn sm v="outline" onClick={e=>{e.stopPropagation();setUberDest(a);}}>Uber</Btn>
+                    <Btn sm v="outline" onClick={e=>{e.stopPropagation();setUberDest(a);}}>Ride</Btn>
                     <Btn sm v="outline" onClick={e=>{e.stopPropagation();setTab("nova");setAiInput(`Prepare me for: "${a.title}"`)}}>Prep</Btn>
                     <Btn sm v="outline" onClick={e=>{e.stopPropagation();setEditingAppt({...a});}}>Edit</Btn>
                   </div>
@@ -12512,7 +12526,7 @@ ${voiceMode
                     <div style={{ fontSize:16, fontWeight:700, color:C.white, marginBottom:4 }}>{aroundResults[0].name}</div>
                     <div style={{ fontSize:13, color:C.soft, lineHeight:1.6, marginBottom:12 }}>{aroundResults[0].address} · {distanceFrom(aroundResults[0].lat, aroundResults[0].lng)} away</div>
                     <div style={{ display:"flex", gap:8 }}>
-                      <Btn sm onClick={() => setUberDest({ name:aroundResults[0].name, location:aroundResults[0].address })}>Uber there</Btn>
+                      <Btn sm onClick={() => setUberDest({ name:aroundResults[0].name, location:aroundResults[0].address })}>Ride there</Btn>
                       <Btn sm v="outline" onClick={() => setHungry(false)}>Reset</Btn>
                     </div>
                   </>
@@ -12651,7 +12665,7 @@ ${voiceMode
                         <Mono style={{ color:C.soft }}>{distanceFrom(p.lat, p.lng)} away</Mono>
                       </div>
                       <div style={{ display:"flex", flexDirection:"column", gap:6, flexShrink:0 }}>
-                        <Btn sm onClick={() => setUberDest({ name:p.name, location:p.address })}>Uber</Btn>
+                        <Btn sm onClick={() => setUberDest({ name:p.name, location:p.address })}>Ride</Btn>
                         <Btn sm v="outline" onClick={() => { setTab("nova"); setAiInput(`Tell me more about ${p.name} near me`); }}>Ask</Btn>
                       </div>
                     </div>
