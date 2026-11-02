@@ -61,6 +61,28 @@ try {
   const s2 = p2.getByRole("dialog", { name: "Choose your plan" });
   check("using up the free invoices opens the plans", await s2.isVisible());
   await ng.close();
+
+  // Profile names the plan someone is on, and Plus can move up to Pro (test-build switches).
+  for (const [who, key] of [["Plus", "kroft-e2e-plus"], ["Pro", "kroft-e2e-pro"]]) {
+    console.log(`\nProfile, ${who}`);
+    const c = await newShellContext(browser, null);
+    await c.addInitScript(k => localStorage.setItem(k, "1"), key);
+    const p = await c.newPage();
+    const errs = []; p.on("pageerror", e => errs.push(e.message));
+    await p.goto(URL); await signUp(p);
+    await p.locator('nav button[title="Profile"]').click();
+    await p.getByText(`KROFT ${who}`, { exact: true }).first().click();
+    check(`${who}: Profile shows KROFT ${who}`, await p.getByText(`KROFT ${who}`, { exact: true }).first().isVisible());
+    const seePro = p.getByRole("button", { name: "See KROFT Pro" });
+    check(`${who}: ${who === "Plus" ? "can" : "isn't asked to"} see KROFT Pro`, (await seePro.count()) === (who === "Plus" ? 1 : 0));
+    if (who === "Plus") {
+      await seePro.click();
+      const s3 = p.getByRole("dialog", { name: "Choose your plan" });
+      check("Plus: the plans open with Plus as current and Pro to choose", (await s3.innerText()).includes("CURRENT") && await s3.getByRole("button", { name: "Choose Pro" }).isVisible());
+    }
+    check(`${who}: no page errors`, errs.length === 0, errs.join(" | "));
+    await c.close();
+  }
 } catch (err) {
   check("test run finished", false, err.message);
 } finally {

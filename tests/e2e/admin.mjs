@@ -11,7 +11,8 @@ const summary = {
   admin: true,
   people: { total: 14, new7: 5, new1: 2 }, active: { today: 4, week: 9 },
   ai: { last24: { requests: 12, failed: 12, lastError: "upstream_403 PERMISSION_DENIED API_KEY_INVALID" }, days: [{ day: "2026-11-02", requests: 12, failed: 12, cost: 0 }, { day: "2026-11-01", requests: 40, failed: 3, cost: 0.0123 }] },
-  feedback: [{ id: 5, created_at: "2026-11-02T08:00:00Z", kind: "problem", message: "The invoice PDF came out blank", screen: "Invoices", email: "tester@example.com", done: false }],
+  feedback: [{ id: 5, created_at: "2026-11-02T08:00:00Z", kind: "problem", message: "The invoice PDF came out blank", screen: "Invoices", email: "tester@example.com", done: false },
+    { id: 6, created_at: "2026-11-02T07:00:00Z", kind: "idea", message: "Let me pick the logo size", screen: "Invoices", email: "pro@example.com", done: false, pro: true }],
   errors: [{ kind: "error", message: "Cannot read properties of undefined (reading 'amount')", source: "/assets/index.js:1:9", times: 7, people: 3, last_seen: "2026-11-02T09:00:00Z" }],
   alerts: [{ created_at: "2026-11-02T08:05:00Z", title: "KROFT's AI is failing", body: "12 of the last 12 AI requests failed.", delivered: 1 }],
   lastBackup: "2026-11-02",
@@ -46,8 +47,9 @@ try {
   const t = await admin.innerText();
   check("people: accounts, new this week, active today and this week", /Accounts\s*14/.test(t) && /New this week\s*5/.test(t) && /Active today\s*4/.test(t) && /Active this week\s*9/.test(t), t.slice(0, 200));
   check("AI health shows it failing, and why", t.includes("0 of 12 worked") && t.includes("12 failed: upstream_403 PERMISSION_DENIED API_KEY_INVALID") && t.includes("40 requests · 3 failed · $0.0123"), t.slice(t.indexOf("AI"), t.indexOf("AI") + 250));
+  check("Pro customers' feedback is marked priority", (await admin.getByText("PRO · PRIORITY").count()) === 1);
   check("feedback, errors, alerts and backup are listed", t.includes("The invoice PDF came out blank") && t.includes("Invoices · tester@example.com") && t.includes("7× · 3 people") && t.includes("KROFT's AI is failing") && t.includes("sent to 1 device") && t.includes("Last backup copy: 2026-11-02"));
-  await admin.getByRole("button", { name: "Done", exact: true }).click();
+  await admin.getByRole("button", { name: "Done", exact: true }).first().click();
   check("feedback can be ticked off", posts[0]?.action === "feedbackDone" && posts[0].id === 5 && posts[0].done === true && await admin.getByRole("button", { name: "Reopen" }).waitFor({ timeout: 4000 }).then(() => true, () => false), JSON.stringify(posts));
   check("no page errors", errors.length === 0, errors.join(" | "));
   await ctx.close();

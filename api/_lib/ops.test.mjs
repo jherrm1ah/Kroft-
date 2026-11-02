@@ -1,5 +1,5 @@
 // Tests alerts, limits, the admin page's numbers and the 5-minute ops run. Run with: npm test
-import { aiAlert, errorAlerts, feedbackAlerts, newAlerts, isAdminEmail, ipHash } from "./ops.js";
+import { aiAlert, errorAlerts, feedbackAlerts, newAlerts, isAdminEmail, ipHash, proUserIds, prioritiseFeedback } from "./ops.js";
 import { raiseAlerts, deliverAlerts, backupOncePerDay } from "./opsRun.js";
 import { peopleCounts, activeCounts, aiSummary } from "../admin.js";
 
@@ -9,6 +9,18 @@ const eq = (name, got, want) => { if (JSON.stringify(got) !== JSON.stringify(wan
 // Admins.
 process.env.ADMIN_EMAILS = " Owner@Example.com , second@example.com";
 eq("admins come from ADMIN_EMAILS, any case", [isAdminEmail("owner@example.com"), isAdminEmail("SECOND@example.com"), isAdminEmail("someone@example.com"), isAdminEmail("")], [true, true, false, false]);
+
+// Priority support: Pro customers' feedback first.
+const pro = proUserIds([{ user_id: "p", status: "active", plan: "pro" }, { user_id: "q", status: "canceled", plan: "pro" }, { user_id: "r", status: "active", plan: "plus" }, { user_id: "s", status: "active" }]);
+eq("only active Pro subscriptions count as Pro", [...pro], ["p"]);
+const fb = prioritiseFeedback([
+  { id: 1, user_id: "r", done: false, created_at: "2026-11-02T10:00:00Z" },
+  { id: 2, user_id: "p", done: false, created_at: "2026-11-01T10:00:00Z" },
+  { id: 3, user_id: "p", done: true, created_at: "2026-11-02T11:00:00Z" },
+  { id: 4, user_id: null, done: false, created_at: "2026-11-02T12:00:00Z" },
+], pro);
+eq("feedback: open Pro first, then open newest first, done last", fb.map(f => f.id), [2, 4, 1, 3]);
+eq("feedback: marked Pro, and the user id isn't sent", [fb[0].pro, fb[1].pro, "user_id" in fb[0]], [true, false, false]);
 
 // AI failing.
 const ok = { status: 200 }, bad = { status: 403, error: "upstream_403 PERMISSION_DENIED" };

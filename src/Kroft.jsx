@@ -2730,7 +2730,7 @@ function LogoutDialog({ onConfirm, onCancel }) {
 
 // Permanent account deletion. Deliberately harder to reach than log out: the user has to type
 // DELETE, because unlike log out there is no way back.
-function DeleteAccountDialog({ onConfirm, onCancel, synced, subscribed }) {
+function DeleteAccountDialog({ onConfirm, onCancel, synced, subscribed, plan }) {
   const [busy, setBusy] = useState(false);
   const [typed, setTyped] = useState("");
   const ref = useModalA11y(busy ? () => {} : onCancel);
@@ -2752,7 +2752,7 @@ function DeleteAccountDialog({ onConfirm, onCancel, synced, subscribed }) {
               ? "This permanently deletes your KROFT account and everything in it: chats, finances, contacts, notes, wellness entries and files. Linked Google or Microsoft accounts are disconnected."
               : "This permanently erases everything KROFT has stored on this device: chats, finances, contacts, notes, wellness entries and files."}
           </p>
-          {subscribed && <p style={{ margin:"0 0 10px" }}>Your KROFT Plus subscription will be cancelled.</p>}
+          {subscribed && <p style={{ margin:"0 0 10px" }}>Your {plan === "pro" ? "KROFT Pro" : "KROFT Plus"} subscription will be cancelled.</p>}
           <p style={{ margin:0 }}>This can't be undone. Download a backup first if you want to keep a copy.</p>
         </div>
         <label htmlFor="delete-confirm" style={{ display:"block", fontSize:14, color:C.text, margin:"0 8px 8px" }}>Type <b>DELETE</b> to confirm</label>
@@ -3585,7 +3585,10 @@ function AdminScreen({ fetcher, onClose, toast }) {
             {data.feedback.map(f => (
               <Card key={f.id} level="raised" style={{ padding:"10px 12px", opacity: f.done ? .55 : 1 }}>
                 <div style={{ display:"flex", justifyContent:"space-between", gap:8, marginBottom:4 }}>
-                  <Tag tone={f.kind === "problem" ? "negative" : f.kind === "praise" ? "positive" : "accent"}>{({ problem:"SOMETHING'S WRONG", idea:"IDEA", praise:"PRAISE" })[f.kind] || "FEEDBACK"}</Tag>
+                  <div style={{ display:"flex", gap:6 }}>
+                    <Tag tone={f.kind === "problem" ? "negative" : f.kind === "praise" ? "positive" : "accent"}>{({ problem:"SOMETHING'S WRONG", idea:"IDEA", praise:"PRAISE" })[f.kind] || "FEEDBACK"}</Tag>
+                    {f.pro && <Tag tone="positive">PRO · PRIORITY</Tag>}
+                  </div>
                   <Mono style={{ color:C.muted }}>{when(f.created_at)}</Mono>
                 </div>
                 <div style={{ fontSize:13, color:C.text, lineHeight:1.5, whiteSpace:"pre-wrap" }}>{f.message}</div>
@@ -4105,11 +4108,12 @@ function ProfileSwitch({ value, onChange }) {
   );
 }
 
-function ProfileSection({ onFeedback, isAdmin, onAdmin, nav, onNav, connections, user, onUpdateName, onEditBusinessDetails, onSignOut, theme, onToggleTheme, toast, subscribed, subscriptionStatus, autoRenews, billingLoading, onUpgrade, onManageBilling, usageStats, voiceReplies, onSetVoiceReplies, proactiveInsights, onSetProactiveInsights, wellnessAiContext, onSetWellnessAiContext, voicePref, onSetVoicePref, voiceSpeed, onSetVoiceSpeed, onSetupBiometric, onRemoveBiometric, biometricOn, onExportData, onImportData, onDeleteAccount, notifPermission, notifPrefs, onEnableNotifications, onSetNotifPref, onTestNotification, voiceTurnsCount, voiceLimit }) {
+function ProfileSection({ onFeedback, isAdmin, onAdmin, nav, onNav, connections, user, onUpdateName, onEditBusinessDetails, onSignOut, theme, onToggleTheme, toast, subscribed, plan = "free", subscriptionStatus, autoRenews, billingLoading, onUpgrade, onManageBilling, usageStats, voiceReplies, onSetVoiceReplies, proactiveInsights, onSetProactiveInsights, wellnessAiContext, onSetWellnessAiContext, voicePref, onSetVoicePref, voiceSpeed, onSetVoiceSpeed, onSetupBiometric, onRemoveBiometric, biometricOn, onExportData, onImportData, onDeleteAccount, notifPermission, notifPrefs, onEnableNotifications, onSetNotifPref, onTestNotification, voiceTurnsCount, voiceLimit }) {
   // nav.screen is null for the main hub, otherwise a key of SCREENS below. Held in KroftApp (see
   // profileNav there) so it survives the remount a theme change triggers.
   const { screen, openRow } = nav;
   const setOpenRow = row => onNav(n => ({ ...n, openRow:row }));
+  const planName = plan === "pro" ? "KROFT Pro" : "KROFT Plus";
   const fileInputRef = useRef(null);
   const [confirmLogout, setConfirmLogout] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -4395,7 +4399,7 @@ function ProfileSection({ onFeedback, isAdmin, onAdmin, nav, onNav, connections,
       <ProfileRow label="Manage Subscription" sub={subscribed ? "Change or cancel plan" : "You're on the free plan"} expanded={openRow==="managesub"} onToggle={()=>toggle("managesub")}>
         {subscribed ? (
           <>
-            <Mono style={{ display:"block", color:C.soft, lineHeight:1.7, marginBottom:10 }}>You're on KROFT Plus. Cancel any time, right here — there's no separate billing site to visit.</Mono>
+            <Mono style={{ display:"block", color:C.soft, lineHeight:1.7, marginBottom:10 }}>You're on {planName}. Cancel any time, right here — there's no separate billing site to visit.</Mono>
             <Btn sm v="outline" disabled={billingLoading} onClick={onManageBilling}>{billingLoading ? <Spinner size={14} color={C.soft} thickness={2} /> : "Cancel plan"}</Btn>
           </>
         ) : (
@@ -4439,7 +4443,7 @@ function ProfileSection({ onFeedback, isAdmin, onAdmin, nav, onNav, connections,
   const planSummary = (
     <Card style={{ marginBottom:16, border:`1px solid ${C.border}` }}>
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
-        <div style={{ fontSize:16, fontWeight:800, color:C.white }}>{subscribed ? "KROFT Plus" : "Free Plan"}</div>
+        <div style={{ fontSize:16, fontWeight:800, color:C.white }}>{subscribed ? planName : "Free Plan"}</div>
         <Tag tone={subscribed?"positive":undefined}>{subscribed ? "Active" : "Current"}</Tag>
       </div>
       {/* Chat, AI drafts/suggestions and monthly reports are unlimited on every plan — nothing
@@ -4464,8 +4468,11 @@ function ProfileSection({ onFeedback, isAdmin, onAdmin, nav, onNav, connections,
         <Mono style={{ display:"block", color:C.soft, marginBottom:14 }}>Unlimited chat, voice, drafts and reports.</Mono>
       )}
       {subscribed
-        ? <Btn sm v="outline" disabled={billingLoading} onClick={onManageBilling}>{billingLoading ? <Spinner size={14} color={C.soft} thickness={2} /> : "Cancel plan"}</Btn>
-        : <Btn sm disabled={billingLoading} onClick={onUpgrade}>{billingLoading ? <Spinner size={14} color={C.black} thickness={2} /> : "Upgrade to KROFT Plus"}</Btn>}
+        ? <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+            {plan === "plus" && <Btn sm onClick={onUpgrade}>See KROFT Pro</Btn>}
+            <Btn sm v="outline" disabled={billingLoading} onClick={onManageBilling}>{billingLoading ? <Spinner size={14} color={C.soft} thickness={2} /> : "Cancel plan"}</Btn>
+          </div>
+        : <Btn sm disabled={billingLoading} onClick={onUpgrade}>{billingLoading ? <Spinner size={14} color={C.black} thickness={2} /> : "See plans"}</Btn>}
     </Card>
   );
 
@@ -4473,7 +4480,7 @@ function ProfileSection({ onFeedback, isAdmin, onAdmin, nav, onNav, connections,
   // tapping into a screen only to tap again to reveal its one row is a wasted step.
   const SCREENS = {
     connected:       { title:"Connected apps", body:<ConnectedApps google={connections.google} microsoft={connections.microsoft} />, rows:[] },
-    plan:            { title:subscribed ? "KROFT Plus" : "Upgrade plan", top:planSummary, rows:["plus", "billing", "paymethods", "managesub"] },
+    plan:            { title:subscribed ? planName : "Upgrade plan", top:planSummary, rows:["plus", "billing", "paymethods", "managesub"] },
     usage:           { title:"Usage and limits", rows:["usage"] },
     appearance:      { title:"Appearance", rows:["appearance", "sounds"] },
     notifications:   { title:"Notifications", rows:["notifs"] },
@@ -4507,7 +4514,7 @@ function ProfileSection({ onFeedback, isAdmin, onAdmin, nav, onNav, connections,
           </Card>
         )}
         {s.bottom}
-        {confirmDelete && createPortal(<DeleteAccountDialog synced={isSupabaseConfigured} subscribed={subscribed}
+        {confirmDelete && createPortal(<DeleteAccountDialog synced={isSupabaseConfigured} subscribed={subscribed} plan={plan}
           onCancel={() => setConfirmDelete(false)} onConfirm={onDeleteAccount} />, document.body)}
       </div>
     );
@@ -4520,7 +4527,7 @@ function ProfileSection({ onFeedback, isAdmin, onAdmin, nav, onNav, connections,
     { title:"Account", items:[
       { icon:"store", label:"Business", value:`${user.businessName || "Personal"} · ${user.currency}`, onClick:onEditBusinessDetails },
       subscribed
-        ? { key:"plan", icon:"crown", label:"KROFT Plus", value:"Active" }
+        ? { key:"plan", icon:"crown", label:planName, value:"Active" }
         // Free users see the plans straight away; a failed renewal still opens the billing page.
         : { key:"plan", icon:"crown", label:"Upgrade plan", tone:"accent", value:subscriptionStatus === "past_due" ? "Renewal failed" : "", onClick: subscriptionStatus === "past_due" ? undefined : onUpgrade },
       { key:"usage", icon:"gauge", label:"Usage and limits" },
@@ -13344,7 +13351,7 @@ ${voiceMode
               subscriptionStatus={subscriptionStatus}
               autoRenews={autoRenews}
               billingLoading={billingLoading}
-              onUpgrade={() => setShowPlans("")}
+              onUpgrade={() => setShowPlans("")} plan={plan}
               onManageBilling={cancelKroftPlus}
               voiceReplies={voiceReplies}
               onSetVoiceReplies={setVoiceReplies}

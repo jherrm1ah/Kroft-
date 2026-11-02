@@ -62,3 +62,14 @@ export async function sentLastHour(admin, table, { hash, userId }) {
   return error ? 0 : count || 0;   // can't count (e.g. before the columns exist): don't block
 }
 export const LIMITS = { feedback: 10, errors: 100 };
+
+// KROFT Pro's priority support: who's on an active Pro subscription, from subscriptions rows
+// ({ user_id, status, plan }). Rows without a plan (before that column exists) are Plus.
+export const proUserIds = subs => new Set((subs || []).filter(s => s.status === "active" && s.plan === "pro").map(s => s.user_id));
+
+// The admin page's feedback: marked pro, then not-done first, Pro first, newest first. The
+// user_id is only used for this and isn't sent to the page.
+export function prioritiseFeedback(feedback, pro) {
+  return (feedback || []).map(({ user_id, ...f }) => ({ ...f, pro: !!user_id && pro.has(user_id) }))
+    .sort((a, b) => Number(!!a.done) - Number(!!b.done) || Number(b.pro) - Number(a.pro) || String(b.created_at).localeCompare(String(a.created_at)));
+}
