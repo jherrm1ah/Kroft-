@@ -42,7 +42,7 @@ try {
   check("tapping a reminder edits it", await page.getByText("Friday 10am").isVisible());
 
   await page.getByRole("button", { name: "Clear done" }).click();
-  check("Clear done removes them", !(await page.getByText("Take a long walk").isVisible()) && await page.getByText("Cleared 1 done reminder.").isVisible());
+  check("Clear done removes them", !(await page.getByText("Take a long walk").isVisible()) && await page.getByText("Cleared 1 done reminder.").waitFor({ timeout: 5000 }).then(() => true, () => false));
 
   await page.getByRole("button", { name: 'Mark "Pay the landlord" done' }).click();
   await page.getByRole("button", { name: 'Mark "Call Tunde about the logo invoice" done' }).click();

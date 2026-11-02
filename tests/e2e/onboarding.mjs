@@ -57,7 +57,7 @@ try {
   const p2 = await ctx2.newPage();
   await p2.goto(URL); await signUp(p2, { skipGoal: false });
   await p2.getByRole("button", { name: /^Run projects/ }).click();
-  check("choosing Run projects opens Workspace › Projects", await p2.getByRole("button", { name: "Create Project" }).first().isVisible());
+  check("choosing Run projects opens Workspace › Projects", await p2.getByRole("button", { name: "New project" }).first().isVisible());
   await p2.locator('nav button[title="Home"]').click();
   check("the projects steps are on Home", await p2.getByText("Getting started: Run projects").isVisible() && await p2.getByRole("button", { name: "Create a project" }).isVisible());
   await p2.getByRole("button", { name: "Hide getting started" }).click();
