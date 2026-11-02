@@ -4,6 +4,7 @@ export const config = { runtime: "edge" };
 
 import { getAuthedUser, supabaseAdmin, jsonResponse } from "./_lib/supabaseAdmin.js";
 import { makeFeedback } from "../src/feedback.js";
+import { ipHash, sentLastHour, LIMITS } from "./_lib/ops.js";
 
 export default async function handler(req) {
   if (req.method !== "POST") return jsonResponse({ error: "Method not allowed" }, 405);
@@ -15,6 +16,12 @@ export default async function handler(req) {
   if (f.error) return jsonResponse({ error: f.error }, 400);
   if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) return jsonResponse({ error: "Not configured" }, 501);
   const user = await getAuthedUser(req).catch(() => null);
-  const { error } = await supabaseAdmin().from("user_feedback").insert({ ...f, user_id: user?.id || null, email: user?.email || null });
+  const admin = supabaseAdmin();
+  const hash = await ipHash(req);
+  // At most LIMITS.feedback messages an hour from one device or account.
+  if (await sentLastHour(admin, "user_feedback", { hash, userId: user?.id }) >= LIMITS.feedback) return jsonResponse({ error: "That's a lot of feedback in an hour. Try again later." }, 429);
+  let { error } = await admin.from("user_feedback").insert({ ...f, user_id: user?.id || null, email: user?.email || null, ip_hash: hash });
+  // Before the ip_hash column exists, save without it.
+  if (error && /ip_hash/.test(error.message || "")) ({ error } = await admin.from("user_feedback").insert({ ...f, user_id: user?.id || null, email: user?.email || null }));
   return error ? jsonResponse({ error: "Couldn't save" }, 500) : jsonResponse({ ok: true });
 }
