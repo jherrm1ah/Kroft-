@@ -44,15 +44,15 @@ try {
   await page.getByRole("button", { name: "Record payment" }).click();
   await field(page, "Amount received").fill("20000");
   await page.getByRole("button", { name: "Save payment" }).click();
-  await page.getByRole("button", { name: "Back" }).click();
+  await page.getByRole("button", { name: "Back", exact: true }).click();
   await page.getByRole("tab", { name: "Quotes" }).click();
   await page.getByRole("button", { name: "New quote" }).click();
   await field(page, "Client name").fill("Tunde Bakare");
   await page.getByLabel("Item 1 description").fill("Website");
   await page.getByLabel("Item 1 price").fill("300000");
   await page.getByRole("button", { name: "Save quote" }).click();
-  await page.getByRole("button", { name: "Back" }).click();
-  await page.getByRole("button", { name: "Back" }).click();
+  await page.getByRole("button", { name: "Back", exact: true }).click();
+  await page.getByRole("button", { name: "Back", exact: true }).click();
 
   // The profile.
   await openContact(page, "Tunde Bakare");
@@ -76,7 +76,7 @@ try {
   // An invoice opens from the profile; Back comes back to it.
   await profile.getByText("INV-0001").click();
   check("invoice opens from the profile", await page.getByRole("heading", { name: "INV-0001" }).isVisible());
-  await page.getByRole("button", { name: "Back" }).first().click();
+  await page.getByRole("button", { name: "Back", exact: true }).first().click();
   check("Back returns to the profile", await profile.isVisible() && !(await page.getByRole("heading", { name: "INV-0001" }).isVisible()));
 
   // Ask KROFT.

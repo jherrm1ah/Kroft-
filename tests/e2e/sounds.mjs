@@ -42,8 +42,8 @@ async function recordPayment(page, client) {
   await page.getByRole("button", { name: "Save invoice" }).click();
   await page.getByRole("button", { name: "Record payment" }).click();
   await page.getByRole("button", { name: "Save payment" }).click();
-  await page.getByRole("button", { name: "Back" }).click();
-  await page.getByRole("button", { name: "Back" }).click();
+  await page.getByRole("button", { name: "Back", exact: true }).click();
+  await page.getByRole("button", { name: "Back", exact: true }).click();
 }
 
 const server = await startServer();

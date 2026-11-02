@@ -100,8 +100,8 @@ async function website(browser) {
   check("each payment is in income, on the day it arrived", incomes.length === 2 && incomes[0]?.amount === 20000 && incomes[0]?.date === earlier && incomes[0]?.label.includes("part payment") && incomes[1]?.amount === 30000 && incomes.every(x => x?.cat === "Invoice"), JSON.stringify(incomes));
 
   // 5. A long invoice spills onto more pages.
-  await page.getByRole("button", { name: "Back" }).click();
-  await page.getByRole("button", { name: "Back" }).click();
+  await page.getByRole("button", { name: "Back", exact: true }).click();
+  await page.getByRole("button", { name: "Back", exact: true }).click();
   reply = sse("Done, it's drafted.", { type: "add_invoice", client: "Ọlá Stores", items: Array.from({ length: 40 }, (_, i) => ({ description: `Item ${i + 1}: supply and delivery of goods to the Ikeja warehouse`, qty: 2, price: 1500 })) });
   await askKroft(page, "Invoice Ọlá Stores for the 40 supplies");
   await page.getByText(/Invoice INV-0002 drafted/).waitFor({ timeout: 10000 }).catch(() => {});
@@ -113,7 +113,7 @@ async function website(browser) {
   check("40-item invoice runs to several pages", pages >= 2, `pages=${pages}`);
 
   // 6. Quote → accepted → invoice → paid.
-  await page.getByRole("button", { name: "Back" }).click();
+  await page.getByRole("button", { name: "Back", exact: true }).click();
   await page.getByRole("tab", { name: "Quotes" }).click();
   await page.getByRole("button", { name: "New quote" }).click();
   await page.locator("label", { hasText: "Client name" }).locator("input").fill("Chidi Okafor");
@@ -136,7 +136,7 @@ async function website(browser) {
   check("invoice from the quote is paid", await page.getByText("PAID", { exact: true }).first().isVisible());
 
   // 7. Clients: who owes what.
-  await page.getByRole("button", { name: "Back" }).click();
+  await page.getByRole("button", { name: "Back", exact: true }).click();
   await page.getByRole("tab", { name: "Clients" }).click();
   const clientsText = await page.locator("body").innerText();
   const order = ["Ọlá Stores", "Chidi Okafor", "Tunde Bakare"].map(n => clientsText.indexOf(n));
@@ -151,8 +151,8 @@ async function website(browser) {
   check("new client saved to Contacts", contactNames.includes("Chidi Okafor") && contactNames.includes("08099998888"), contactNames.slice(0, 200));
 
   // 8. Asking KROFT for a quote.
-  await page.getByRole("button", { name: "Back" }).click();
-  await page.getByRole("button", { name: "Back" }).click();
+  await page.getByRole("button", { name: "Back", exact: true }).click();
+  await page.getByRole("button", { name: "Back", exact: true }).click();
   reply = sse("Here's a quote for Bisi, ready to review.", { type: "add_quote", client: "Bisi", items: [{ description: "Photo shoot", qty: 1, price: 75000 }] });
   await askKroft(page, "Quote Bisi 75k for the photo shoot");
   check("asking KROFT drafts QUO-0002", await page.getByText(/Quote QUO-0002 drafted for Bisi/).waitFor({ timeout: 10000 }).then(() => true, () => false));

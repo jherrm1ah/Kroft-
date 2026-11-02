@@ -9,6 +9,8 @@ import { offlineUserId, flushPending, clearOfflineData, hasUnsyncedChanges, unre
 import { DEFAULT_INVOICE_SETTINGS, taxName, userLocale, invoiceTotals, invoiceStatus, invoiceAllowance, quoteAllowance, createInvoice, createQuote, invoiceFromQuote, invoiceProblem, FREE_INVOICES_PER_MONTH, FREE_QUOTES_PER_MONTH, whatsappLink, sendMessage, reminderMessage, quoteMessage, prettyDate, STATUS_LABEL, invoicesForAI, quotesForAI, daysBetween, docStatus, clientSummaries, clientKey, recordPayment, removePayment, amountPaid, balanceDue, paymentsOf, hasPayments, syncInvoicesWithIncome, quoteStatus, fromName } from "./invoices/model.js";
 import { invoicePdf, invoiceFileName, receiptPdf, statementPdf } from "./invoices/pdf.js";
 import { reportError } from "./errorLog.js";
+import { GOALS, goalById, startProgress } from "./gettingStarted.js";
+import { FEEDBACK_KINDS, screenName, makeFeedback, feedbackMailto } from "./feedback.js";
 import { financeCsvRows, toCsv, hasAnythingToExport } from "./finance/exportCsv.js";
 import { PLANS, PAYMENTS_READY, planPrice, monthsFree, currentPlan, featureText } from "./plans.js";
 import { projectMoney, milestoneState, milestoneWhen, milestoneInvoice, milestoneInvoiceProblem, milestoneInvoiceItems, milestoneReminders, projectLineForAI } from "./projects/money.js";
@@ -3499,6 +3501,60 @@ function InvoicesScreen({ invoices, setInvoices, quotes, setQuotes, settings, se
   );
 }
 
+// Right after sign-up: what does this person want KROFT for? Their answer opens that part of
+// the app and puts three matching steps on Home (src/gettingStarted.js).
+function GoalPicker({ name, onPick, onSkip }) {
+  return (
+    <div role="dialog" aria-modal="true" aria-label="What do you want KROFT for" style={{ position:"fixed", inset:0, zIndex:350, background:C.bg, display:"flex", flexDirection:"column", overflowY:"auto" }}>
+      <div style={{ maxWidth:520, width:"100%", margin:"0 auto", padding:"calc(28px + env(safe-area-inset-top)) 20px 24px", display:"flex", flexDirection:"column", gap:12 }}>
+        <div style={{ fontSize:24, fontWeight:700, color:C.white, letterSpacing:-.8, lineHeight:1.2 }}>{name ? `${name}, what` : "What"} do you want KROFT to help with first?</div>
+        <Mono style={{ color:C.soft, fontSize:13, lineHeight:1.6, marginBottom:6 }}>Pick one to start. Everything else is still there whenever you need it.</Mono>
+        {GOALS.map(g => (
+          <button key={g.id} onClick={() => onPick(g.id)} style={{ textAlign:"left", background:C.card, border:`1px solid ${C.cardB}`, borderRadius:16, padding:"14px 16px", cursor:"pointer", fontFamily:APP_FONT, display:"flex", alignItems:"center", justifyContent:"space-between", gap:10 }}>
+            <span>
+              <span style={{ display:"block", fontSize:15, fontWeight:700, color:C.white }}>{g.label}</span>
+              <span style={{ display:"block", fontSize:12, color:C.soft, marginTop:3 }}>{g.sub}</span>
+            </span>
+            <span aria-hidden="true" style={{ color:C.muted, fontSize:18 }}>›</span>
+          </button>
+        ))}
+        <button onClick={onSkip} style={{ background:"none", border:"none", color:C.soft, fontSize:13, cursor:"pointer", padding:10, fontFamily:APP_FONT, textDecoration:"underline" }}>I'll look around myself</button>
+      </div>
+    </div>
+  );
+}
+
+// Feedback, from anywhere: what kind, a few words, and where in KROFT it was sent from (the
+// screen and app version go with it, so "this is broken" can be found). Stored by
+// api/feedback.js; if that can't be reached, the same message opens as an email.
+function FeedbackSheet({ screen, onClose, onSend }) {
+  const [kind, setKind] = useState("problem");
+  const [message, setMessage] = useState("");
+  const [sending, setSending] = useState(false);
+  const send = async () => { setSending(true); const ok = await onSend({ kind, message }); setSending(false); if (ok) onClose(); };
+  return (
+    <div role="dialog" aria-modal="true" aria-label="Send feedback" style={{ position:"fixed", inset:0, zIndex:345, background:"rgba(0,0,0,.45)", display:"flex", alignItems:"flex-end", justifyContent:"center" }} onClick={onClose}>
+      <div onClick={e => e.stopPropagation()} style={{ width:"100%", maxWidth:520, background:C.bg, borderRadius:"20px 20px 0 0", padding:"18px 16px calc(18px + env(safe-area-inset-bottom))", display:"flex", flexDirection:"column", gap:12 }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+          <div style={{ fontSize:17, fontWeight:700, color:C.white }}>Tell us what you think</div>
+          <button onClick={onClose} aria-label="Close" style={{ background:"none", border:"none", color:C.muted, cursor:"pointer", fontSize:18 }}>✕</button>
+        </div>
+        <div role="radiogroup" aria-label="Kind of feedback" style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
+          {FEEDBACK_KINDS.map(k => (
+            <button key={k.id} role="radio" aria-checked={kind === k.id} onClick={() => setKind(k.id)}
+              style={{ background: kind === k.id ? C.text : C.surface, color: kind === k.id ? C.bg : C.soft, border:`1px solid ${kind === k.id ? C.text : C.cardB}`, borderRadius:99, padding:"7px 12px", fontSize:12.5, fontWeight:600, cursor:"pointer", fontFamily:APP_FONT }}>{k.label}</button>
+          ))}
+        </div>
+        <textarea aria-label="Your feedback" autoFocus rows={4} value={message} onChange={e => setMessage(e.target.value)}
+          placeholder={kind === "problem" ? "What happened, and what did you expect?" : kind === "idea" ? "What would make KROFT better for you?" : "What do you like?"}
+          style={{ width:"100%", boxSizing:"border-box", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, color:C.text, padding:"11px 14px", fontSize:14, fontFamily:APP_FONT, outline:"none", resize:"vertical" }} />
+        <Mono style={{ color:C.muted, lineHeight:1.6 }}>Sent from {screen || "KROFT"}, with your app version, so we can find it. Nothing else from your account is shared.</Mono>
+        <Btn full disabled={sending || message.trim().length < 2} onClick={send}>{sending ? "Sending…" : "Send"}</Btn>
+      </div>
+    </div>
+  );
+}
+
 // The plan picker: shown whenever someone taps Upgrade, so they see what Free, Plus and Pro each
 // include and cost before paying for anything. Plans and prices are in src/plans.js.
 function PlansSheet({ user, current, onClose, toast }) {
@@ -3920,7 +3976,7 @@ function ProfileSwitch({ value, onChange }) {
   );
 }
 
-function ProfileSection({ nav, onNav, connections, user, onUpdateName, onEditBusinessDetails, onSignOut, theme, onToggleTheme, toast, subscribed, subscriptionStatus, autoRenews, billingLoading, onUpgrade, onManageBilling, usageStats, voiceReplies, onSetVoiceReplies, proactiveInsights, onSetProactiveInsights, wellnessAiContext, onSetWellnessAiContext, voicePref, onSetVoicePref, voiceSpeed, onSetVoiceSpeed, onSetupBiometric, onRemoveBiometric, biometricOn, onExportData, onImportData, onDeleteAccount, notifPermission, notifPrefs, onEnableNotifications, onSetNotifPref, onTestNotification, voiceTurnsCount, voiceLimit }) {
+function ProfileSection({ onFeedback, nav, onNav, connections, user, onUpdateName, onEditBusinessDetails, onSignOut, theme, onToggleTheme, toast, subscribed, subscriptionStatus, autoRenews, billingLoading, onUpgrade, onManageBilling, usageStats, voiceReplies, onSetVoiceReplies, proactiveInsights, onSetProactiveInsights, wellnessAiContext, onSetWellnessAiContext, voicePref, onSetVoicePref, voiceSpeed, onSetVoiceSpeed, onSetupBiometric, onRemoveBiometric, biometricOn, onExportData, onImportData, onDeleteAccount, notifPermission, notifPrefs, onEnableNotifications, onSetNotifPref, onTestNotification, voiceTurnsCount, voiceLimit }) {
   // nav.screen is null for the main hub, otherwise a key of SCREENS below. Held in KroftApp (see
   // profileNav there) so it survives the remount a theme change triggers.
   const { screen, openRow } = nav;
@@ -3955,8 +4011,6 @@ function ProfileSection({ nav, onNav, connections, user, onUpdateName, onEditBus
   // behavior there; the rest stay local since nothing in-app depends on them yet.
   const [supportMsg, setSupportMsg] = useState("");
   const [supportSent, setSupportSent] = useState(false);
-  const [feedbackMsg, setFeedbackMsg] = useState("");
-  const [feedbackSent, setFeedbackSent] = useState(false);
 
   // Every setting, keyed so the screens below can group them. Each is the same expandable row it
   // always was; only which screen it lives on changed.
@@ -4247,24 +4301,7 @@ function ProfileSection({ nav, onNav, connections, user, onUpdateName, onEditBus
     ),
     feature: (
       <ProfileRow label="Send Feedback" sub="Tell us what to build next" expanded={openRow==="feature"} onToggle={()=>toggle("feature")}>
-        <textarea
-          placeholder="What would make KROFT better?"
-          rows={3}
-          value={feedbackMsg}
-          onChange={e => { setFeedbackMsg(e.target.value); setFeedbackSent(false); }}
-          style={{ width:"100%", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"10px 12px", color:C.text, fontSize:12, fontFamily:APP_FONT, outline:"none", resize:"vertical", boxSizing:"border-box", marginBottom:8 }}
-        />
-        <Btn
-          sm
-          disabled={!feedbackMsg.trim()}
-          onClick={() => {
-            window.location.href = `mailto:feedback@virttechnologies.com?subject=${encodeURIComponent("KROFT feature idea")}&body=${encodeURIComponent(feedbackMsg)}`;
-            setFeedbackSent(true);
-          }}
-        >
-          Submit idea
-        </Btn>
-        {feedbackSent && <Mono style={{ display:"block", color:C.soft, marginTop:8 }}>Opening your email app to send this to feedback@virttechnologies.com.</Mono>}
+        <Btn sm onClick={onFeedback}>Write feedback</Btn>
       </ProfileRow>
     ),
   };
@@ -4371,7 +4408,7 @@ function ProfileSection({ nav, onNav, connections, user, onUpdateName, onEditBus
       { key:"privacy", icon:"eye", label:"Privacy center" },
       { key:"data", icon:"cloud", label:"History and data", value:isSupabaseConfigured ? "Synced" : "This device" },
       { key:"report", icon:"flag", label:"Report a problem" },
-      { key:"feedback", icon:"nova", label:"Send feedback" },
+      { key:"feedback", icon:"nova", label:"Send feedback", onClick:onFeedback },
     ] },
   ];
 
@@ -4758,6 +4795,8 @@ function KroftApp({ onFullReset } = {}) {
   const [bills, setBills] = useState([]);              // supplier bills: money the business owes
   const [showBills, setShowBills] = useState(false);
   const [showPlans, setShowPlans] = useState(null);     // the plan picker: null closed, else why it opened ("" from Upgrade)
+  const [feedbackFrom, setFeedbackFrom] = useState(null); // the feedback sheet: null closed, else the screen it was opened from
+  const [showGoalPick, setShowGoalPick] = useState(false); // "what do you want KROFT for?", once, right after sign-up
   const [invoicesOpenDoc, setInvoicesOpenDoc] = useState(null); // { id, kind } to open straight to one (from a contact's profile)
   const [expenseCats, setExpenseCats] = useState(["Operations","Tech","Marketing","Travel","Rent","Other"]);
   // Monthly spending limits per category, as { [category]: amount }. Tracking spend without ever
@@ -6296,6 +6335,54 @@ function KroftApp({ onFullReset } = {}) {
       toast(online ? "Couldn't read the receipt right now. Add it by hand, or try again in a moment." : "You're offline. Scan the receipt again once you're back online.");
     }
   };
+
+  // Sends feedback; if KROFT's server can't take it, opens it as an email instead.
+  const sendFeedback = async ({ kind, message }) => {
+    const f = makeFeedback({ kind, message, screen:feedbackFrom, client:getClientHeader() });
+    if (f.error) { toast(f.error); return false; }
+    try {
+      const res = await aiFetch("/api/feedback", { method:"POST", body:JSON.stringify(f) });
+      if (!res.ok) throw new Error(String(res.status));
+      playSound("done");
+      toast("Thanks. Your feedback reached the KROFT team.");
+      return true;
+    } catch {
+      window.location.href = feedbackMailto(f);
+      toast("Opening your email app to send it instead.");
+      return true;
+    }
+  };
+  // Getting started: the chosen goal's steps, and what each one opens.
+  const startData = { invoiceSettings, invoices, income, expenses, budgets, bills, projects, tasks, appts, notes, aiMessages, chatHistory, smartReminders, voiceTurnsCount };
+  const runStartStep = (goalId, stepId) => {
+    const to = (t, section) => { setTab(t); if (t === "home") setHomeSection(section); if (t === "workspace") setWorkspaceSection(section || null); };
+    const actions = {
+      "paid.details": () => { setShowInvoices(true); toast("Tap Details at the top right to add how clients pay you."); },
+      "paid.invoice": () => setShowInvoices(true),
+      "paid.send": () => { setShowInvoices(true); toast("Open your invoice and tap Share or download PDF to send it."); },
+      "money.entry": () => { to("home", "finance"); setShowAddInc(false); setShowAddExp(true); },
+      "money.budget": () => { to("home", "finance"); setShowBudgetEditor(true); },
+      "money.bill": () => setShowBills(true),
+      "projects.project": () => { to("workspace", "projects"); setShowAddProject(true); },
+      "projects.milestone": () => { to("workspace", "projects"); toast("Open a project and tap + New under Milestones."); },
+      "projects.invoiceMilestone": () => { to("workspace", "projects"); toast("Give a milestone an amount, then tap Invoice next to it."); },
+      "organised.task": () => to("workspace", "tasks"),
+      "organised.appt": () => to("workspace", "calendar"),
+      "organised.note": () => to("workspace", "notes"),
+      "assistant.ask": () => setTab("nova"),
+      "assistant.remind": () => { setTab("nova"); setAiInput(v => v || "Remind me to "); },
+      "assistant.voice": () => { setTab("nova"); toast("Tap the microphone to talk to KROFT."); },
+    };
+    actions[`${goalId}.${stepId}`]?.();
+  };
+  const pickGoal = id => {
+    setUser(u => ({ ...u, startGoal:id, startDismissed:false }));
+    setShowGoalPick(false);
+    const g = goalById(id);
+    ({ paid: () => setShowInvoices(true), money: () => { setTab("home"); setHomeSection("finance"); }, projects: () => { setTab("workspace"); setWorkspaceSection("projects"); }, organised: () => { setTab("workspace"); setWorkspaceSection(null); }, assistant: () => setTab("nova") })[id]?.();
+    toast(`Let's ${g.label.toLowerCase()}. Your first steps are on Home.`);
+  };
+  const openFeedback = () => setFeedbackFrom(screenName({ tab, homeSection, workspaceSection, profileScreen:profileNav.screen, overlay: showInvoices ? "invoices" : showBills ? "bills" : showPlans !== null ? "plans" : null }));
 
   // The actual source of truth for Gmail/Calendar connection state — called after a successful
   // OAuth round-trip and once on reaching the dashboard, so user.connected.gmail/.calendar
@@ -9708,7 +9795,7 @@ ${voiceMode
       })()}
 
       {step === "done" && (
-        <AuthScreen footer={<AuthButton onClick={() => { setStep("dashboard"); toast(`Welcome to KROFT, ${firstNameOf(user.name) || "there"}.`); }}>Start using KROFT</AuthButton>}>
+        <AuthScreen footer={<AuthButton onClick={() => { setStep("dashboard"); setShowGoalPick(true); }}>Start using KROFT</AuthButton>}>
           <div style={{ textAlign:"center", paddingTop:"4vh" }}>
             <div style={{ position:"relative", width:112, height:112, margin:"0 auto 26px", animation:"pop .5s ease" }}>
               <div style={{ width:"100%", height:"100%", borderRadius:"50%", overflow:"hidden", background:user.photo ? `url(${user.photo}) center/cover no-repeat` : LIGHT.card, border:`1px solid ${LIGHT.cardB}`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:38, fontWeight:700, color:LIGHT.text, letterSpacing:-1 }}>
@@ -9913,6 +10000,8 @@ ${voiceMode
           </div>
         </div>
       )}
+      {showGoalPick && step === "dashboard" && <GoalPicker name={firstNameOf(user.name)} onPick={pickGoal} onSkip={() => { setShowGoalPick(false); toast(`Welcome to KROFT, ${firstNameOf(user.name) || "there"}.`); }} />}
+      {feedbackFrom !== null && <FeedbackSheet screen={feedbackFrom} onClose={() => setFeedbackFrom(null)} onSend={sendFeedback} />}
       {showPlans !== null && (
         <PlansSheet user={user} current={currentPlan({ subscribed })} onClose={() => setShowPlans(null)} toast={toast} />
       )}
@@ -10198,6 +10287,7 @@ ${voiceMode
           </div>
         </div>
         <div style={{ display:"flex", alignItems:"center", gap:8, flexShrink:0 }}>
+          <button onClick={openFeedback} className="hbtn" aria-label="Send feedback" title="Send feedback" style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:20, width:34, height:32, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", color:C.white, fontSize:14, fontWeight:700, fontFamily:APP_FONT }}>?</button>
           <button onClick={() => setTab("nova")} className="hbtn" style={{ background:tab==="nova"?C.accent:C.surface, border:`1px solid ${tab==="nova"?C.accent:C.border}`, borderRadius:20, padding:"7px 12px", cursor:"pointer", display:"flex", alignItems:"center", gap:6, color:tab==="nova"?"#fff":C.white, fontSize:12, fontWeight:700, whiteSpace:"nowrap", flexShrink:0, boxShadow:tab==="nova"?`0 0 16px ${C.accent}66`:`0 0 0 1px ${C.fill}` }}>
             <NavIcon id="nova" size={13} color={tab==="nova"?"#fff":C.white} />
             Ask Kroft
@@ -10236,6 +10326,33 @@ ${voiceMode
               <h1 style={{ fontSize:21, fontWeight:700, color:C.white, letterSpacing:-.8, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>Hi, {firstNameOf(user.name)||"there"} 👋</h1>
             </div>
             <Mono style={{ display:"block", color:C.muted, marginBottom:16 }}>{dateStr()}</Mono>
+            {user.startGoal && !user.startDismissed && (() => {
+              const pr = startProgress(user.startGoal, startData);
+              if (!pr) return null;
+              return (
+                <Card level="raised" style={{ marginBottom:16, border:`1px solid ${C.accent}55` }}>
+                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:10, marginBottom:8 }}>
+                    <div>
+                      <div style={{ fontSize:15, fontWeight:700, color:C.white }}>{pr.complete ? "You're all set" : `Getting started: ${pr.goal.label}`}</div>
+                      <Mono style={{ color:C.soft }}>{pr.complete ? "That's the basics done. KROFT is ready for you." : `${pr.doneCount} of ${pr.total} done`}</Mono>
+                    </div>
+                    <button onClick={() => setUser(u => ({ ...u, startDismissed:true }))} aria-label="Hide getting started" style={{ background:"none", border:"none", color:C.muted, cursor:"pointer", fontSize:16, padding:"2px 4px" }}>✕</button>
+                  </div>
+                  <div style={{ height:5, borderRadius:3, background:C.surface, overflow:"hidden", marginBottom:8 }}>
+                    <div style={{ height:"100%", width:`${Math.round(pr.doneCount / pr.total * 100)}%`, background:C.accent, transition:"width .3s ease" }} />
+                  </div>
+                  {pr.steps.map(st => (
+                    <button key={st.id} onClick={() => !st.done && runStartStep(pr.goal.id, st.id)} disabled={st.done}
+                      style={{ width:"100%", display:"flex", alignItems:"center", gap:10, background:"none", border:"none", borderTop:`1px solid ${C.div}`, padding:"9px 0", cursor:st.done ? "default" : "pointer", textAlign:"left", fontFamily:APP_FONT }}>
+                      <span aria-hidden="true" style={{ width:18, height:18, borderRadius:"50%", border:`1.5px solid ${st.done ? C.positive : C.soft}`, background:st.done ? C.positive : "transparent", color:C.bg, fontSize:11, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>{st.done ? "✓" : ""}</span>
+                      <span style={{ flex:1, fontSize:13, color:st.done ? C.muted : C.text, textDecoration:st.done ? "line-through" : "none" }}>{st.t}</span>
+                      {!st.done && <span aria-hidden="true" style={{ color:C.muted }}>›</span>}
+                    </button>
+                  ))}
+                  {pr.complete && <Btn sm full style={{ marginTop:6 }} onClick={() => setUser(u => ({ ...u, startDismissed:true }))}>Done</Btn>}
+                </Card>
+              );
+            })()}
             {/* Net profit as one glanceable "how am I doing" pill, the way a smart-home dashboard
                 leads with total energy used rather than burying it in a device grid — the
                 Income/Expenses breakdown below stays as the detail view underneath it. */}
@@ -13004,7 +13121,7 @@ ${voiceMode
         {tab==="profile" && (
           <div style={{ animation:"fadeUp .4s ease" }}>
             <ProfileSection
-              nav={profileNav} onNav={setProfileNav}
+              nav={profileNav} onNav={setProfileNav} onFeedback={openFeedback}
               connections={{
                 google: { status:googleStatus, linking:googleLinking, connect:() => connectGoogle("connected"), disconnect:disconnectGoogle },
                 microsoft: { status:microsoftStatus, linking:microsoftLinking, connect:() => connectMicrosoft("connected"), disconnect:disconnectMicrosoft },

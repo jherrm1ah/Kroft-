@@ -73,7 +73,7 @@ export async function startServer() {
   throw new Error(`preview server didn't start on ${URL}`);
 }
 
-export async function signUp(page) {
+export async function signUp(page, { skipGoal = true } = {}) {
   await page.getByRole("button", { name: "Sign up with email" }).waitFor({ timeout: 20000 });
   await page.getByRole("button", { name: "Sign up with email" }).click();
   await page.getByLabel("Full name").fill("Ada Obi");
@@ -84,6 +84,12 @@ export async function signUp(page) {
     await page.getByRole("button", { name: n, exact: true }).click();
     await page.waitForTimeout(350);
   }
+  // New accounts are asked what they want KROFT for (src/gettingStarted.js); tests that aren't
+  // about that skip it. tests/e2e/onboarding.mjs answers it.
+  if (!skipGoal) return;
+  const skip = page.getByRole("button", { name: "I'll look around myself" });
+  await skip.waitFor({ timeout: 15000 });
+  await skip.click();
   await page.locator('nav button[title="Home"]').waitFor({ timeout: 15000 });
 }
 
