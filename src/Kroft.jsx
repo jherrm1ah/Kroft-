@@ -5088,6 +5088,7 @@ function KroftApp({ onFullReset } = {}) {
   const [newReminder, setNewReminder] = useState({ text:"", when:"", contactId:null });
   const [editingReminder, setEditingReminder] = useState(null);
   const [showAddReminder, setShowAddReminder] = useState(false);
+  const [showDoneReminders, setShowDoneReminders] = useState(false);   // Reminders: the Done list, folded away by default
   // Plus: KROFT calls at a set time instead of just showing a reminder. { id, title, note, date,
   // time, status: "pending"|"answered"|"missed"|"declined" }. Honest limitation, same as every
   // other notification here: this only works while KROFT is open in a tab (foreground or
@@ -12136,16 +12137,32 @@ ${voiceMode
         {/* ── WORKSPACE: REMINDERS ── */}
         {tab==="workspace" && workspaceSection==="reminders" && (
           <div style={{ animation:"fadeUp .4s ease" }}>
-            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:18 }}>
-              <h2 style={{ fontSize:22, fontWeight:700, color:C.white, letterSpacing:-1 }}>Reminders</h2>
-              <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
-                <Btn sm v="outline" onClick={suggestSmartReminder} disabled={suggestingReminder}>{suggestingReminder ? <><Spinner size={11} color={C.soft} thickness={2} />Thinking…</> : "AI Suggest"}</Btn>
-                <Btn sm v="outline" onClick={() => { if (!subscribed) { toast("Scheduled calls are a KROFT Plus feature."); setShowPlans(""); return; } setShowScheduleCall(v=>!v); }}>
-                  {subscribed ? "Schedule a call" : "Schedule a call · Plus"}
-                </Btn>
-                <Btn sm onClick={() => setShowAddReminder(v=>!v)}>+ Add</Btn>
-              </div>
-            </div>
+            {/* The screen's title is in the bar above, so this starts with what matters: how many
+                are left, one clear way to add a reminder, and the two extras side by side. */}
+            {(() => {
+              const left = smartReminders.filter(r => !r.done).length;
+              const done = smartReminders.length - left;
+              return (
+                <div style={{ marginBottom:18 }}>
+                  {smartReminders.length > 0 && (
+                    <div style={{ display:"flex", alignItems:"baseline", gap:8, marginBottom:14 }}>
+                      <div style={{ fontSize:28, fontWeight:700, color:C.white, letterSpacing:-1 }}>{left}</div>
+                      <Mono style={{ color:C.soft }}>{left === 1 ? "reminder to go" : "reminders to go"}{done ? ` · ${done} done` : ""}</Mono>
+                    </div>
+                  )}
+                  <Btn full onClick={() => setShowAddReminder(v=>!v)}><NavIcon id="plus" size={16} />{showAddReminder ? "Close" : "New reminder"}</Btn>
+                  <div style={{ display:"flex", gap:8, marginTop:8 }}>
+                    <Btn sm v="outline" style={{ flex:1, whiteSpace:"nowrap" }} onClick={suggestSmartReminder} disabled={suggestingReminder}>
+                      {suggestingReminder ? <><Spinner size={11} color={C.soft} thickness={2} />Thinking…</> : <><NavIcon id="wand" size={15} />AI suggest</>}
+                    </Btn>
+                    <Btn sm v="outline" style={{ flex:1, position:"relative", whiteSpace:"nowrap" }} aria-label={subscribed ? "Schedule a call" : "Schedule a call (KROFT Plus)"} onClick={() => { if (!subscribed) { toast("Scheduled calls are a KROFT Plus feature."); setShowPlans(""); return; } setShowScheduleCall(v=>!v); }}>
+                      <NavIcon id="phone" size={15} />Schedule a call
+                      {!subscribed && <Tag tone="accent" style={{ position:"absolute", top:-8, right:8, background:C.bg, fontSize:9, padding:"1px 6px" }}>PLUS</Tag>}
+                    </Btn>
+                  </div>
+                </div>
+              );
+            })()}
             {showAddReminder && (
               <Card style={{ marginBottom:13, border:`1px solid ${C.border}` }}>
                 <div style={{ fontSize:13, fontWeight:700, color:C.text, marginBottom:11 }}>New reminder</div>
@@ -12206,17 +12223,18 @@ ${voiceMode
 
             {smartReminders.length===0 && !showAddReminder && (
               <Card level="inset" style={{ textAlign:"center", padding:26, borderStyle:"dashed" }}>
-                <div style={{ fontSize:15, fontWeight:600, color:C.white, marginBottom:6 }}>No reminders yet</div>
-                <Mono style={{ display:"block", color:C.soft, marginBottom:18 }}>Add one yourself, or let KROFT suggest something useful.</Mono>
-                <div style={{ display:"flex", gap:9, justifyContent:"center" }}>
-                  <Btn sm onClick={() => setShowAddReminder(true)}>+ Add</Btn>
-                  <Btn sm v="outline" onClick={suggestSmartReminder} disabled={suggestingReminder}>{suggestingReminder ? <><Spinner size={11} color={C.soft} thickness={2} />Thinking…</> : "AI Suggest"}</Btn>
-                </div>
+                <NavIcon id="reminders" size={26} color={C.muted} />
+                <div style={{ fontSize:15, fontWeight:600, color:C.white, margin:"10px 0 6px" }}>No reminders yet</div>
+                <Mono style={{ display:"block", color:C.soft, lineHeight:1.6 }}>Add one above, or tap AI suggest and KROFT will find something worth remembering.</Mono>
               </Card>
             )}
-            {[...smartReminders].sort((a,b)=>(a.done===b.done)?0:a.done?1:-1).map(r => (
-              editingReminder && editingReminder.id===r.id ? (
-                <Card key={r.id} style={{ marginBottom:9, border:`1px solid ${C.soft}` }}>
+            {(() => {
+              const contactOf = r => r.contactId && contacts.find(c => c.id === r.contactId);
+              const toggle = r => { setSmartReminders(p => p.map(x => x.id === r.id ? { ...x, done:!x.done } : x)); if (!r.done) playSound("done"); };
+              // One row of the list. Tap the words to edit; tap the circle to tick it off; hold for
+              // more (edit, delete).
+              const row = (r, i) => editingReminder && editingReminder.id === r.id ? (
+                <div key={r.id} style={{ padding:"14px 16px", borderTop: i ? `1px solid ${C.div}` : "none" }}>
                   <div style={{ fontSize:13, fontWeight:700, color:C.text, marginBottom:11 }}>Edit reminder</div>
                   <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
                     <Inp placeholder="Remind me to…" value={editingReminder.text} onChange={e=>setEditingReminder(v=>({...v,text:e.target.value}))} style={{ flex:2, minWidth:140 }} />
@@ -12227,26 +12245,61 @@ ${voiceMode
                     <Btn sm v="outline" onClick={() => setEditingReminder(null)} style={{ flex:1 }}>Cancel</Btn>
                     <Btn sm onClick={() => { if (!editingReminder.text.trim()) return; setSmartReminders(p=>p.map(x=>x.id===r.id?editingReminder:x)); setEditingReminder(null); toast("Reminder updated."); }} style={{ flex:1 }}>Save</Btn>
                   </div>
-                </Card>
+                </div>
               ) : (
-              <Card key={r.id} {...longPress(() => setActionSheet(holdActions({ title:r.text, subtitle:r.when, onEdit:() => setEditingReminder({...r}), list:smartReminders, setList:setSmartReminders, id:r.id, deletedLabel:"Reminder removed." })))} style={{ marginBottom:9, opacity:r.done?.55:1, WebkitTouchCallout:"none", WebkitUserSelect:"none", userSelect:"none", }}>
-                <div style={{ display:"flex", alignItems:"center", gap:12 }}>
-                  <button onClick={() => setSmartReminders(p=>p.map(x=>x.id===r.id?{...x,done:!x.done}:x))} style={{ width:20, height:20, borderRadius:6, border:`1.5px solid ${r.done?C.white:C.soft}`, background:r.done?C.white:"transparent", cursor:"pointer", flexShrink:0, display:"flex", alignItems:"center", justifyContent:"center", color:C.black, fontSize:12, fontWeight:900 }}>
+                <div key={r.id} {...longPress(() => setActionSheet(holdActions({ title:r.text, subtitle:r.when, onEdit:() => setEditingReminder({...r}), list:smartReminders, setList:setSmartReminders, id:r.id, deletedLabel:"Reminder removed." })))}
+                  style={{ display:"flex", alignItems:"flex-start", gap:12, padding:"14px 16px", borderTop: i ? `1px solid ${C.div}` : "none", WebkitTouchCallout:"none", WebkitUserSelect:"none", userSelect:"none" }}>
+                  <button aria-label={r.done ? `Mark "${r.text}" not done` : `Mark "${r.text}" done`} onClick={() => toggle(r)}
+                    style={{ width:24, height:24, marginTop:1, borderRadius:"50%", border:`1.5px solid ${r.done ? C.positive : C.muted}`, background:r.done ? C.positive : "transparent", cursor:"pointer", flexShrink:0, display:"flex", alignItems:"center", justifyContent:"center", color:"#fff", fontSize:12, fontWeight:900, padding:0, transition:"all .18s ease" }}>
                     {r.done ? "✓" : ""}
                   </button>
-                  <div style={{ flex:1, minWidth:0 }}>
-                    <div style={{ display:"flex", alignItems:"center", gap:7, marginBottom:3, flexWrap:"wrap" }}>
-                      <div style={{ fontSize:13, fontWeight:600, color:C.white, textDecoration:r.done?"line-through":"none" }}>{r.text}</div>
+                  <div role="button" tabIndex={0} aria-label={`Edit "${r.text}"`} onClick={() => setEditingReminder({...r})} onKeyDown={e => { if (e.key==="Enter"||e.key===" ") { e.preventDefault(); setEditingReminder({...r}); } }} style={{ flex:1, minWidth:0, cursor:"pointer" }}>
+                    <div style={{ fontSize:14, fontWeight:600, lineHeight:1.4, color:r.done ? C.muted : C.white, textDecoration:r.done ? "line-through" : "none", overflowWrap:"anywhere" }}>{r.text}</div>
+                    <div style={{ display:"flex", alignItems:"center", gap:6, marginTop:5, flexWrap:"wrap" }}>
+                      <span style={{ display:"inline-flex", alignItems:"center", gap:4, color:C.soft }}><NavIcon id="reminders" size={13} /><Mono style={{ color:C.soft }}>{r.when || "No time set"}</Mono></span>
                       {r.aiSuggested && <Tag tone="accent">AI</Tag>}
-                      {r.contactId && contacts.find(c=>c.id===r.contactId) && <Tag>{contacts.find(c=>c.id===r.contactId).name}</Tag>}
+                      {contactOf(r) && <Tag>{contactOf(r).name}</Tag>}
                     </div>
-                    <Mono style={{ color:C.soft }}>{r.when}</Mono>
                   </div>
-                  <Btn sm v="outline" onClick={() => setEditingReminder({...r})}>Edit</Btn>
                 </div>
-              </Card>
-              )
-            ))}
+              );
+              const open = smartReminders.filter(r => !r.done);
+              const done = smartReminders.filter(r => r.done);
+              const label = text => <div style={{ fontSize:12, fontWeight:600, color:C.muted, margin:"0 2px 8px" }}>{text}</div>;
+              return (
+                <>
+                  {open.length > 0 && (
+                    <div style={{ marginBottom:18 }}>
+                      {label("To do")}
+                      <Card style={{ padding:0, overflow:"hidden" }}>{open.map(row)}</Card>
+                    </div>
+                  )}
+                  {open.length === 0 && done.length > 0 && (
+                    <Card level="inset" style={{ textAlign:"center", padding:22, marginBottom:18 }}>
+                      <div style={{ fontSize:15, fontWeight:600, color:C.white, marginBottom:4 }}>All done</div>
+                      <Mono style={{ color:C.soft }}>Nothing left to remember. Nice.</Mono>
+                    </Card>
+                  )}
+                  {done.length > 0 && (
+                    <div>
+                      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
+                        <button onClick={() => setShowDoneReminders(v => !v)} aria-expanded={showDoneReminders}
+                          style={{ background:"none", border:"none", padding:"6px 2px", cursor:"pointer", fontSize:12, fontWeight:600, color:C.muted, fontFamily:APP_FONT, display:"inline-flex", alignItems:"center", gap:6 }}>
+                          <span style={{ display:"inline-block", transform:`rotate(${showDoneReminders ? 90 : 0}deg)`, transition:"transform .18s ease" }}>›</span>
+                          Done ({done.length})
+                        </button>
+                        {showDoneReminders && <Btn sm v="ghost" style={{ color:C.soft }} onClick={() => {
+                          const prev = smartReminders;
+                          setSmartReminders(p => p.filter(r => !r.done));
+                          toast(`Cleared ${done.length} done reminder${done.length === 1 ? "" : "s"}.`, () => setSmartReminders(prev));
+                        }}>Clear done</Btn>}
+                      </div>
+                      {showDoneReminders && <Card style={{ padding:0, overflow:"hidden", opacity:.75 }}>{done.map(row)}</Card>}
+                    </div>
+                  )}
+                </>
+              );
+            })()}
           </div>
         )}
 
