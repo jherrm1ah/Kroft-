@@ -1140,8 +1140,11 @@ function MoodOrb({ mood, label, active, onClick }) {
   const [tap, setTap] = useState(0);
   const glow = MOOD_ORB_GLOW[mood];
   return (
+    // Each mood sits in its own small card, so the faces and their names never crowd each other.
     <button onClick={() => { setTap(t => t+1); onClick(); }} aria-label={label} aria-pressed={active}
-      style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:4, background:"none", border:"none", cursor:"pointer", padding:2, WebkitTapHighlightColor:"transparent" }}>
+      style={{ display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:6, width:"100%", height:"100%", boxSizing:"border-box", minWidth:0, padding:"12px 4px 10px", borderRadius:18,
+        background: active ? `rgba(${glow},.12)` : C.card, border:`1px solid ${active ? `rgba(${glow},.75)` : C.cardB}`, boxShadow:CARD_LEVELS.base.shadow(),
+        cursor:"pointer", transition:"background .18s ease, border-color .18s ease", WebkitTapHighlightColor:"transparent" }}>
       <div key={`${mood}-${tap}`} style={{
         // A fixed pixel size, not a percentage of the button — the button itself is a
         // shrink-to-fit flex column with no declared width, so a percentage-width orb here
@@ -1149,15 +1152,15 @@ function MoodOrb({ mood, label, active, onClick }) {
         // (the label). Since "Stressed"/"Angry" are wider text than "Calm"/"Happy", those two
         // buttons ended up wider, and the orb followed suit — same mood, visibly different
         // orb sizes. A fixed diameter makes every orb identical regardless of its label's width.
-        width:44, height:44, borderRadius:"50%",
+        width:40, height:40, borderRadius:"50%", flexShrink:0,
         background:`radial-gradient(circle at 32% 26%, rgba(${glow},1) 0%, rgba(${glow},.82) 55%, rgba(${glow},.6) 100%)`,
         boxShadow: active ? `0 0 0 2.5px rgba(${glow},.85), 0 6px 14px rgba(${glow},.4)` : `0 3px 9px rgba(${glow},.22)`,
         display:"flex", alignItems:"center", justifyContent:"center",
         animation: active ? "bouncePop .4s cubic-bezier(.34,1.56,.64,1)" : "none",
       }}>
-        <MoodFace mood={mood} size={20} style={{ transformOrigin:"center", animation: active ? MOOD_FACE_ANIM[mood] : "none" }} />
+        <MoodFace mood={mood} size={18} style={{ transformOrigin:"center", animation: active ? MOOD_FACE_ANIM[mood] : "none" }} />
       </div>
-      <span style={{ fontSize:11, fontWeight:700, color: active ? `rgb(${glow})` : C.soft, fontFamily:APP_FONT }}>{label}</span>
+      <span style={{ fontSize:11, fontWeight:700, lineHeight:1.2, color:C.text, fontFamily:APP_FONT, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis", maxWidth:"100%" }}>{label}</span>
     </button>
   );
 }
@@ -10502,12 +10505,17 @@ ${voiceMode
       <main style={{ padding: tab==="workspace" ? "16px 22px 150px" : "20px 22px 150px", maxWidth:880, margin:"0 auto" }}>
 
         {tab==="home" && (
-          <div style={{ marginBottom:18, display:"flex", gap:7, flexWrap:"wrap" }}>
-            {[{k:"overview",l:"Overview"},{k:"finance",l:"Finance"},{k:"around",l:"Around Me"}].map(s => (
-              <button key={s.k} onClick={() => setHomeSection(s.k)} style={{ background:homeSection===s.k?"rgba(255,255,255,.1)":"transparent", border:`1px solid ${homeSection===s.k?C.border:C.cardB}`, borderRadius:20, padding:"6px 14px", cursor:"pointer", color:homeSection===s.k?C.white:C.muted, fontSize:11, fontWeight:700, whiteSpace:"nowrap" }}>
-                {s.l}
-              </button>
-            ))}
+          // Home's three sections as one full-width switch: big enough to notice and tap, with the
+          // open one filled in solid so it's obvious where you are.
+          <div role="tablist" aria-label="Home sections" style={{ marginBottom:20, display:"grid", gridTemplateColumns:"repeat(3, 1fr)", gap:4, padding:4, background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:16 }}>
+            {[{k:"overview",l:"Overview"},{k:"finance",l:"Finance"},{k:"around",l:"Around Me"}].map(s => {
+              const on = homeSection===s.k;
+              return (
+                <button key={s.k} role="tab" aria-selected={on} onClick={() => setHomeSection(s.k)} style={{ minWidth:0, minHeight:42, padding:"8px 6px", borderRadius:12, border:"none", cursor:"pointer", background:on ? C.text : "transparent", color:on ? C.bg : C.soft, fontSize:14, fontWeight:700, fontFamily:APP_FONT, letterSpacing:-.1, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis", boxShadow:on ? "0 2px 8px rgba(0,0,0,.12)" : "none", transition:"background .18s ease, color .18s ease" }}>
+                  {s.l}
+                </button>
+              );
+            })}
           </div>
         )}
 
@@ -10544,21 +10552,6 @@ ${voiceMode
                 </Card>
               );
             })()}
-            {/* Day one: one friendly card instead of a $0 profit bar, two $0 cards and a "no data"
-                card all saying the same thing. Once there's an entry, the real figures take over. */}
-            {dataLoaded && income.length===0 && expenses.length===0 ? (
-              <Card level="raised" style={{ marginBottom:16, padding:20 }}>
-                <div style={{ width:36, height:36, borderRadius:"50%", background:C.surface, border:`1px solid ${C.cardB}`, display:"flex", alignItems:"center", justifyContent:"center", marginBottom:12 }}>
-                  <NavIcon id="trendUp" size={16} color={C.positive} />
-                </div>
-                <div style={{ fontSize:17, fontWeight:700, color:C.white, letterSpacing:-.4, marginBottom:4 }}>Start with your money</div>
-                <Mono style={{ display:"block", color:C.soft, lineHeight:1.6, marginBottom:16 }}>Add what came in or went out, and KROFT keeps your profit, budgets and reports up to date.</Mono>
-                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
-                  <Btn full onClick={() => { setHomeSection("finance"); setShowAddExp(false); setShowAddInc(true); }} style={{ minWidth:0, padding:"10px 12px", whiteSpace:"nowrap" }}><NavIcon id="plus" size={16} />Add income</Btn>
-                  <Btn full v="outline" onClick={() => { setHomeSection("finance"); setShowAddInc(false); setShowAddExp(true); }} style={{ minWidth:0, padding:"10px 12px", whiteSpace:"nowrap", color:C.text, borderColor:C.text }}><NavIcon id="plus" size={16} />Add expense</Btn>
-                </div>
-              </Card>
-            ) : (<>
             {/* Net profit as one glanceable "how am I doing" pill, the way a smart-home dashboard
                 leads with total energy used rather than burying it in a device grid — the
                 Income/Expenses breakdown below stays as the detail view underneath it. */}
@@ -10584,7 +10577,6 @@ ${voiceMode
                 </Card>
               ))}
             </div>
-            </>)}
             {/* Budget trouble surfaces on the screen people actually land on. A warning buried
                 one tab deeper in Finance is one most users would never see in time to act. */}
             {(() => {
@@ -10643,7 +10635,13 @@ ${voiceMode
             )}
             {!dataLoaded ? (
               <><SkeletonCard lines={2} /><SkeletonCard lines={3} /></>
-            ) : income.length===0&&expenses.length===0 ? null : (
+            ) : income.length===0&&expenses.length===0 ? (
+              <Card style={{ marginBottom:16, textAlign:"center", padding:24 }}>
+                <div style={{ fontSize:14, fontWeight:600, color:C.white, marginBottom:6 }}>No financial data yet</div>
+                <Mono style={{ display:"block", color:C.muted, marginBottom:16 }}>Go to Finance to add your first entry.</Mono>
+                <Btn sm onClick={() => setHomeSection("finance")}>Go to Finance</Btn>
+              </Card>
+            ) : (
               <Card style={{ marginBottom:16 }}>
                 <Mono style={{ display:"block", color:C.muted, marginBottom:12, letterSpacing:.8 }}>Income vs expenses · last 6 months</Mono>
                 <Suspense fallback={<div style={{ height:190, display:"flex", alignItems:"center", justifyContent:"center" }}><Spinner size={16} color={C.muted} /></div>}>
@@ -10652,16 +10650,17 @@ ${voiceMode
               </Card>
             )}
             <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:13 }}>
-              <Card>
-                <Mono style={{ display:"block", color:C.muted, marginBottom:10, letterSpacing:.8 }}>Mood detection</Mono>
-                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:6, justifyItems:"center" }}>
+              {/* The moods are four small cards of their own, straight on the page, not inside a card. */}
+              <div style={{ display:"flex", flexDirection:"column", minWidth:0 }}>
+                <Mono style={{ display:"block", color:C.text, fontWeight:700, margin:"2px 4px 10px", letterSpacing:.6 }}>Mood detection</Mono>
+                <div style={{ flex:1, display:"grid", gridTemplateColumns:"1fr 1fr", gridAutoRows:"1fr", gap:8 }}>
                   {Object.keys(MOOD_META).map(m => (
                     <MoodOrb key={m} mood={m} label={MOOD_META[m].label} active={mood===m} onClick={() => applyMood(m)} />
                   ))}
                 </div>
-              </Card>
+              </div>
               <Card>
-                <Mono style={{ display:"block", color:C.muted, marginBottom:12, letterSpacing:.8 }}>Next appointment</Mono>
+                <Mono style={{ display:"block", color:C.text, fontWeight:700, marginBottom:12, letterSpacing:.6 }}>Next appointment</Mono>
                 {upcomingAppts.length>0 ? (
                   <>
                     <div style={{ fontWeight:700, fontSize:14, color:C.white, marginBottom:4 }}>{upcomingAppts[0].title}</div>

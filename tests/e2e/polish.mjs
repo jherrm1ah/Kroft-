@@ -1,7 +1,7 @@
 // End-to-end check of the layout polish: Workspace screens don't repeat their title and lead with
-// one full-width main button; Home's first day shows one "Start with your money" card instead of
-// three $0 cards; Finance has two main buttons and a 2×2 tools grid; pop-up messages never cover
-// the header's buttons or the tabs.
+// one full-width main button; Home's Overview / Finance / Around Me tabs are one big switch;
+// Finance has two main buttons and a 2×2 tools grid; pop-up messages never cover the header's
+// buttons or the tabs.
 //
 //   npm run test:e2e
 
@@ -18,20 +18,21 @@ try {
   const errors = []; page.on("pageerror", e => errors.push(e.message));
   await page.goto(URL); await signUp(page);
 
-  // Home, day one.
-  check("Home: one 'Start with your money' card", await page.getByText("Start with your money").isVisible());
-  check("Home: no $0 profit bar or 'no data' card", !(await page.getByText("Net profit this month").isVisible()) && !(await page.getByText("No financial data yet").isVisible()));
+  // Home's tabs: one full-width switch, big enough to notice, the open one marked.
+  const tabsRow = await Promise.all(["Overview", "Finance", "Around Me"].map(n => page.getByRole("tab", { name: n }).boundingBox()));
+  check("Home tabs: three equal tabs across the screen, easy to tap", tabsRow.every(b => b && b.height >= 40) && Math.abs(tabsRow[0].width - tabsRow[2].width) < 2 && tabsRow[2].x + tabsRow[2].width - tabsRow[0].x > 320, JSON.stringify(tabsRow));
+  check("Home tabs: Overview is marked open", (await page.getByRole("tab", { name: "Overview" }).getAttribute("aria-selected")) === "true");
+  check("Home: the money summary is as before", await page.getByText("Net profit this month").isVisible());
 
   // The welcome message mustn't cover the header's buttons or the tabs.
   const toast = await page.getByText("Welcome to KROFT, Ada.").boundingBox();
   const help = await page.getByRole("button", { name: /help|\?/i }).first().boundingBox().catch(() => null);
   const ask = await page.getByRole("button", { name: /Ask Kroft/ }).first().boundingBox().catch(() => null);
-  const tabs = await page.getByText("Overview", { exact: true }).first().boundingBox();
+  const tabs = await page.getByRole("tab", { name: "Overview" }).boundingBox();
   check("pop-up messages don't cover the header or the tabs", toast && !overlaps(toast, help) && !overlaps(toast, ask) && !overlaps(toast, tabs), JSON.stringify({ toast, ask, tabs }));
 
-  await page.getByRole("button", { name: "Add income" }).first().click();
-  check("Home: Add income opens the form in Finance", await page.getByRole("dialog", { name: "New income entry" }).isVisible());
-  await page.getByRole("dialog", { name: "New income entry" }).getByRole("button", { name: "Close" }).click();
+  await page.getByRole("tab", { name: "Finance" }).click();
+  check("Home tabs: tapping Finance opens it", (await page.getByRole("tab", { name: "Finance" }).getAttribute("aria-selected")) === "true" && await page.getByRole("button", { name: "Add income" }).isVisible());
 
   // Finance.
   const main = await page.getByRole("button", { name: "Add income" }).boundingBox();
