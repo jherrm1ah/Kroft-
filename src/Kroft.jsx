@@ -4494,6 +4494,10 @@ const hashPassword = async (password, salt) => {
 // Reopening KROFT after this long without chatting starts a new chat; the old one stays in history.
 const CHAT_IDLE_RESET_MS = 60 * 60 * 1000;
 
+// Areas whose merged data (after two devices saved at once) is put straight back on screen. The
+// rest (chat, wellness, emails, profile) are merged on the server and the next save merges again.
+const MERGE_APPLIES = new Set(["finance", "productivity", "calendarData", "contactsData", "projectsData", "voiceMemosData", "filesData"]);
+
 const STORAGE_KEYS = {
   profile: "kroft:profile",
   finance: "kroft:finance",
@@ -5123,6 +5127,13 @@ function KroftApp({ onFullReset } = {}) {
       } catch { return [group, null]; }
     }));
     const data = Object.fromEntries(entries);
+    applyGroups(data, { freshChat });
+    return data;
+  };
+
+  // Puts loaded data on screen. Used on load, and when a save merged in changes another device
+  // made (storageShim's "kroft-storage-merged"), for the areas listed in MERGE_APPLIES.
+  const applyGroups = (data, { freshChat = false } = {}) => {
     if (data.profile) {
       const p = data.profile;
       if (p.user) setUser(u => ({ ...u, ...p.user }));
@@ -5211,8 +5222,17 @@ function KroftApp({ onFullReset } = {}) {
       }
       setChatHistory(history);
     }
-    return data;
   };
+  useEffect(() => {
+    const groupOf = Object.fromEntries(Object.entries(STORAGE_KEYS).map(([g, k]) => [k, g]));
+    const onMerged = e => {
+      const group = groupOf[e.detail?.key];
+      if (!MERGE_APPLIES.has(group)) return;
+      try { applyGroups({ [group]: JSON.parse(e.detail.value) }); e.detail.applied = true; } catch { /* the next save merges again */ }
+    };
+    window.addEventListener("kroft-storage-merged", onMerged);
+    return () => window.removeEventListener("kroft-storage-merged", onMerged);
+  }, []);
 
   // Nothing is written back to storage until this finishes (see the `dataLoaded` guard on every
   // save effect below); saving before then could overwrite real saved data with the

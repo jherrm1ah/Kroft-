@@ -1,4 +1,5 @@
 import { supabase, isSupabaseConfigured } from "./supabaseClient.js";
+import { createSync, SYNCED_PREFIX } from "./syncSave.js";
 
 // Kroft.jsx targets a sandbox host that injects a `window.storage` API
 // (get/set, each returning a Promise) as its only persistence layer. This shim
@@ -20,6 +21,12 @@ import { supabase, isSupabaseConfigured } from "./supabaseClient.js";
 // never cached here) is marked unreadable and refuses writes until it has been
 // read for real, so an empty starting state can never be saved over the
 // person's real data.
+//
+// Two devices at once: each key remembers the server version this device last synced with
+// (its value and updated_at). A save only goes through if the server's copy is still that
+// version; if another device saved in between, the two versions are merged against it
+// (src/merge.js), the merged value is saved, and Kroft.jsx is told ("kroft-storage-merged") so
+// the screen shows both devices' changes. Nothing either device saved is silently overwritten.
 
 const COPY = "kroft-offline:";            // + userId + ":" + key -> JSON string
 const PENDING = "kroft-offline-pending:"; // + userId -> JSON array of keys
@@ -38,6 +45,10 @@ const isNetworkError = err => {
 };
 
 const unreadable = new Set();
+
+// Saving that merges with other devices' changes (src/syncSave.js).
+const { saveMerging, announceMerge, setSynced, clearSynced } = createSync({ db: supabase, ls });
+
 let flushing = null;
 
 // The signed-in account's id, read from the locally stored session (no network round trip, which
@@ -77,10 +88,10 @@ export function flushPending() {
     for (const key of pendingKeys(uid)) {
       const copy = ls.get(COPY + uid + ":" + key);
       if (copy == null) { setPending(uid, pendingKeys(uid).filter(k => k !== key)); continue; }
-      const { error } = await supabase.from("kv_store")
-        .upsert({ user_id: uid, key, value: JSON.parse(copy) }, { onConflict: "user_id,key" });
+      const { error, merged } = await saveMerging(uid, key, copy);
       if (error) break; // still offline, or the server refused: keep the queue for next time
       setPending(uid, pendingKeys(uid).filter(k => k !== key));
+      if (merged) { ls.set(COPY + uid + ":" + key, merged); announceMerge(uid, key, merged, copy); }
     }
   })().finally(() => { flushing = null; });
   return flushing;
@@ -89,9 +100,10 @@ export function flushPending() {
 // Forgets everything this device kept for offline use (on log out and account deletion).
 export function clearOfflineData() {
   unreadable.clear();
+  clearSynced();
   try {
     Object.keys(window.localStorage)
-      .filter(k => k.startsWith(COPY) || k.startsWith(PENDING) || k === LAST_USER)
+      .filter(k => k.startsWith(COPY) || k.startsWith(PENDING) || k.startsWith(SYNCED_PREFIX) || k === LAST_USER)
       .forEach(k => window.localStorage.removeItem(k));
   } catch { /* storage unavailable: nothing kept */ }
 }
@@ -119,7 +131,7 @@ if (typeof window !== "undefined" && !window.storage) {
         return { value: ls.get(copyKey) ?? undefined };
       }
       const { data, error } = await supabase.from("kv_store")
-        .select("value").eq("user_id", uid).eq("key", key).maybeSingle();
+        .select("value, updated_at").eq("user_id", uid).eq("key", key).maybeSingle();
       if (error) {
         if (!isNetworkError(error)) throw error;
         const copy = ls.get(copyKey);
@@ -130,6 +142,7 @@ if (typeof window !== "undefined" && !window.storage) {
       unreadable.delete(key);
       const value = data ? JSON.stringify(data.value) : undefined;
       if (value === undefined) ls.del(copyKey); else ls.set(copyKey, value);
+      setSynced(uid, key, data ? data.updated_at : null, value === undefined ? "null" : value);
       return { value };
     },
 
@@ -145,8 +158,7 @@ if (typeof window !== "undefined" && !window.storage) {
       }
       const copyKey = COPY + uid + ":" + key;
       ls.set(copyKey, value); // may fail for very large values (e.g. files); then only the server has it
-      const { error } = await supabase.from("kv_store")
-        .upsert({ user_id: uid, key, value: JSON.parse(value) }, { onConflict: "user_id,key" });
+      const { error, merged } = await saveMerging(uid, key, value);
       if (error) {
         if (!isNetworkError(error)) throw error;
         if (ls.get(copyKey) !== value) throw error; // too large to keep offline: report the failure
@@ -154,6 +166,7 @@ if (typeof window !== "undefined" && !window.storage) {
         return { ok: true, queued: true };
       }
       setPending(uid, pendingKeys(uid).filter(k => k !== key));
+      if (merged) { ls.set(copyKey, merged); announceMerge(uid, key, merged, value); return { ok: true, merged: true }; }
       return { ok: true };
     },
   };
