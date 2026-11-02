@@ -17,7 +17,7 @@ async function openProjects(page) {
 }
 
 async function newProject(page, { name, client = "", value = "" }) {
-  await page.getByRole("button", { name: "Create Project" }).first().click();
+  await page.getByRole("button", { name: "New project" }).first().click();
   await page.getByPlaceholder("Project name").first().fill(name);
   if (client) await page.getByLabel("Client").first().fill(client);
   if (value) await page.getByLabel("Project value").first().fill(value);

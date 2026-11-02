@@ -18,7 +18,7 @@ const browser = await chromium.launch();
 async function rideFromAppointment(page) {
   await page.locator('nav button[title="Workspace"]').click();
   await page.getByText("Calendar", { exact: true }).first().click();
-  await page.getByRole("button", { name: "Add Appointment" }).click();
+  await page.getByRole("button", { name: "New appointment" }).click();
   await page.getByPlaceholder("Title *").fill("Client meeting");
   await page.getByPlaceholder("Time e.g. 4:00 PM").fill("4:00 PM");
   await page.getByPlaceholder("Location").fill("12 Admiralty Way, Lekki");

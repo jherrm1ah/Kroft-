@@ -2006,6 +2006,23 @@ function MinimizedVoiceBar({ state, levelRef, onExpand, onStop }) {
   );
 }
 
+// The top of a Workspace screen. Its name is already in the bar above, so this is the main
+// action as one full-width button, with any extra actions side by side under it (the same layout
+// as Reminders).
+const ScreenTop = ({ main, extra = [], above }) => {
+  const more = extra.filter(Boolean);
+  return (
+    <div style={{ marginBottom:18 }}>
+      {above}
+      {main}
+      {more.length > 0 && <div style={{ display:"flex", gap:8, marginTop:8 }}>{more.map((b, i) => <div key={i} style={{ flex:1, minWidth:0, display:"flex" }}>{b}</div>)}</div>}
+    </div>
+  );
+};
+const MainBtn = ({ open, label, onClick, "aria-label":ariaLabel }) => (
+  <Btn full onClick={onClick} aria-label={ariaLabel}>{!open && <NavIcon id="plus" size={16} />}{open ? "Close" : label}</Btn>
+);
+
 // Getting a ride: Uber, Bolt or inDrive (src/rides.js). KROFT has no ride pricing or booking of
 // its own; it hands over to the ride app and the booking happens there.
 // The round badge used for each ride app, here and in Profile › Connected apps.
@@ -9671,11 +9688,14 @@ ${voiceMode
 
   const toastStack = (
     <div role="status" aria-live="polite" aria-atomic="false"
-      style={{ position:"fixed", top:14, right:14, zIndex:1400, display:"flex", flexDirection:"column", gap:7, maxWidth:300, pointerEvents:"none" }}>
-      {/* Toasts sit over the header's buttons, so they let taps through; only one with an Undo
-          button takes taps itself. */}
+      style={{ position:"fixed", ...(step === "dashboard" && tab === "nova" ? { top:"calc(env(safe-area-inset-top, 0px) + 64px)" } : { bottom:`calc(env(safe-area-inset-bottom, 0px) + ${online ? 100 : 146}px)` }), left:"50%", transform:"translateX(-50%)", width:"min(340px, calc(100vw - 32px))", zIndex:1400, display:"flex", flexDirection:"column-reverse", alignItems:"center", gap:7, pointerEvents:"none" }}>
+      {/* Centred just above the bottom bar (and above the offline note when it shows), so they
+          never cover the header's buttons (help, Ask Kroft, Back) or the tabs under it; the newest
+          sits nearest the bar. In the chat, whose message box is at the bottom, they sit under
+          the header instead.
+          They let taps through; only one with an Undo button takes taps itself. */}
       {toasts.map(t => (
-        <div key={t.id} style={{ pointerEvents:t.onUndo ? "auto" : "none", background:C.card, border:`1px solid ${C.accent}44`, borderRadius:14, padding:"9px 14px", animation:"slideIn .3s ease", boxShadow:`0 8px 28px rgba(0,0,0,.7), 0 0 0 1px ${C.accentBg}` }}>
+        <div key={t.id} style={{ pointerEvents:t.onUndo ? "auto" : "none", maxWidth:"100%", boxSizing:"border-box", background:C.card, border:`1px solid ${C.accent}44`, borderRadius:14, padding:"9px 14px", animation:"fadeUp .25s ease", boxShadow:`0 8px 24px rgba(0,0,0,.22), 0 0 0 1px ${C.accentBg}` }}>
           <div style={{ display:"flex", alignItems:"center", gap:7 }}>
             <Dot color={C.accent} />
             <div style={{ fontSize:11, color:C.white, lineHeight:1.4, fontFamily:APP_FONT, flex:1 }}>{t.msg}</div>
@@ -10524,6 +10544,21 @@ ${voiceMode
                 </Card>
               );
             })()}
+            {/* Day one: one friendly card instead of a $0 profit bar, two $0 cards and a "no data"
+                card all saying the same thing. Once there's an entry, the real figures take over. */}
+            {dataLoaded && income.length===0 && expenses.length===0 ? (
+              <Card level="raised" style={{ marginBottom:16, padding:20 }}>
+                <div style={{ width:36, height:36, borderRadius:"50%", background:C.surface, border:`1px solid ${C.cardB}`, display:"flex", alignItems:"center", justifyContent:"center", marginBottom:12 }}>
+                  <NavIcon id="trendUp" size={16} color={C.positive} />
+                </div>
+                <div style={{ fontSize:17, fontWeight:700, color:C.white, letterSpacing:-.4, marginBottom:4 }}>Start with your money</div>
+                <Mono style={{ display:"block", color:C.soft, lineHeight:1.6, marginBottom:16 }}>Add what came in or went out, and KROFT keeps your profit, budgets and reports up to date.</Mono>
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
+                  <Btn full onClick={() => { setHomeSection("finance"); setShowAddExp(false); setShowAddInc(true); }} style={{ minWidth:0, padding:"10px 12px", whiteSpace:"nowrap" }}><NavIcon id="plus" size={16} />Add income</Btn>
+                  <Btn full v="outline" onClick={() => { setHomeSection("finance"); setShowAddInc(false); setShowAddExp(true); }} style={{ minWidth:0, padding:"10px 12px", whiteSpace:"nowrap", color:C.text, borderColor:C.text }}><NavIcon id="plus" size={16} />Add expense</Btn>
+                </div>
+              </Card>
+            ) : (<>
             {/* Net profit as one glanceable "how am I doing" pill, the way a smart-home dashboard
                 leads with total energy used rather than burying it in a device grid — the
                 Income/Expenses breakdown below stays as the detail view underneath it. */}
@@ -10549,6 +10584,7 @@ ${voiceMode
                 </Card>
               ))}
             </div>
+            </>)}
             {/* Budget trouble surfaces on the screen people actually land on. A warning buried
                 one tab deeper in Finance is one most users would never see in time to act. */}
             {(() => {
@@ -10607,13 +10643,7 @@ ${voiceMode
             )}
             {!dataLoaded ? (
               <><SkeletonCard lines={2} /><SkeletonCard lines={3} /></>
-            ) : income.length===0&&expenses.length===0 ? (
-              <Card style={{ marginBottom:16, textAlign:"center", padding:24 }}>
-                <div style={{ fontSize:14, fontWeight:600, color:C.white, marginBottom:6 }}>No financial data yet</div>
-                <Mono style={{ display:"block", color:C.muted, marginBottom:16 }}>Go to Finance to add your first entry.</Mono>
-                <Btn sm onClick={() => setHomeSection("finance")}>Go to Finance</Btn>
-              </Card>
-            ) : (
+            ) : income.length===0&&expenses.length===0 ? null : (
               <Card style={{ marginBottom:16 }}>
                 <Mono style={{ display:"block", color:C.muted, marginBottom:12, letterSpacing:.8 }}>Income vs expenses · last 6 months</Mono>
                 <Suspense fallback={<div style={{ height:190, display:"flex", alignItems:"center", justifyContent:"center" }}><Spinner size={16} color={C.muted} /></div>}>
@@ -10691,14 +10721,28 @@ ${voiceMode
                 <NavIcon id="history" size={19} color={C.white} />
               </button>
             </div>
-            <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:18 }}>
-              <Btn sm onClick={() => { setShowAddInc(v=>!v); setShowAddExp(false); }}>Add Income</Btn>
-              <Btn sm v="outline" onClick={() => { setShowAddExp(v=>!v); setShowAddInc(false); }}>Add Expense</Btn>
-              <Btn sm v="outline" onClick={() => scanInputRef.current?.click()}>Scan receipt</Btn>
-              <Btn sm v="outline" onClick={() => setShowInvoices(true)}>Invoices{(() => { const n = invoices.filter(inv => invoiceStatus(inv, todayISO()) === "overdue").length; return n ? ` · ${n} overdue` : ""; })()}</Btn>
-              <Btn sm v="outline" onClick={() => setShowBills(true)}>Bills{(() => { const n = bills.filter(b => billStatus(b, todayISO()) === "overdue").length; return n ? ` · ${n} overdue` : ""; })()}</Btn>
-              <Btn sm v="outline" onClick={exportFinanceCsv}>Export</Btn>
+            {/* The two everyday actions as big buttons, then the tools in a tidy 2×2 grid. */}
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8, marginBottom:8 }}>
+              <Btn full onClick={() => { setShowAddInc(v=>!v); setShowAddExp(false); }} style={{ minWidth:0, padding:"10px 12px", whiteSpace:"nowrap" }}><NavIcon id="plus" size={16} />Add income</Btn>
+              <Btn full v="outline" onClick={() => { setShowAddExp(v=>!v); setShowAddInc(false); }} style={{ minWidth:0, padding:"10px 12px", whiteSpace:"nowrap", color:C.text, borderColor:C.text }}><NavIcon id="plus" size={16} />Add expense</Btn>
             </div>
+            {(() => {
+              const overdueInv = invoices.filter(inv => invoiceStatus(inv, todayISO()) === "overdue").length;
+              const overdueBills = bills.filter(b => billStatus(b, todayISO()) === "overdue").length;
+              const tool = (icon, label, onClick, warn) => (
+                <Btn sm full v="outline" onClick={onClick} style={{ minWidth:0, justifyContent:"flex-start", padding:"10px 12px", whiteSpace:"nowrap", overflow:"hidden", ...(warn ? { borderColor:C.negative, color:C.negative } : {}) }}>
+                  <NavIcon id={icon} size={15} /><span style={{ overflow:"hidden", textOverflow:"ellipsis" }}>{label}</span>
+                </Btn>
+              );
+              return (
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8, marginBottom:18 }}>
+                  {tool("camera", "Scan receipt", () => scanInputRef.current?.click())}
+                  {tool("receipt", `Invoices${overdueInv ? ` · ${overdueInv} overdue` : ""}`, () => setShowInvoices(true), overdueInv > 0)}
+                  {tool("file", `Bills${overdueBills ? ` · ${overdueBills} overdue` : ""}`, () => setShowBills(true), overdueBills > 0)}
+                  {tool("share", "Export", exportFinanceCsv)}
+                </div>
+              );
+            })()}
             {!dataLoaded && <><SkeletonCard lines={2} /><SkeletonCard lines={4} /></>}
             {dataLoaded && (income.length>0||expenses.length>0) && <Mono style={{ display:"block", color:C.muted, marginBottom:14 }}>Tap an entry to edit it. Press and hold for more options.</Mono>}
 
@@ -11026,8 +11070,7 @@ ${voiceMode
             {income.length===0&&expenses.length===0&&!showAddInc&&!showAddExp && (
               <Card style={{ textAlign:"center", padding:26, marginBottom:14 }}>
                 <div style={{ fontSize:15, fontWeight:600, color:C.white, marginBottom:6 }}>No entries yet</div>
-                <Mono style={{ display:"block", color:C.muted, marginBottom:18 }}>Your finance starts at $0.00.</Mono>
-                <Btn sm onClick={() => setShowAddInc(true)}>Add First Entry</Btn>
+                <Mono style={{ display:"block", color:C.muted, lineHeight:1.6 }}>Add your first income or expense above, or scan a receipt.</Mono>
               </Card>
             )}
             {(income.length>0||expenses.length>0) && (
@@ -11208,13 +11251,9 @@ ${voiceMode
 
         {tab==="workspace" && workspaceSection==="calendar" && (
           <div style={{ animation:"fadeUp .4s ease" }}>
-            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:18 }}>
-              <h2 style={{ fontSize:22, fontWeight:700, color:C.white, letterSpacing:-1 }}>Calendar</h2>
-              <div style={{ display:"flex", alignItems:"center", gap:9, flexWrap:"wrap", justifyContent:"flex-end" }}>
-                {(googleStatus.calendar || microsoftStatus.calendar) && <Btn sm v="outline" disabled={syncingCalendar} onClick={syncCalendar}>{syncingCalendar ? <Spinner size={14} color={C.soft} thickness={2} /> : "Refresh"}</Btn>}
-                <Btn sm onClick={() => setShowAddAppt(v=>!v)}>Add Appointment</Btn>
-              </div>
-            </div>
+            <ScreenTop
+              main={<MainBtn open={showAddAppt} label="New appointment" onClick={() => setShowAddAppt(v=>!v)} />}
+              extra={[(googleStatus.calendar || microsoftStatus.calendar) && <Btn sm full v="outline" disabled={syncingCalendar} onClick={syncCalendar}>{syncingCalendar ? <Spinner size={14} color={C.soft} thickness={2} /> : <><NavIcon id="retry" size={14} />Refresh</>}</Btn>]} />
             <div style={{ display:"flex", gap:7, marginBottom:16 }}>
               {[{k:"list",l:"List"},{k:"grid",l:"Month"}].map(v => (
                 <button key={v.k} onClick={() => setCalendarView(v.k)} style={{ background:calendarView===v.k?"rgba(255,255,255,.1)":"transparent", border:`1px solid ${calendarView===v.k?C.border:C.cardB}`, borderRadius:20, padding:"6px 14px", cursor:"pointer", color:calendarView===v.k?C.white:C.muted, fontSize:11, fontWeight:700 }}>
@@ -11295,8 +11334,7 @@ ${voiceMode
             {appts.length===0&&!showAddAppt && (
               <Card level="inset" style={{ textAlign:"center", padding:26, borderStyle:"dashed" }}>
                 <div style={{ fontSize:15, fontWeight:600, color:C.white, marginBottom:6 }}>No appointments yet</div>
-                <Mono style={{ display:"block", color:C.muted, marginBottom:18 }}>Add your meetings, calls, and events.</Mono>
-                <Btn sm onClick={() => setShowAddAppt(true)}>Add First Appointment</Btn>
+                <Mono style={{ display:"block", color:C.muted, lineHeight:1.6 }}>Add your meetings, calls, and events.</Mono>
               </Card>
             )}
             {appts.length>0 && calendarView==="grid" && calendarSelectedDate && (apptsByDate[calendarSelectedDate]||[]).length===0 && (
@@ -11356,27 +11394,22 @@ ${voiceMode
 
         {tab==="workspace" && workspaceSection==="email" && (
           <div style={{ animation:"fadeUp .4s ease" }}>
-            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:18 }}>
-              <h2 style={{ fontSize:22, fontWeight:700, color:C.white, letterSpacing:-1 }}>Email</h2>
-              <div style={{ display:"flex", alignItems:"center", gap:9, flexWrap:"wrap", justifyContent:"flex-end" }}>
-                {(() => {
-                  const mailConnected = googleStatus.gmail || microsoftStatus.mail;
-                  const label = googleStatus.gmail && microsoftStatus.mail ? "Gmail + Outlook connected" : googleStatus.gmail ? "Gmail connected" : microsoftStatus.mail ? "Outlook connected" : "No email connected";
-                  return <Tag tone={mailConnected?"positive":undefined}>{label}</Tag>;
-                })()}
-                {(googleStatus.gmail || microsoftStatus.mail) && <Btn sm v="outline" disabled={syncingMail} onClick={syncMail}>{syncingMail ? <Spinner size={14} color={C.soft} thickness={2} /> : "Refresh"}</Btn>}
-                {contacts.some(c => c.email) && <Btn sm v="outline" onClick={() => setContactPicker({ mode:"email" })}>From Contacts</Btn>}
-                <Btn sm onClick={() => setComposeDraft({to:"",subject:"",body:""})}>Compose</Btn>
-              </div>
-            </div>
+            <ScreenTop
+              above={(() => {
+                const mailConnected = googleStatus.gmail || microsoftStatus.mail;
+                const label = googleStatus.gmail && microsoftStatus.mail ? "Gmail + Outlook connected" : googleStatus.gmail ? "Gmail connected" : microsoftStatus.mail ? "Outlook connected" : "No email connected";
+                return mailConnected ? <div style={{ marginBottom:12 }}><Tag tone="positive">{label}</Tag></div> : null;
+              })()}
+              main={<Btn full onClick={() => setComposeDraft({to:"",subject:"",body:""})}><NavIcon id="edit" size={16} />Compose</Btn>}
+              extra={[
+                (googleStatus.gmail || microsoftStatus.mail) && <Btn sm full v="outline" disabled={syncingMail} onClick={syncMail}>{syncingMail ? <Spinner size={14} color={C.soft} thickness={2} /> : <><NavIcon id="retry" size={14} />Refresh</>}</Btn>,
+                contacts.some(c => c.email) && <Btn sm full v="outline" onClick={() => setContactPicker({ mode:"email" })}><NavIcon id="contacts" size={14} />From contacts</Btn>,
+              ]} />
             {emails.length===0 && (
               <Card level="inset" style={{ textAlign:"center", padding:26, borderStyle:"dashed" }}>
                 <div style={{ fontSize:15, fontWeight:600, color:C.white, marginBottom:6 }}>{(googleStatus.gmail || microsoftStatus.mail) ? "Inbox is empty" : "No email connected"}</div>
-                <Mono style={{ display:"block", color:C.soft, marginBottom:18 }}>{(googleStatus.gmail || microsoftStatus.mail) ? "Nothing here right now — compose a new email to get started." : "Connect Gmail or Outlook to let KROFT organize your inbox."}</Mono>
-                <div style={{ display:"flex", gap:9, justifyContent:"center" }}>
-                  <Btn sm onClick={() => setComposeDraft({to:"",subject:"",body:""})}>Compose Email</Btn>
-                  {!(googleStatus.gmail || microsoftStatus.mail) && <Btn sm v="outline" onClick={() => { setTab("profile"); setProfileNav({ screen:"connected", openRow:null }); }}>Connect Email</Btn>}
-                </div>
+                <Mono style={{ display:"block", color:C.soft, lineHeight:1.6, marginBottom:(googleStatus.gmail || microsoftStatus.mail) ? 0 : 16 }}>{(googleStatus.gmail || microsoftStatus.mail) ? "Nothing here right now." : "Connect Gmail or Outlook to let KROFT organize your inbox."}</Mono>
+                {!(googleStatus.gmail || microsoftStatus.mail) && <Btn sm v="outline" onClick={() => { setTab("profile"); setProfileNav({ screen:"connected", openRow:null }); }}>Connect email</Btn>}
               </Card>
             )}
             {[...emails].sort((a,b)=>(a.read===b.read)?(b.id-a.id):a.read?1:-1).map(e => (
@@ -11406,10 +11439,7 @@ ${voiceMode
         {/* ── WORKSPACE: NOTES ── */}
         {tab==="workspace" && workspaceSection==="notes" && (
           <div style={{ animation:"fadeUp .4s ease" }}>
-            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:18 }}>
-              <h2 style={{ fontSize:22, fontWeight:700, color:C.white, letterSpacing:-1 }}>Notes</h2>
-              <Btn sm onClick={() => setShowAddNote(v=>!v)}>+ New Note</Btn>
-            </div>
+            <ScreenTop main={<MainBtn open={showAddNote} label="New note" onClick={() => setShowAddNote(v=>!v)} />} />
             {showAddNote && (
               <Card style={{ marginBottom:13, border:`1px solid ${C.border}` }}>
                 <div style={{ fontSize:13, fontWeight:700, color:C.text, marginBottom:11 }}>New note</div>
@@ -11452,8 +11482,7 @@ ${voiceMode
             {dataLoaded && notes.length===0 && !showAddNote && (
               <Card level="inset" style={{ textAlign:"center", padding:26, borderStyle:"dashed" }}>
                 <div style={{ fontSize:15, fontWeight:600, color:C.white, marginBottom:6 }}>No notes yet</div>
-                <Mono style={{ display:"block", color:C.soft, marginBottom:18 }}>Capture ideas instantly with text or voice.</Mono>
-                <Btn sm onClick={() => setShowAddNote(true)}>+ New Note</Btn>
+                <Mono style={{ display:"block", color:C.soft, lineHeight:1.6 }}>Capture ideas instantly with text or voice.</Mono>
               </Card>
             )}
             {/* Pinned notes float to the top (stable sort keeps everything else in its existing
@@ -11547,10 +11576,7 @@ ${voiceMode
         {/* ── WORKSPACE: TASKS ── */}
         {tab==="workspace" && workspaceSection==="tasks" && (
           <div style={{ animation:"fadeUp .4s ease" }}>
-            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:18 }}>
-              <h2 style={{ fontSize:22, fontWeight:700, color:C.white, letterSpacing:-1 }}>Tasks</h2>
-              <Btn sm onClick={() => setShowAddTask(v=>!v)}>+ Add Task</Btn>
-            </div>
+            <ScreenTop main={<MainBtn open={showAddTask} label="New task" onClick={() => setShowAddTask(v=>!v)} />} />
             {showAddTask && (
               <Card style={{ marginBottom:13, border:`1px solid ${C.border}` }}>
                 <div style={{ fontSize:13, fontWeight:700, color:C.text, marginBottom:11 }}>New task</div>
@@ -11571,8 +11597,7 @@ ${voiceMode
             {dataLoaded && tasks.length===0 && !showAddTask && (
               <Card level="inset" style={{ textAlign:"center", padding:26, borderStyle:"dashed" }}>
                 <div style={{ fontSize:15, fontWeight:600, color:C.white, marginBottom:6 }}>Nothing to do</div>
-                <Mono style={{ display:"block", color:C.soft, marginBottom:18 }}>Create your first task and let KROFT remind you.</Mono>
-                <Btn sm onClick={() => setShowAddTask(true)}>+ Add Task</Btn>
+                <Mono style={{ display:"block", color:C.soft, lineHeight:1.6 }}>Create your first task and let KROFT remind you.</Mono>
               </Card>
             )}
             {/* Done tasks sink to the bottom regardless of anything else. Among undone tasks: an
@@ -11674,17 +11699,16 @@ ${voiceMode
         {/* ── WORKSPACE: FILES ── */}
         {tab==="workspace" && workspaceSection==="files" && (
           <div style={{ animation:"fadeUp .4s ease" }}>
-            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:18 }}>
-              <h2 style={{ fontSize:22, fontWeight:700, color:C.white, letterSpacing:-1 }}>Files</h2>
-              <label style={{ background:C.white, color:C.black, borderRadius:12, padding:"10px 22px", cursor:"pointer", fontSize:13, fontWeight:700, fontFamily:APP_FONT }}>
-                + Upload
+            <ScreenTop main={
+              <label style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:6, width:"100%", minHeight:44, boxSizing:"border-box", background:C.white, color:C.black, border:`1px solid ${C.white}`, borderRadius:12, padding:"10px 22px", cursor:"pointer", fontSize:13, fontWeight:700, letterSpacing:.3, fontFamily:APP_FONT }}>
+                <NavIcon id="plus" size={16} />Upload files
                 <input type="file" multiple style={{ display:"none" }} onChange={handleFilesUpload} />
               </label>
-            </div>
+            } />
             {files.length===0 && (
               <Card level="inset" style={{ textAlign:"center", padding:26, borderStyle:"dashed" }}>
                 <div style={{ fontSize:15, fontWeight:600, color:C.white, marginBottom:6 }}>No files yet</div>
-                <Mono style={{ display:"block", color:C.soft, marginBottom:18 }}>Documents, PDFs, images and AI-generated files will appear here.</Mono>
+                <Mono style={{ display:"block", color:C.soft, lineHeight:1.6 }}>Documents, PDFs, images and AI-generated files will appear here.</Mono>
               </Card>
             )}
             {files.map(f => (
@@ -11719,10 +11743,7 @@ ${voiceMode
         {/* ── WORKSPACE: DOCUMENTS ── */}
         {tab==="workspace" && workspaceSection==="documents" && (
           <div style={{ animation:"fadeUp .4s ease" }}>
-            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:18 }}>
-              <h2 style={{ fontSize:22, fontWeight:700, color:C.white, letterSpacing:-1 }}>Documents</h2>
-              <Btn sm onClick={() => setShowAddDocument(v=>!v)}>+ New Document</Btn>
-            </div>
+            <ScreenTop main={<MainBtn open={showAddDocument} label="New document" onClick={() => setShowAddDocument(v=>!v)} />} />
             {showAddDocument && (
               <Card style={{ marginBottom:13, border:`1px solid ${C.border}` }}>
                 <div style={{ fontSize:13, fontWeight:700, color:C.text, marginBottom:11 }}>New document</div>
@@ -11737,8 +11758,7 @@ ${voiceMode
             {documents.length===0 && !showAddDocument && (
               <Card level="inset" style={{ textAlign:"center", padding:26, borderStyle:"dashed" }}>
                 <div style={{ fontSize:15, fontWeight:600, color:C.white, marginBottom:6 }}>No documents yet</div>
-                <Mono style={{ display:"block", color:C.soft, marginBottom:18 }}>For longer write-ups — briefs, plans, drafts — that outgrow a quick note.</Mono>
-                <Btn sm onClick={() => setShowAddDocument(true)}>+ New Document</Btn>
+                <Mono style={{ display:"block", color:C.soft, lineHeight:1.6 }}>For longer write-ups — briefs, plans, drafts — that outgrow a quick note.</Mono>
               </Card>
             )}
             {documents.map(d => (
@@ -11780,10 +11800,7 @@ ${voiceMode
         {/* ── WORKSPACE: PROJECTS ── */}
         {tab==="workspace" && workspaceSection==="projects" && (
           <div style={{ animation:"fadeUp .4s ease" }}>
-            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:18 }}>
-              <h2 style={{ fontSize:22, fontWeight:700, color:C.white, letterSpacing:-1 }}>Projects</h2>
-              <Btn sm onClick={() => setShowAddProject(v=>!v)}>Create Project</Btn>
-            </div>
+            <ScreenTop main={<MainBtn open={showAddProject} label="New project" onClick={() => setShowAddProject(v=>!v)} />} />
             {/* One shared file input and one shared AddEntryModal for every project's "+ New" on
                 Files/Income/Expenses, rather than mounting one per project card. */}
             <input ref={projectFileInputRef} type="file" multiple style={{ display:"none" }} onChange={e => handleFilesUpload(e, projectFileUploadTarget.current)} />
@@ -11837,8 +11854,7 @@ ${voiceMode
             {projects.length===0 && !showAddProject && (
               <Card level="inset" style={{ textAlign:"center", padding:26, borderStyle:"dashed" }}>
                 <div style={{ fontSize:15, fontWeight:600, color:C.white, marginBottom:6 }}>No active projects</div>
-                <Mono style={{ display:"block", color:C.soft, marginBottom:18 }}>Group tasks, notes and files together.</Mono>
-                <Btn sm onClick={() => setShowAddProject(true)}>Create Project</Btn>
+                <Mono style={{ display:"block", color:C.soft, lineHeight:1.6 }}>Group tasks, notes and files together.</Mono>
               </Card>
             )}
             {/* Completed projects sink to the bottom, same as done tasks. Among the rest, one
@@ -12098,10 +12114,7 @@ ${voiceMode
         {/* ── WORKSPACE: VOICE MEMOS ── */}
         {tab==="workspace" && workspaceSection==="memos" && (
           <div style={{ animation:"fadeUp .4s ease" }}>
-            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:18 }}>
-              <h2 style={{ fontSize:22, fontWeight:700, color:C.white, letterSpacing:-1 }}>Voice Memos</h2>
-              <Btn sm onClick={toggleVoiceMemo}>{recordingMemo ? "Stop Recording" : "+ Record"}</Btn>
-            </div>
+            <ScreenTop main={<Btn full onClick={toggleVoiceMemo}><NavIcon id="mic" size={16} />{recordingMemo ? "Stop recording" : "Record a memo"}</Btn>} />
             {recordingMemo && (
               <Card style={{ marginBottom:14, border:`1px solid ${C.negative}55`, textAlign:"center", padding:24 }}>
                 <WaveBar active color={C.negative} />
@@ -12111,8 +12124,7 @@ ${voiceMode
             {voiceMemos.length===0 && !recordingMemo && (
               <Card level="inset" style={{ textAlign:"center", padding:26, borderStyle:"dashed" }}>
                 <div style={{ fontSize:15, fontWeight:600, color:C.white, marginBottom:6 }}>No voice memos yet</div>
-                <Mono style={{ display:"block", color:C.soft, marginBottom:18 }}>Record a memo and KROFT will transcribe it automatically.</Mono>
-                <Btn sm onClick={toggleVoiceMemo}>+ Record</Btn>
+                <Mono style={{ display:"block", color:C.soft, lineHeight:1.6 }}>Record a memo and KROFT will transcribe it automatically.</Mono>
               </Card>
             )}
             {voiceMemos.map((m,i) => (
@@ -12405,11 +12417,9 @@ ${voiceMode
 
           return (
             <div style={{ animation:"fadeUp .4s ease", paddingBottom:40 }}>
-              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:18 }}>
-                <h2 style={{ fontSize:22, fontWeight:700, color:C.white, letterSpacing:-1 }}>Contacts</h2>
-                <Btn sm onClick={() => setShowAddContact(v=>!v)}>+ Add</Btn>
-              </div>
-              <Mono style={{ color:C.muted, display:"block", marginBottom:14 }}>Your own list, kept separate from your phone's contacts.</Mono>
+              <ScreenTop
+                above={<Mono style={{ color:C.muted, display:"block", marginBottom:12 }}>Your own list, kept separate from your phone's contacts.</Mono>}
+                main={<MainBtn open={showAddContact} label="New contact" onClick={() => setShowAddContact(v=>!v)} />} />
 
               {contacts.length > 3 && <Inp placeholder="Search contacts…" value={contactSearch} onChange={e=>setContactSearch(e.target.value)} style={{ marginBottom:14, width:"100%", boxSizing:"border-box" }} />}
 
@@ -12443,8 +12453,7 @@ ${voiceMode
               {dataLoaded && contacts.length===0 && !showAddContact && (
                 <Card level="inset" style={{ textAlign:"center", padding:26, borderStyle:"dashed" }}>
                   <div style={{ fontSize:15, fontWeight:600, color:C.white, marginBottom:6 }}>No contacts yet</div>
-                  <Mono style={{ display:"block", color:C.soft, marginBottom:18 }}>Save the people you deal with — clients, suppliers, family — and call them straight from here.</Mono>
-                  <Btn sm onClick={() => setShowAddContact(true)}>+ Add First Contact</Btn>
+                  <Mono style={{ display:"block", color:C.soft, lineHeight:1.6 }}>Save the people you deal with — clients, suppliers, family — and call them straight from here.</Mono>
                 </Card>
               )}
 
