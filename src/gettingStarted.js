@@ -7,7 +7,7 @@ export const GOALS = [
   {
     id: "paid", label: "Get paid", sub: "Invoices, quotes and clients",
     steps: [
-      { id: "details", t: "Add how clients pay you", done: d => !!(d.invoiceSettings?.bankName || d.invoiceSettings?.accountNumber || d.invoiceSettings?.otherPayment?.trim()) },
+      { id: "details", t: "Add how clients pay you", done: d => !!(d.invoiceSettings?.bankName || d.invoiceSettings?.accountNumber || d.invoiceSettings?.otherPayment?.trim() || d.invoiceSettings?.payLink?.trim()) },
       { id: "invoice", t: "Create your first invoice", done: d => (d.invoices || []).length > 0 },
       { id: "send", t: "Send it to your client", done: d => (d.invoices || []).some(i => i.status && i.status !== "draft") },
     ],

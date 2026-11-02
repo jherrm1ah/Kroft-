@@ -98,12 +98,13 @@ export function statementFor({ invoices, key, currency, from = null, to }) {
   return { currency, from, to, opening, lines, invoiced, paid, closing: round2(opening + invoiced - paid), unpaid, overdue, client: docs[0]?.client || {} };
 }
 
-export function statementMessage(st, fmt, name = "", from = "") {
+export function statementMessage(st, fmt, name = "", from = "", payUrl = "") {
   const who = name ? `Hi ${name.split(/\s+/)[0]},` : "Hello,";
   const owed = st.closing > 0
     ? `The balance on your account is ${fmt(st.closing, st.currency)}${st.overdue > 0 ? `, of which ${fmt(st.overdue, st.currency)} is overdue` : ""}.`
     : "Your account is fully paid. Thank you!";
-  return [who, "Here's your statement of account.", owed, from ? `\n${from}` : ""].filter(Boolean).join("\n");
+  const pay = st.closing > 0 && payUrl ? `Pay online: ${payUrl}` : "";
+  return [who, "Here's your statement of account.", owed, pay, from ? `\n${from}` : ""].filter(Boolean).join("\n");
 }
 
 // Start of the period for the statement's period choices.

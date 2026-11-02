@@ -6,7 +6,7 @@ import { Markdown } from "./markdown/Markdown.jsx";
 import { toPlainText, toSpeechText } from "./markdown/parse.js";
 import { copyRich, copyPlain } from "./markdown/clipboard.js";
 import { offlineUserId, flushPending, clearOfflineData, hasUnsyncedChanges, unreadableKeys } from "./storageShim.js";
-import { DEFAULT_INVOICE_SETTINGS, taxName, userLocale, invoiceTotals, invoiceStatus, invoiceAllowance, quoteAllowance, createInvoice, createQuote, invoiceFromQuote, invoiceProblem, FREE_INVOICES_PER_MONTH, FREE_QUOTES_PER_MONTH, whatsappLink, sendMessage, reminderMessage, quoteMessage, prettyDate, STATUS_LABEL, invoicesForAI, quotesForAI, daysBetween, docStatus, clientSummaries, clientKey, recordPayment, removePayment, amountPaid, balanceDue, paymentsOf, hasPayments, syncInvoicesWithIncome, quoteStatus, fromName } from "./invoices/model.js";
+import { DEFAULT_INVOICE_SETTINGS, payLink, taxName, userLocale, invoiceTotals, invoiceStatus, invoiceAllowance, quoteAllowance, createInvoice, createQuote, invoiceFromQuote, invoiceProblem, FREE_INVOICES_PER_MONTH, FREE_QUOTES_PER_MONTH, whatsappLink, sendMessage, reminderMessage, quoteMessage, prettyDate, STATUS_LABEL, invoicesForAI, quotesForAI, daysBetween, docStatus, clientSummaries, clientKey, recordPayment, removePayment, amountPaid, balanceDue, paymentsOf, hasPayments, syncInvoicesWithIncome, quoteStatus, fromName } from "./invoices/model.js";
 import { invoicePdf, invoiceFileName, receiptPdf, statementPdf } from "./invoices/pdf.js";
 import { brandingFor, shrinkLogo, isLogo, LOGO_PROBLEM } from "./invoices/branding.js";
 import { reportError } from "./errorLog.js";
@@ -2899,7 +2899,7 @@ function InvoicesScreen({ invoices, setInvoices, quotes, setQuotes, settings, se
   const invAllowance = invoiceAllowance({ subscribed, invoices, today });
   const qAllowance = quoteAllowance({ subscribed, quotes, today });
   const clients = clientSummaries({ invoices, quotes, contacts, today });
-  const needsDetails = !settings.bankName && !settings.accountNumber && !settings.otherPayment?.trim();
+  const needsDetails = !settings.bankName && !settings.accountNumber && !settings.otherPayment?.trim() && !payLink(settings);
   // KROFT Pro: the business's logo on every document and no "Created with KROFT" line.
   const branding = brandingFor(plan, settings);
   const logoInput = useRef(null);
@@ -3031,7 +3031,7 @@ function InvoicesScreen({ invoices, setInvoices, quotes, setQuotes, settings, se
     setBusy("statement");
     try {
       const { bytes, statement } = await statementPdf(stmtArgs, settings, user, fmt, { font: APP_FONT, branding });
-      const result = await saveFile({ name: statementFileName(stmtArgs.name, today), data:bytes, type:"application/pdf", text: statementMessage(statement, fmt, stmtArgs.name, fromName(settings, user)), title:`Statement for ${stmtArgs.name}` });
+      const result = await saveFile({ name: statementFileName(stmtArgs.name, today), data:bytes, type:"application/pdf", text: statementMessage(statement, fmt, stmtArgs.name, fromName(settings, user), payLink(settings)), title:`Statement for ${stmtArgs.name}` });
       if (result !== "cancelled") playSound("sent");
       if (result === "downloaded") toast("Statement downloaded. Attach it to your email or WhatsApp.");
     } catch (err) {
@@ -3186,6 +3186,12 @@ function InvoicesScreen({ invoices, setInvoices, quotes, setQuotes, settings, se
             <InvoiceField label="Phone" style={{ flex:1 }}><Inp type="tel" inputMode="tel" placeholder={user.phone || ""} value={d.phone} onChange={e => set({ phone:e.target.value })} /></InvoiceField>
           </div>
           <div style={{ fontSize:12, fontWeight:600, color:C.muted, marginTop:8 }}>How clients pay you</div>
+          <InvoiceField label="Online payment link (optional)">
+            <Inp type="url" inputMode="url" autoCapitalize="none" aria-label="Online payment link" placeholder="e.g. paystack.com/pay/your-business" value={d.payLink || ""} onChange={e => set({ payLink:e.target.value.trim() })} />
+          </InvoiceField>
+          {d.payLink && !payLink(d)
+            ? <Mono style={{ display:"block", color:C.negative, lineHeight:1.6, marginTop:-4 }}>That doesn't look like a web address. Copy the full link from Paystack, Flutterwave or your bank.</Mono>
+            : <Mono style={{ display:"block", color:C.muted, lineHeight:1.6, marginTop:-4 }}>Your own link from Paystack, Flutterwave, Selar, PayPal or Stripe. Your invoices get a Pay now button that opens it, and the money goes straight to you. Record the payment in KROFT when it arrives.</Mono>}
           <InvoiceField label="Bank"><Inp placeholder="e.g. GTBank, Barclays, Chase" value={d.bankName} onChange={e => set({ bankName:e.target.value })} /></InvoiceField>
           <InvoiceField label="Account name"><Inp value={d.accountName} onChange={e => set({ accountName:e.target.value })} /></InvoiceField>
           <InvoiceField label="Account number or IBAN"><Inp autoCapitalize="characters" value={d.accountNumber} onChange={e => set({ accountNumber:e.target.value.replace(/[^A-Za-z\d -]/g, "").toUpperCase() })} /></InvoiceField>

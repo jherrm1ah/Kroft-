@@ -5,7 +5,7 @@
 // letters (ẹ, ọ, ṣ, ń …) and any other character print exactly as on screen; the standard PDF
 // fonts can't show ₦ at all, and embedding a font would mean shipping a large library.
 
-import { invoiceTotals, lineTotal, prettyDate, paymentLines, fromName, taxName, taxIdLine, docStatus, STATUS_LABEL, amountPaid, balanceDue } from "./model.js";
+import { invoiceTotals, lineTotal, prettyDate, paymentLines, fromName, taxName, taxIdLine, docStatus, STATUS_LABEL, amountPaid, balanceDue, payLink } from "./model.js";
 import { receiptFor, statementFor } from "./documents.js";
 import { logoSize, loadLogo } from "./branding.js";
 
@@ -30,7 +30,10 @@ export function pdfString(s) {
   return `<${hex}>`;
 }
 
-// pages: [{ jpeg: Uint8Array, width, height }] (pixel size of each JPEG). Returns the PDF bytes.
+// pages: [{ jpeg: Uint8Array, width, height, links? }] (pixel size of each JPEG). links are the
+// tappable areas on the page, [{ x, y, w, h, url }] in points from the top-left (the "Pay now"
+// button): written as PDF link annotations, so tapping them in any PDF reader opens the address.
+// Returns the PDF bytes.
 export function buildPdf(pages, { title = "Invoice", author = "" } = {}) {
   const chunks = [];
   let length = 0;
@@ -41,13 +44,16 @@ export function buildPdf(pages, { title = "Invoice", author = "" } = {}) {
   push(enc("%PDF-1.4\n"));
   push(new Uint8Array([0x25, 0xe2, 0xe3, 0xcf, 0xd3, 0x0a])); // marks the file as binary, per the PDF spec
   const pageObjs = pages.map((_, i) => 4 + i * 3);
+  let nextObj = 4 + pages.length * 3;
+  const annots = pages.map(p => (p.links || []).map(l => ({ ...l, n: nextObj++ })));
   obj(1, () => push(enc("<< /Type /Catalog /Pages 2 0 R >>")));
   obj(2, () => push(enc(`<< /Type /Pages /Kids [${pageObjs.map(n => `${n} 0 R`).join(" ")}] /Count ${pages.length} >>`)));
   obj(3, () => push(enc(`<< /Title ${pdfString(title)} /Author ${pdfString(author)} /Producer (KROFT) /Creator (KROFT) >>`)));
   pages.forEach((p, i) => {
     const pageN = 4 + i * 3, contentN = pageN + 1, imageN = pageN + 2;
     const draw = `q ${PAGE_W} 0 0 ${PAGE_H} 0 0 cm /Im0 Do Q`;
-    obj(pageN, () => push(enc(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${PAGE_W} ${PAGE_H}] /Resources << /XObject << /Im0 ${imageN} 0 R >> >> /Contents ${contentN} 0 R >>`)));
+    const annotRefs = annots[i].length ? ` /Annots [${annots[i].map(a => `${a.n} 0 R`).join(" ")}]` : "";
+    obj(pageN, () => push(enc(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${PAGE_W} ${PAGE_H}] /Resources << /XObject << /Im0 ${imageN} 0 R >> >> /Contents ${contentN} 0 R${annotRefs} >>`)));
     obj(contentN, () => { push(enc(`<< /Length ${draw.length} >>\nstream\n${draw}\nendstream`)); });
     obj(imageN, () => {
       push(enc(`<< /Type /XObject /Subtype /Image /Width ${p.width} /Height ${p.height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${p.jpeg.length} >>\nstream\n`));
@@ -55,7 +61,12 @@ export function buildPdf(pages, { title = "Invoice", author = "" } = {}) {
       push(enc("\nendstream"));
     });
   });
-  const count = 4 + pages.length * 3;
+  const r2 = n => Math.round(n * 100) / 100;
+  for (const a of annots.flat()) {
+    const rect = [a.x, PAGE_H - a.y - a.h, a.x + a.w, PAGE_H - a.y].map(r2).join(" ");
+    obj(a.n, () => push(enc(`<< /Type /Annot /Subtype /Link /Rect [${rect}] /Border [0 0 0] /A << /Type /Action /S /URI /URI ${pdfString(a.url)} >> >>`)));
+  }
+  const count = nextObj;
   const xrefAt = length;
   let xref = `xref\n0 ${count}\n0000000000 65535 f \n`;
   for (let n = 1; n < count; n++) xref += `${String(offsets[n]).padStart(10, "0")} 00000 n \n`;
@@ -100,8 +111,27 @@ function newPage(font) {
     ctx.fillText(String(str ?? ""), x, y);
   };
   const setFont = (size, weight = 400) => { ctx.font = `${weight} ${size}px ${font}`; };
-  return { canvas, ctx, text, setFont };
+  return { canvas, ctx, text, setFont, links: [] };
 }
+
+// "Pay now": a button that opens the business's own payment link, with the address beside it for
+// anyone reading a printed copy. Records the button as a tappable area. Returns the y below it.
+const PAY_BTN = { w: 112, h: 30 };
+function payNow(page, y, url) {
+  const { ctx, text, setFont } = page;
+  const x = M, top = y + 8;
+  ctx.fillStyle = ACCENT;
+  ctx.beginPath();
+  if (ctx.roundRect) ctx.roundRect(x, top, PAY_BTN.w, PAY_BTN.h, 8); else ctx.rect(x, top, PAY_BTN.w, PAY_BTN.h);
+  ctx.fill();
+  text("Pay now", x + PAY_BTN.w / 2, top + 20, { size: 12, weight: 700, color: "#ffffff", align: "center" });
+  setFont(9);
+  const shown = wrap(ctx, url.replace(/^https?:\/\//, "").replace(/\/$/, ""), PAGE_W - 2 * M - PAY_BTN.w - 14)[0];
+  text(shown, x + PAY_BTN.w + 12, top + 19, { size: 9, color: SOFT });
+  page.links.push({ x, y: top, w: PAY_BTN.w, h: PAY_BTN.h, url });
+  return top + PAY_BTN.h + 4;
+}
+const withLinks = page => Object.assign(page.canvas, { kroftLinks: page.links });
 
 // KROFT Pro: the business's logo in the top-left corner, above its name. Returns the baseline
 // for the name: lower when there's a logo, so the two never overlap.
@@ -194,6 +224,7 @@ export function drawInvoicePages(inv, settings, user, fmt, { font = "Inter, sans
 
   // Totals, payment details and notes; moved to a new page if they don't fit.
   const pay = isQuote ? [] : paymentLines(settings);
+  const link = isQuote || ["paid", "cancelled"].includes(status) ? "" : payLink(settings);
   setFont(9.5);
   const noteLines = inv.notes ? wrap(ctx, inv.notes, PAGE_W - 2 * M) : [];
   // Part-paid invoices show the full total, what's been paid, and the balance as the amount due.
@@ -201,7 +232,7 @@ export function drawInvoicePages(inv, settings, user, fmt, { font = "Inter, sans
   const partly = paidSoFar > 0 && status !== "paid";
   const totalsRows = [["Subtotal", t.subtotal], ...(t.discount ? [["Discount", -t.discount]] : []), ...(t.vat ? [[`${taxName(inv)} (${t.vatRate}%)`, t.vat]] : []),
     ...(partly ? [["Total", t.total], ["Paid so far", -paidSoFar]] : [])];
-  const needed = 20 + totalsRows.length * 18 + 44 + (pay.length ? 30 + pay.length * 15 : 0) + (noteLines.length ? 30 + noteLines.length * 13 : 0);
+  const needed = 20 + totalsRows.length * 18 + 44 + (pay.length || link ? 30 + pay.length * 15 : 0) + (link ? 42 : 0) + (noteLines.length ? 30 + noteLines.length * 13 : 0);
   if (y + needed > BOTTOM) {
     page = newPage(font); pages.push(page); ({ ctx, text, setFont } = page);
     text(`${inv.number} (continued)`, M, 60, { size: 10, weight: 600, color: SOFT });
@@ -219,9 +250,10 @@ export function drawInvoicePages(inv, settings, user, fmt, { font = "Inter, sans
   text(money(partly ? balanceDue(inv) : t.total), COL.amount, y + 15, { size: 13, weight: 700, color: "#ffffff", align: "right" });
   y += 44;
 
-  if (pay.length) {
+  if (pay.length || link) {
     y += 12;
     text("PAYMENT DETAILS", M, y, { size: 8.5, weight: 600, color: MUTED });
+    if (link) y = payNow(page, y, link) + 4;
     for (const l of pay) { y += 15; text(l, M, y, { size: 10 }); }
     y += 6;
   }
@@ -232,7 +264,7 @@ export function drawInvoicePages(inv, settings, user, fmt, { font = "Inter, sans
   }
 
   footer(pages, brand);
-  return pages.map(p => p.canvas);
+  return pages.map(withLinks);
 }
 
 const dataUrlBytes = url => {
@@ -257,7 +289,7 @@ export async function invoicePdf(inv, settings, user, fmt, { font = "Inter, sans
     await document.fonts?.ready;
   } catch { /* draw with whatever is loaded */ }
   const canvases = drawInvoicePages(inv, settings, user, fmt, { font, today, brand: await toBrand(branding) });
-  const pages = canvases.map(c => ({ jpeg: dataUrlBytes(c.toDataURL("image/jpeg", 0.9)), width: c.width, height: c.height }));
+  const pages = canvases.map(c => ({ jpeg: dataUrlBytes(c.toDataURL("image/jpeg", 0.9)), width: c.width, height: c.height, links: c.kroftLinks || [] }));
   const bytes = buildPdf(pages, { title: `${inv.kind === "quote" ? "Quote" : "Invoice"} ${inv.number}`, author: fromName(settings, user) });
   return { bytes, preview: canvases[0].toDataURL("image/jpeg", 0.85), pageCount: canvases.length };
 }
@@ -338,14 +370,16 @@ export function drawReceiptPage(inv, paymentId, settings, user, fmt, { font = "I
   text(money(r.balanceAfter), right, y + 15, { size: 13, weight: 700, color: "#ffffff", align: "right" });
   y += 70;
   const pay = r.paidInFull ? [] : paymentLines(settings);
-  if (pay.length) {
+  const link = r.paidInFull ? "" : payLink(settings);
+  if (pay.length || link) {
     text("PAYMENT DETAILS", M, y, { size: 8.5, weight: 600, color: MUTED });
+    if (link) y = payNow(page, y, link) + 4;
     for (const l of pay) { y += 15; text(l, M, y, { size: 10 }); }
     y += 34;
   }
   text("Thank you for your payment.", M, y, { size: 10, color: SOFT });
   footer([page], brand);
-  return [page.canvas];
+  return [withLinks(page)];
 }
 
 export function drawStatementPages(st, settings, user, fmt, { font = "Inter, sans-serif", name = "", brand = { logo: null, footer: true } } = {}) {
@@ -423,18 +457,20 @@ export function drawStatementPages(st, settings, user, fmt, { font = "Inter, san
 
   // How to pay.
   const pay = st.closing > 0 ? paymentLines(settings) : [];
-  if (pay.length) {
-    if (y + 40 + pay.length * 15 > BOTTOM) { newSheet(); y = 70; }
+  const link = st.closing > 0 ? payLink(settings) : "";
+  if (pay.length || link) {
+    if (y + 40 + pay.length * 15 + (link ? 42 : 0) > BOTTOM) { newSheet(); y = 70; }
     y += 34;
     text("PAYMENT DETAILS", M, y, { size: 8.5, weight: 600, color: MUTED });
+    if (link) y = payNow(page, y, link) + 4;
     for (const l of pay) { y += 15; text(l, M, y, { size: 10 }); }
   }
   footer(pages, brand);
-  return pages.map(p => p.canvas);
+  return pages.map(withLinks);
 }
 
 async function toPdf(canvases, title, author) {
-  const pages = canvases.map(c => ({ jpeg: dataUrlBytes(c.toDataURL("image/jpeg", 0.9)), width: c.width, height: c.height }));
+  const pages = canvases.map(c => ({ jpeg: dataUrlBytes(c.toDataURL("image/jpeg", 0.9)), width: c.width, height: c.height, links: c.kroftLinks || [] }));
   return { bytes: buildPdf(pages, { title, author }), preview: canvases[0].toDataURL("image/jpeg", 0.85), pageCount: canvases.length };
 }
 
