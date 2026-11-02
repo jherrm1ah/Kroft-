@@ -58,7 +58,7 @@ async function website(browser) {
   // Sharing it sends it, which counts it as invoiced.
   await Promise.all([page.waitForEvent("download", { timeout: 8000 }).catch(() => null), page.getByRole("button", { name: /Share (or download )?PDF/ }).click()]);
   await page.waitForTimeout(1200);
-  await page.getByRole("dialog", { name: "Invoices" }).getByRole("button", { name: "Back" }).click();
+  await page.getByRole("dialog", { name: "Invoices" }).getByRole("button", { name: "Back", exact: true }).click();
 
   body = await page.locator("body").innerText();
   check("the milestone shows its invoice", await page.getByRole("button", { name: "Open invoice INV-0001" }).isVisible() && body.includes("INV-0001 · SENT"), body.slice(body.indexOf("MILESTONES"), body.indexOf("MILESTONES") + 260));

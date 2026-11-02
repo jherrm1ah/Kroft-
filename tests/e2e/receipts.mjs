@@ -38,7 +38,7 @@ async function invoiceWithPayments(page) {
       await amountBox.fill("10000");
       await page.getByRole("button", { name: "Save payment" }).click();
     }
-    await page.getByRole("button", { name: "Back" }).click();
+    await page.getByRole("button", { name: "Back", exact: true }).click();
   }
 }
 
@@ -60,7 +60,7 @@ async function website(browser) {
   check("receipt is a valid one-page PDF titled with its number", pdf.startsWith("%PDF-1.4") && /\/Count 1\b/.test(pdf) && pdf.includes("(Receipt INV-0001-R2)"));
 
   // Statement: from the client.
-  await page.getByRole("button", { name: "Back" }).click();
+  await page.getByRole("button", { name: "Back", exact: true }).click();
   await page.getByRole("tab", { name: "Clients" }).click();
   await page.getByText("Tunde Bakare").first().click();
   // Free plan: statements are a Plus feature.

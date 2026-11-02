@@ -53,7 +53,7 @@ try {
   check("a bill with a due date offers 'bill to pay' first", (await sheet.getByRole("button").allInnerTexts()).filter(x => /bill|expense/.test(x))[0] === "Save as a bill to pay");
   await sheet.getByRole("button", { name: "Save as a bill to pay" }).click();
   check("saved as a bill, and Bills opens", await page.getByRole("dialog", { name: "Bills" }).getByText("Ikeja Electric").first().isVisible() && await page.getByText("Due in 5 days").first().isVisible());
-  await page.getByRole("dialog", { name: "Bills" }).getByRole("button", { name: "Back" }).click();
+  await page.getByRole("dialog", { name: "Bills" }).getByRole("button", { name: "Back", exact: true }).click();
 
   // Not a receipt, and the AI down.
   next = reply({ receipt: false });

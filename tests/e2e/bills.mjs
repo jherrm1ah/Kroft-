@@ -50,7 +50,7 @@ async function website(browser) {
   await page.getByRole("button", { name: "New bill" }).click();
   await page.getByRole("button", { name: "Save bill" }).click();
   check("a bill needs a supplier", await page.getByText("Add who the bill is from.").isVisible());
-  await page.getByRole("button", { name: "Back" }).click();
+  await page.getByRole("button", { name: "Back", exact: true }).click();
 
   await addBill(page, { supplier: "Dangote Cement", amount: "250,000", due: inDays(3), ref: "DC-1182" });
   let body = await page.locator("body").innerText();
@@ -74,7 +74,7 @@ async function website(browser) {
 
   // Deleting the expense elsewhere reopens the bill.
   await page.evaluate(() => {});
-  await page.getByRole("button", { name: "Back" }).click();
+  await page.getByRole("button", { name: "Back", exact: true }).click();
   await page.getByRole("tab", { name: "Paid" }).click();
   check("paid bills are under Paid", await page.getByText("Dangote Cement").first().isVisible());
   await page.getByRole("tab", { name: /^To pay/ }).click();
@@ -82,10 +82,10 @@ async function website(browser) {
 
   // An overdue one.
   await addBill(page, { supplier: "PHCN", amount: "30000", due: inDays(-2) });
-  await page.getByRole("button", { name: "Back" }).click();
+  await page.getByRole("button", { name: "Back", exact: true }).click();
   body = await page.locator("body").innerText();
   check("overdue bill: counted and shown first", body.includes("2 days overdue") && body.includes("OVERDUE") && /30,000\.00 overdue/.test(body), body.slice(0, 300));
-  await page.getByRole("button", { name: "Back" }).click();
+  await page.getByRole("button", { name: "Back", exact: true }).click();
   check("Finance's Bills button says how many are overdue", await page.getByRole("button", { name: "Bills · 1 overdue" }).isVisible());
 
   // Telling KROFT.

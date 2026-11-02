@@ -33,7 +33,7 @@ try {
   text = await pay.innerText();
   check("the payment step: plan, yearly price, and that Google payment is coming", text.includes("KROFT Plus") && /\$49\.99/.test(text) && text.includes("Billed yearly") && text.includes("Nothing has been charged"), text.slice(0, 300));
   check("…and there's no way to pay yet", await pay.getByRole("button", { name: "Google Pay · coming soon" }).isDisabled());
-  await pay.getByRole("button", { name: "Back" }).click();
+  await pay.getByRole("button", { name: "Back", exact: true }).click();
   check("Back returns to the plans", await sheet.isVisible());
   await sheet.getByRole("button", { name: "Close" }).click();
   check("closes", !(await sheet.isVisible()));
@@ -55,7 +55,7 @@ try {
     await p2.getByLabel("Item 1 description").fill("Work");
     await p2.getByLabel("Item 1 price").fill("1000");
     await p2.getByRole("button", { name: "Save invoice" }).click();
-    await p2.getByRole("button", { name: "Back" }).click();
+    await p2.getByRole("button", { name: "Back", exact: true }).click();
   }
   const s2 = p2.getByRole("dialog", { name: "Choose your plan" });
   check("using up the free invoices opens the plans", await s2.isVisible());

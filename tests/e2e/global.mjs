@@ -42,7 +42,7 @@ try {
   check("payment details count as added (no 'Add your bank details' prompt)", !(await page.getByText("Add details").isVisible()));
 
   // A new invoice uses that tax name, and money is written the German way.
-  await page.getByRole("button", { name: "Back" }).click();
+  await page.getByRole("button", { name: "Back", exact: true }).click();
   await newInvoice("Jonas", "1000");
   check("the editor names the tax MwSt, with the rate from settings", await page.locator("label", { hasText: "MwSt %" }).first().isVisible() && await page.locator("label", { hasText: "MwSt %" }).locator("input").first().inputValue() === "19");
   const editor = await page.locator("body").innerText();
