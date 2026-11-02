@@ -2,7 +2,9 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import "./storageShim.js";
 import Kroft from "./Kroft.jsx";
-import { isNativeApp, installNativeShims } from "./native.js";
+import { isNativeApp, installNativeShims, getClientHeader } from "./native.js";
+import { installErrorLog } from "./errorLog.js";
+import { supabase, isSupabaseConfigured } from "./supabaseClient.js";
 import { createRecorderRecognition } from "./voiceRecorder.js";
 import { watchForNewVersion } from "./webUpdate.js";
 import { unlockSounds } from "./sounds/player.js";
@@ -10,6 +12,13 @@ import { unlockSounds } from "./sounds/player.js";
 // Browsers only allow sound after a tap on the page. Unlocking on the first one means sounds that
 // happen on their own later (a reminder alarm, a notification while KROFT is open) can play.
 window.addEventListener("pointerdown", unlockSounds, { once: true, capture: true });
+
+// Crashes, unexpected errors and failed saves go to KROFT's error log (src/errorLog.js), cleaned
+// of anything personal, so problems are seen before anyone has to report them. Live site only.
+if (import.meta.env.PROD) installErrorLog({
+  getClient: getClientHeader,
+  getToken: async () => (isSupabaseConfigured ? (await supabase.auth.getSession()).data?.session?.access_token || null : null),
+});
 
 const mount = () => createRoot(document.getElementById("root")).render(
   <StrictMode>

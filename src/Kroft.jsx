@@ -8,6 +8,7 @@ import { copyRich, copyPlain } from "./markdown/clipboard.js";
 import { offlineUserId, flushPending, clearOfflineData, hasUnsyncedChanges, unreadableKeys } from "./storageShim.js";
 import { DEFAULT_INVOICE_SETTINGS, taxName, userLocale, invoiceTotals, invoiceStatus, invoiceAllowance, quoteAllowance, createInvoice, createQuote, invoiceFromQuote, invoiceProblem, FREE_INVOICES_PER_MONTH, FREE_QUOTES_PER_MONTH, whatsappLink, sendMessage, reminderMessage, quoteMessage, prettyDate, STATUS_LABEL, invoicesForAI, quotesForAI, daysBetween, docStatus, clientSummaries, clientKey, recordPayment, removePayment, amountPaid, balanceDue, paymentsOf, hasPayments, syncInvoicesWithIncome, quoteStatus, fromName } from "./invoices/model.js";
 import { invoicePdf, invoiceFileName, receiptPdf, statementPdf } from "./invoices/pdf.js";
+import { reportError } from "./errorLog.js";
 import { PLANS, PAYMENTS_READY, planPrice, monthsFree, currentPlan, featureText } from "./plans.js";
 import { projectMoney, milestoneState, milestoneWhen, milestoneInvoice, milestoneInvoiceProblem, milestoneInvoiceItems, milestoneReminders, projectLineForAI } from "./projects/money.js";
 import { receiptPrompt, parseReceiptReply, shrinkPhoto, SCAN_PROBLEM } from "./receipts/scan.js";
@@ -4429,7 +4430,7 @@ function ProfileSection({ nav, onNav, connections, user, onUpdateName, onEditBus
 class ErrorBoundary extends Component {
   constructor(props) { super(props); this.state = { error: null }; }
   static getDerivedStateFromError(error) { return { error }; }
-  componentDidCatch(error, info) { console.error("KROFT crashed:", error, info); }
+  componentDidCatch(error, info) { console.error("KROFT crashed:", error, info); reportError("crash", error, { stack: `${error?.stack || ""}\n${info?.componentStack || ""}` }); }
   render() {
     if (this.state.error) {
       return (

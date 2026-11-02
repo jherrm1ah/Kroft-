@@ -1,5 +1,6 @@
 import { supabase, isSupabaseConfigured } from "./supabaseClient.js";
 import { createSync, SYNCED_PREFIX } from "./syncSave.js";
+import { reportError } from "./errorLog.js";
 
 // Kroft.jsx targets a sandbox host that injects a `window.storage` API
 // (get/set, each returning a Promise) as its only persistence layer. This shim
@@ -160,7 +161,7 @@ if (typeof window !== "undefined" && !window.storage) {
       ls.set(copyKey, value); // may fail for very large values (e.g. files); then only the server has it
       const { error, merged } = await saveMerging(uid, key, value);
       if (error) {
-        if (!isNetworkError(error)) throw error;
+        if (!isNetworkError(error)) { reportError("save", error, { source: `save ${key}` }); throw error; }
         if (ls.get(copyKey) !== value) throw error; // too large to keep offline: report the failure
         setPending(uid, [...new Set([...pendingKeys(uid), key])]);
         return { ok: true, queued: true };
