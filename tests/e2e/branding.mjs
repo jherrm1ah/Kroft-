@@ -78,7 +78,8 @@ try {
 
   // Not a picture: refused kindly.
   await page.getByLabel("Choose your logo").setInputFiles({ name: "notes.txt", mimeType: "text/plain", buffer: Buffer.from("hello") });
-  check("Pro: a file that isn't a picture is refused", await page.getByText("That file isn't a picture KROFT can use. Try a PNG or JPG.").isVisible());
+  // The message appears once the file has been checked, a moment after it's chosen.
+  check("Pro: a file that isn't a picture is refused", await page.getByText("That file isn't a picture KROFT can use. Try a PNG or JPG.").waitFor({ timeout: 5000 }).then(() => true, () => false));
 
   // A red 300×100 logo.
   const png = await page.evaluate(() => { const c = document.createElement("canvas"); c.width = 300; c.height = 100; const x = c.getContext("2d"); x.fillStyle = "#d01010"; x.fillRect(0, 0, 300, 100); return c.toDataURL("image/png").split(",")[1]; });

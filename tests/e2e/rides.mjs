@@ -58,7 +58,7 @@ try {
   check("Bolt (not Android): bolt.eu", popup.url().startsWith("https://bolt.eu"), popup.url());
   await popup.close();
   check("…the destination is copied", (await page.evaluate(() => navigator.clipboard.readText())) === "12 Admiralty Way, Lekki");
-  check("…and they're told to paste it", await page.getByText("Destination copied. Paste it in Bolt to book.").isVisible());
+  check("…and they're told to paste it", await page.getByText("Destination copied. Paste it in Bolt to book.").waitFor({ timeout: 5000 }).then(() => true, () => false));
   check("no page errors", errors.length === 0, errors.join(" | "));
   await ctx.close();
 
