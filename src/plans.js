@@ -21,6 +21,7 @@ export const PLANS = [
     features: [
       "Finances, budgets, bills and receipts",
       "Contacts, notes, tasks and reminders",
+      "Projects with milestones",
       "Chat with KROFT's AI",
       "3 invoices and 3 quotes a month",
       "30 voice turns a day",
@@ -43,7 +44,6 @@ export const PLANS = [
     id: "pro", name: "Pro", tagline: "For a business with projects and many clients.",
     features: [
       "Everything in Plus",
-      { t: "Projects with milestones", soon: true },
       { t: "Your logo on invoices, no KROFT footer", soon: true },
       { t: "Recurring invoices", soon: true },
       { t: "Bank statement import", soon: true },
