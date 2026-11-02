@@ -44,7 +44,8 @@ export const PLANS = [
     id: "pro", name: "Pro", tagline: "For a business with projects and many clients.",
     features: [
       "Everything in Plus",
-      { t: "Your logo on invoices, no KROFT footer", soon: true },
+      "Your logo on invoices, quotes, receipts and statements",
+      "No \"Created with KROFT\" line on your documents",
       { t: "Recurring invoices", soon: true },
       { t: "Bank statement import", soon: true },
       "Priority support",
@@ -67,8 +68,9 @@ export function monthsFree(planId, userCurrency) {
   return p ? Math.round((p.month * 12 - p.year) / p.month) : 0;
 }
 
-// The plan someone is on now. There's one paid subscription today (Plus); Pro comes with Google
-// payments.
-export const currentPlan = ({ subscribed, plan }) => (plan === "pro" ? "pro" : subscribed ? "plus" : "free");
+// The plan someone is on now: Free unless the subscription is active; then Pro when the
+// subscription says so (set by the server once a Pro payment is confirmed), otherwise Plus.
+// Pro features unlock only here, so they're never on without a paid Pro subscription.
+export const currentPlan = ({ subscribed, plan }) => (!subscribed ? "free" : plan === "pro" ? "pro" : "plus");
 
 export const featureText = f => (typeof f === "string" ? f : f.t);

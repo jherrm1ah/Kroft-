@@ -8,6 +8,7 @@ import { copyRich, copyPlain } from "./markdown/clipboard.js";
 import { offlineUserId, flushPending, clearOfflineData, hasUnsyncedChanges, unreadableKeys } from "./storageShim.js";
 import { DEFAULT_INVOICE_SETTINGS, taxName, userLocale, invoiceTotals, invoiceStatus, invoiceAllowance, quoteAllowance, createInvoice, createQuote, invoiceFromQuote, invoiceProblem, FREE_INVOICES_PER_MONTH, FREE_QUOTES_PER_MONTH, whatsappLink, sendMessage, reminderMessage, quoteMessage, prettyDate, STATUS_LABEL, invoicesForAI, quotesForAI, daysBetween, docStatus, clientSummaries, clientKey, recordPayment, removePayment, amountPaid, balanceDue, paymentsOf, hasPayments, syncInvoicesWithIncome, quoteStatus, fromName } from "./invoices/model.js";
 import { invoicePdf, invoiceFileName, receiptPdf, statementPdf } from "./invoices/pdf.js";
+import { brandingFor, shrinkLogo, isLogo, LOGO_PROBLEM } from "./invoices/branding.js";
 import { reportError } from "./errorLog.js";
 import { GOALS, goalById, startProgress } from "./gettingStarted.js";
 import { FEEDBACK_KINDS, screenName, makeFeedback, feedbackMailto } from "./feedback.js";
@@ -2836,7 +2837,7 @@ function InvoiceField({ label, children, style }) {
   );
 }
 
-function InvoicesScreen({ invoices, setInvoices, quotes, setQuotes, settings, setSettings, user, subscribed, contacts, setContacts, onClose, toast, onUpgrade, onRecordPayment, onRemoveIncome, openId, openKind }) {
+function InvoicesScreen({ invoices, setInvoices, quotes, setQuotes, settings, setSettings, user, subscribed, plan = "free", contacts, setContacts, onClose, toast, onUpgrade, onRecordPayment, onRemoveIncome, openId, openKind }) {
   const today = todayISO();
   const fmt = fmtCur;
   const [tab, setTab] = useState("invoices");          // invoices | quotes | clients
@@ -2860,16 +2861,19 @@ function InvoicesScreen({ invoices, setInvoices, quotes, setQuotes, settings, se
   const qAllowance = quoteAllowance({ subscribed, quotes, today });
   const clients = clientSummaries({ invoices, quotes, contacts, today });
   const needsDetails = !settings.bankName && !settings.accountNumber && !settings.otherPayment?.trim();
+  // KROFT Pro: the business's logo on every document and no "Created with KROFT" line.
+  const branding = brandingFor(plan, settings);
+  const logoInput = useRef(null);
 
   useEffect(() => {
     if (view === "statement") return;
     if (view !== "view" || !current) { setPreview(null); return; }
     let cancelled = false;
-    invoicePdf(current, settings, user, fmt, { font: APP_FONT, today })
+    invoicePdf(current, settings, user, fmt, { font: APP_FONT, today, branding })
       .then(r => { if (!cancelled) setPreview(r.preview); })
       .catch(() => { if (!cancelled) setPreview(null); });
     return () => { cancelled = true; };
-  }, [view, current, settings, user]);
+  }, [view, current, settings, user, plan]);
 
   // The client statement, for the chosen currency and period.
   const stmtCurrencies = clientKeySel ? statementCurrencies(invoices, clientKeySel) : [];
@@ -2879,11 +2883,11 @@ function InvoicesScreen({ invoices, setInvoices, quotes, setQuotes, settings, se
     if (view !== "statement" || !clientKeySel) return;
     let cancelled = false;
     setPreview(null);
-    statementPdf(stmtArgs, settings, user, fmt, { font: APP_FONT })
+    statementPdf(stmtArgs, settings, user, fmt, { font: APP_FONT, branding })
       .then(r => { if (!cancelled) setPreview(r.preview); })
       .catch(() => { if (!cancelled) setPreview(null); });
     return () => { cancelled = true; };
-  }, [view, clientKeySel, stmtCurrency, stmt.period, invoices, settings, user]);
+  }, [view, clientKeySel, stmtCurrency, stmt.period, invoices, settings, user, plan]);
 
   const statusOf = doc => docStatus(doc, today);
   const update = (kind, id, patch) => setListFor(kind)(list => list.map(d => d.id === id ? { ...d, ...patch } : d));
@@ -2960,7 +2964,7 @@ function InvoicesScreen({ invoices, setInvoices, quotes, setQuotes, settings, se
     if (problem) { toast(problem.replace("invoice", doc.kind === "quote" ? "quote" : "invoice")); return; }
     setBusy("pdf");
     try {
-      const { bytes } = await invoicePdf(doc, settings, user, fmt, { font: APP_FONT, today });
+      const { bytes } = await invoicePdf(doc, settings, user, fmt, { font: APP_FONT, today, branding });
       const name = invoiceFileName(doc);
       const text = messageFor(doc, false);
       const label = `${doc.kind === "quote" ? "Quote" : "Invoice"} ${doc.number}`;
@@ -2976,7 +2980,7 @@ function InvoicesScreen({ invoices, setInvoices, quotes, setQuotes, settings, se
     setBusy(`receipt-${p.id}`);
     try {
       const r = receiptFor(inv, p.id);
-      const { bytes } = await receiptPdf(inv, p.id, settings, user, fmt, { font: APP_FONT });
+      const { bytes } = await receiptPdf(inv, p.id, settings, user, fmt, { font: APP_FONT, branding });
       const result = await saveFile({ name: receiptFileName(r), data:bytes, type:"application/pdf", text: receiptMessage(r, fmt, fromName(settings, user)), title:`Receipt ${r.number}` });
       if (result !== "cancelled") playSound("sent");
       if (result === "downloaded") toast("Receipt downloaded. Attach it to your email or WhatsApp.");
@@ -2987,7 +2991,7 @@ function InvoicesScreen({ invoices, setInvoices, quotes, setQuotes, settings, se
   const shareStatement = async () => {
     setBusy("statement");
     try {
-      const { bytes, statement } = await statementPdf(stmtArgs, settings, user, fmt, { font: APP_FONT });
+      const { bytes, statement } = await statementPdf(stmtArgs, settings, user, fmt, { font: APP_FONT, branding });
       const result = await saveFile({ name: statementFileName(stmtArgs.name, today), data:bytes, type:"application/pdf", text: statementMessage(statement, fmt, stmtArgs.name, fromName(settings, user)), title:`Statement for ${stmtArgs.name}` });
       if (result !== "cancelled") playSound("sent");
       if (result === "downloaded") toast("Statement downloaded. Attach it to your email or WhatsApp.");
@@ -3110,6 +3114,32 @@ function InvoicesScreen({ invoices, setInvoices, quotes, setQuotes, settings, se
         {header("Invoice details", () => { setSettingsDraft(null); setView(current ? "view" : "list"); })}
         <div style={{ flex:1, minHeight:0, overflowY:"auto", padding:16, display:"flex", flexDirection:"column", gap:12 }}>
           <Mono style={{ color:C.soft, lineHeight:1.6 }}>These appear on every invoice and quote you send.</Mono>
+          <div style={{ display:"flex", alignItems:"center", gap:12, background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:14, padding:12 }}>
+            <div style={{ width:72, height:48, borderRadius:10, background:"#fff", border:`1px solid ${C.cardB}`, display:"flex", alignItems:"center", justifyContent:"center", overflow:"hidden", flexShrink:0 }}>
+              {isLogo(d.logo) ? <img src={d.logo} alt="Your logo" style={{ maxWidth:"100%", maxHeight:"100%", objectFit:"contain" }} /> : <Mono style={{ color:"#8a877f", fontSize:10 }}>LOGO</Mono>}
+            </div>
+            <div style={{ flex:1, minWidth:0 }}>
+              <div style={{ display:"flex", alignItems:"center", gap:6, fontSize:13, fontWeight:600, color:C.white }}>Your logo {plan !== "pro" && <Tag tone="accent">PRO</Tag>}</div>
+              <Mono style={{ display:"block", color:C.muted, marginTop:2, lineHeight:1.5 }}>
+                {plan === "pro" ? (isLogo(d.logo) ? "On every invoice, quote, receipt and statement." : "Add it to every invoice, quote, receipt and statement.")
+                  : isLogo(d.logo) ? "Prints again when you're on KROFT Pro." : "Your logo on documents, without the KROFT line, with KROFT Pro."}
+              </Mono>
+            </div>
+            <div style={{ display:"flex", flexDirection:"column", gap:6, flexShrink:0 }}>
+              <Btn sm v="outline" onClick={() => {
+                if (plan !== "pro") { toast("Your logo on invoices is a KROFT Pro feature."); onUpgrade?.(); return; }
+                logoInput.current?.click();
+              }}>{isLogo(d.logo) ? "Change" : "Add logo"}</Btn>
+              {isLogo(d.logo) && <Btn sm v="ghost" style={{ color:C.negative }} onClick={() => set({ logo:"" })}>Remove</Btn>}
+            </div>
+            <input ref={logoInput} type="file" accept="image/png,image/jpeg,image/webp" aria-label="Choose your logo" style={{ display:"none" }} onChange={async e => {
+              const file = e.target.files?.[0];
+              e.target.value = "";
+              if (!file) return;
+              try { set({ logo: await shrinkLogo(file) }); }
+              catch (err) { toast(LOGO_PROBLEM[err?.message] || LOGO_PROBLEM["not-image"]); }
+            }} />
+          </div>
           <InvoiceField label="Business name"><Inp placeholder={user.businessName || user.name || "Your business"} value={d.businessName} onChange={e => set({ businessName:e.target.value })} /></InvoiceField>
           <InvoiceField label="Address (optional)"><Inp value={d.address} onChange={e => set({ address:e.target.value })} /></InvoiceField>
           <div style={{ display:"flex", gap:10 }}>
@@ -5241,7 +5271,11 @@ function KroftApp({ onFullReset } = {}) {
 
   // Test builds only (npm run test:e2e builds with VITE_E2E=1): a test can play a Plus user.
   // In the real app VITE_E2E is never set, so this is always false.
-  const [subscribed, setSubscribed] = useState(() => import.meta.env.VITE_E2E === "1" && (() => { try { return localStorage.getItem("kroft-e2e-plus") === "1"; } catch { return false; } })());
+  const [subscribed, setSubscribed] = useState(() => import.meta.env.VITE_E2E === "1" && (() => { try { return localStorage.getItem("kroft-e2e-plus") === "1" || localStorage.getItem("kroft-e2e-pro") === "1"; } catch { return false; } })());
+  // Which paid plan: subscriptions.plan ("plus" or "pro"), written only by the server once a
+  // payment is confirmed. A test build can play a Pro user the same way as Plus above.
+  const [paidPlan, setPaidPlan] = useState(() => import.meta.env.VITE_E2E === "1" && (() => { try { return localStorage.getItem("kroft-e2e-pro") === "1"; } catch { return false; } })() ? "pro" : "plus");
+  const plan = currentPlan({ subscribed, plan: paidPlan });
   // Raw subscriptions.status ("inactive" | "active" | "past_due" | "canceled") — kept alongside
   // the derived `subscribed` boolean so the UI can tell "never subscribed" apart from "a renewal
   // charge failed", which needs its own notice rather than just silently losing Plus access.
@@ -6688,9 +6722,12 @@ function KroftApp({ onFullReset } = {}) {
     try {
       const { data: { user } = {} } = await supabase.auth.getUser();
       if (!user) return;
-      const { data, error } = await supabase.from("subscriptions").select("status, auto_renews").eq("user_id", user.id).maybeSingle();
+      // plan says Plus or Pro. Until the database has that column, every subscriber is on Plus.
+      let { data, error } = await supabase.from("subscriptions").select("status, auto_renews, plan").eq("user_id", user.id).maybeSingle();
+      if (error) ({ data, error } = await supabase.from("subscriptions").select("status, auto_renews").eq("user_id", user.id).maybeSingle());
       if (error) return;
       setSubscribed(data?.status === "active");
+      setPaidPlan(data?.plan === "pro" ? "pro" : "plus");
       setSubscriptionStatus(data?.status || "inactive");
       setAutoRenews(!!data?.auto_renews);
     } catch {
@@ -10050,7 +10087,7 @@ ${voiceMode
       })()}
       {showInvoices && (
         <InvoicesScreen invoices={invoices} setInvoices={setInvoices} quotes={quotes} setQuotes={setQuotes} settings={invoiceSettings} setSettings={setInvoiceSettings}
-          user={user} subscribed={subscribed} contacts={contacts} setContacts={setContacts} toast={toast} onClose={() => { setShowInvoices(false); setInvoicesOpenDoc(null); }}
+          user={user} subscribed={subscribed} plan={plan} contacts={contacts} setContacts={setContacts} toast={toast} onClose={() => { setShowInvoices(false); setInvoicesOpenDoc(null); }}
           openId={invoicesOpenDoc?.id} openKind={invoicesOpenDoc?.kind} onUpgrade={() => setShowPlans("business")}
           onRecordPayment={(inv, amount, date, part) => {
             // Getting paid is income: recorded the same way as one added by hand, on the day the
@@ -10115,7 +10152,7 @@ ${voiceMode
       {showAdmin && <AdminScreen fetcher={aiFetch} onClose={() => setShowAdmin(false)} toast={toast} />}
       {feedbackFrom !== null && <FeedbackSheet screen={feedbackFrom} onClose={() => setFeedbackFrom(null)} onSend={sendFeedback} />}
       {showPlans !== null && (
-        <PlansSheet user={user} current={currentPlan({ subscribed })} onClose={() => setShowPlans(null)} toast={toast} />
+        <PlansSheet user={user} current={plan} onClose={() => setShowPlans(null)} toast={toast} />
       )}
       {showEntryHistory && (() => {
         const q = entryHistoryQuery.trim().toLowerCase();

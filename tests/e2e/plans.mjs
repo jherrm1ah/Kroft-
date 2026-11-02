@@ -23,7 +23,8 @@ try {
   check("Upgrade opens the plans first", await sheet.isVisible());
   let text = await sheet.innerText();
   check("three plans with prices", ["Free", "Plus", "Pro", "MOST POPULAR", "CURRENT"].every(t => text.includes(t)) && /\$4\.99/.test(text) && /\$12\.99/.test(text), text.slice(0, 300));
-  check("Pro's planned features are marked soon", (text.match(/SOON/g) || []).length === 3);
+  check("Pro's planned features are marked soon (recurring invoices, bank import)", (text.match(/SOON/g) || []).length === 2);
+  check("…and the logo is listed as ready", text.includes("Your logo on invoices, quotes, receipts and statements"));
   await sheet.getByRole("tab", { name: /^Yearly/ }).click();
   text = await sheet.innerText();
   check("yearly prices", /\$49\.99/.test(text) && /\$129\.99/.test(text) && /2 months free/.test(text), text.slice(0, 200));
