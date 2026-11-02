@@ -8,6 +8,7 @@ import { copyRich, copyPlain } from "./markdown/clipboard.js";
 import { offlineUserId, flushPending, clearOfflineData, hasUnsyncedChanges, unreadableKeys } from "./storageShim.js";
 import { DEFAULT_INVOICE_SETTINGS, taxName, userLocale, invoiceTotals, invoiceStatus, invoiceAllowance, quoteAllowance, createInvoice, createQuote, invoiceFromQuote, invoiceProblem, FREE_INVOICES_PER_MONTH, FREE_QUOTES_PER_MONTH, whatsappLink, sendMessage, reminderMessage, quoteMessage, prettyDate, STATUS_LABEL, invoicesForAI, quotesForAI, daysBetween, docStatus, clientSummaries, clientKey, recordPayment, removePayment, amountPaid, balanceDue, paymentsOf, hasPayments, syncInvoicesWithIncome, quoteStatus, fromName } from "./invoices/model.js";
 import { invoicePdf, invoiceFileName, receiptPdf, statementPdf } from "./invoices/pdf.js";
+import { PLANS, PAYMENTS_READY, planPrice, monthsFree, currentPlan, featureText } from "./plans.js";
 import { createBill, billProblem, billStatus, billBalance, billPaid, billPayments, billWhen, billIsOpen, recordBillPayment, removeBillPayment, syncBillsWithExpenses, billsSummary, supplierSummaries, sortBills, billReminders, billsForAI, billExpenseLabel, BILL_STATUS_LABEL } from "./bills/model.js";
 import { receiptFor, receiptMessage, receiptFileName, statementCurrencies, statementFor, statementMessage, statementFileName, periodStart } from "./invoices/documents.js";
 import { saveFile } from "./saveFile.js";
@@ -3380,7 +3381,10 @@ function InvoicesScreen({ invoices, setInvoices, quotes, setQuotes, settings, se
                 <Btn sm style={{ flex:1 }} onClick={() => startNew("invoice", c)}>New invoice</Btn>
                 <Btn sm v="outline" style={{ flex:1 }} onClick={() => startNew("quote", c)}>New quote</Btn>
               </div>
-              {c.invoiceCount > 0 && <Btn sm v="outline" full onClick={() => { setStmt({ period: "all", currency: null }); setView("statement"); }}>Statement of account</Btn>}
+              {c.invoiceCount > 0 && <Btn sm v="outline" full onClick={() => {
+                if (!subscribed) { toast("Client statements are a KROFT Plus feature."); onUpgrade?.(); return; }
+                setStmt({ period: "all", currency: null }); setView("statement");
+              }}>{subscribed ? "Statement of account" : "Statement of account · Plus"}</Btn>}
               <div style={{ fontSize:12, fontWeight:600, color:C.muted, marginTop:6 }}>History</div>
               <div style={{ display:"flex", flexDirection:"column", gap:9 }}>{docs.map(d => docRow(d, "client"))}</div>
             </>
@@ -3487,6 +3491,93 @@ function InvoicesScreen({ invoices, setInvoices, quotes, setQuotes, settings, se
   return (
     <div role="dialog" aria-modal="true" aria-label="Invoices" style={{ position:"fixed", inset:0, zIndex:330, background:C.bg, display:"flex", flexDirection:"column" }}>
       {body}
+    </div>
+  );
+}
+
+// The plan picker: shown whenever someone taps Upgrade, so they see what Free, Plus and Pro each
+// include and cost before paying for anything. Plans and prices are in src/plans.js.
+function PlansSheet({ user, current, onClose, toast }) {
+  const [period, setPeriod] = useState("month");
+  const [chosen, setChosen] = useState(null);           // a paid plan picked, before paying
+  const money = p => fmtCur(p.amount, p.currency).replace(/[.,]00$/, "");
+  const per = period === "year" ? "a year" : "a month";
+  const plan = id => PLANS.find(x => x.id === id);
+
+  if (chosen) {
+    const p = planPrice(chosen, period, user.currency);
+    return (
+      <div role="dialog" aria-modal="true" aria-label="Upgrade" style={{ position:"fixed", inset:0, zIndex:340, background:C.bg, display:"flex", flexDirection:"column" }}>
+        <div style={{ display:"flex", alignItems:"center", gap:10, padding:"calc(12px + env(safe-area-inset-top)) 16px 12px", borderBottom:`1px solid ${C.cardB}` }}>
+          <button onClick={() => setChosen(null)} aria-label="Back" style={{ background:"none", border:"none", color:C.white, cursor:"pointer", fontSize:20, padding:"2px 4px", lineHeight:1 }}>←</button>
+          <h2 style={{ fontSize:17, fontWeight:700, color:C.white, letterSpacing:-.5 }}>KROFT {plan(chosen).name}</h2>
+        </div>
+        <div style={{ flex:1, overflowY:"auto", padding:16, display:"flex", flexDirection:"column", gap:14 }}>
+          <Card level="raised">
+            <Mono style={{ display:"block", color:C.muted, marginBottom:4 }}>{period === "year" ? "Billed yearly" : "Billed monthly"}</Mono>
+            <div style={{ fontSize:26, fontWeight:700, color:C.white, letterSpacing:-.8 }}>{money(p)} <span style={{ fontSize:14, fontWeight:500, color:C.soft }}>{per}</span></div>
+            <Mono style={{ display:"block", color:C.soft, marginTop:6, lineHeight:1.6 }}>Cancel any time. You keep {plan(chosen).name} until the end of the period you paid for.</Mono>
+          </Card>
+          {PAYMENTS_READY ? null : (
+            <Card level="inset" style={{ borderStyle:"dashed" }}>
+              <div style={{ fontSize:14, fontWeight:600, color:C.white, marginBottom:4 }}>Payment through Google is almost ready</div>
+              <Mono style={{ display:"block", color:C.soft, lineHeight:1.6 }}>You'll pay with Google Pay, using the card already on your Google account. We're finishing the setup with Google. Nothing has been charged.</Mono>
+            </Card>
+          )}
+          <Btn full disabled={!PAYMENTS_READY} onClick={() => toast("Payment through Google is almost ready.")}>{PAYMENTS_READY ? "Pay with Google Pay" : "Google Pay · coming soon"}</Btn>
+          <Btn full v="outline" onClick={onClose}>Not now</Btn>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div role="dialog" aria-modal="true" aria-label="Choose your plan" style={{ position:"fixed", inset:0, zIndex:340, background:C.bg, display:"flex", flexDirection:"column" }}>
+      <div style={{ display:"flex", alignItems:"center", gap:10, padding:"calc(12px + env(safe-area-inset-top)) 16px 12px", borderBottom:`1px solid ${C.cardB}` }}>
+        <button onClick={onClose} aria-label="Close" style={{ background:"none", border:"none", color:C.white, cursor:"pointer", fontSize:20, padding:"2px 4px", lineHeight:1 }}>←</button>
+        <h2 style={{ fontSize:17, fontWeight:700, color:C.white, letterSpacing:-.5 }}>Choose your plan</h2>
+      </div>
+      <div style={{ flex:1, overflowY:"auto", padding:16 }}>
+        <div role="tablist" aria-label="Billing period" style={{ display:"flex", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:3, marginBottom:16 }}>
+          {[["month", "Monthly"], ["year", `Yearly · ${monthsFree("plus", user.currency)} months free`]].map(([k, l]) => (
+            <button key={k} role="tab" aria-selected={period === k} onClick={() => setPeriod(k)}
+              style={{ flex:1, background: period === k ? C.card : "transparent", color: period === k ? C.white : C.soft, border:"none", borderRadius:9, padding:"8px 6px", fontSize:13, fontWeight:600, cursor:"pointer", fontFamily:APP_FONT, boxShadow: period === k ? C.shadowBase : "none" }}>{l}</button>
+          ))}
+        </div>
+        <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+          {PLANS.map(pl => {
+            const p = planPrice(pl.id, period, user.currency);
+            const isCurrent = pl.id === current;
+            return (
+              <Card key={pl.id} level="raised" style={{ border:`1.5px solid ${pl.popular ? C.accent : C.cardB}` }}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:10, marginBottom:4 }}>
+                  <div>
+                    <div style={{ fontSize:18, fontWeight:700, color:C.white }}>{pl.name}</div>
+                    <Mono style={{ color:C.soft }}>{pl.tagline}</Mono>
+                  </div>
+                  {isCurrent ? <Tag tone="positive">CURRENT</Tag> : pl.popular ? <Tag tone="accent">MOST POPULAR</Tag> : null}
+                </div>
+                <div style={{ fontSize:22, fontWeight:700, color:C.white, letterSpacing:-.6, margin:"8px 0 10px" }}>
+                  {p ? <>{money(p)} <span style={{ fontSize:13, fontWeight:500, color:C.soft }}>{per}</span></> : <>{money({ amount:0, currency:planPrice("plus", "month", user.currency).currency })} <span style={{ fontSize:13, fontWeight:500, color:C.soft }}>forever</span></>}
+                </div>
+                <div style={{ display:"flex", flexDirection:"column", gap:6, marginBottom:12 }}>
+                  {pl.features.map(f => (
+                    <div key={featureText(f)} style={{ display:"flex", gap:8, alignItems:"center" }}>
+                      <Dot color={f.soon ? C.muted : C.positive} />
+                      <Mono style={{ fontSize:12.5, color: f.soon ? C.soft : C.text }}>{featureText(f)}</Mono>
+                      {f.soon && <Tag>SOON</Tag>}
+                    </div>
+                  ))}
+                </div>
+                {isCurrent ? <Btn full v="outline" disabled>Your plan</Btn>
+                  : pl.id === "free" ? null
+                  : <Btn full v={pl.popular ? "solid" : "outline"} onClick={() => setChosen(pl.id)}>{`Choose ${pl.name}`}</Btn>}
+              </Card>
+            );
+          })}
+        </div>
+        <Mono style={{ display:"block", color:C.muted, textAlign:"center", lineHeight:1.6, margin:"16px 0 8px" }}>Prices in {planPrice("plus", "month", user.currency).currency === "NGN" ? "naira" : "US dollars"}. Everything on the free plan stays free.</Mono>
+      </div>
     </div>
   );
 }
@@ -3834,6 +3925,9 @@ function ProfileSection({ nav, onNav, connections, user, onUpdateName, onEditBus
   const [confirmLogout, setConfirmLogout] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const toggle = k => setOpenRow(openRow===k ? null : k);
+  // The Plus price, from KROFT's plans (src/plans.js), in the person's currency.
+  const plusPrice = planPrice("plus", "month", user.currency);
+  const priceLabel = plusPrice ? `${fmtCur(plusPrice.amount, plusPrice.currency).replace(/[.,]00$/, "")} a month` : "";
   const initials = user.name ? user.name.split(" ").map(n=>n[0]).join("").toUpperCase().slice(0,2) : "?";
   const goBack = () => onNav({ screen:null, openRow:null });
 
@@ -4011,17 +4105,35 @@ function ProfileSection({ nav, onNav, connections, user, onUpdateName, onEditBus
     ),
     plus: (
       <ProfileRow label="What's in Plus" sub={subscribed ? "Active" : "Free plan"} expanded={openRow==="plus"} onToggle={()=>toggle("plus")}>
-        {/* The free tier isn't a stripped-down trial — finances, budgets, contacts, notes,
-            recurring transactions, notifications, AI chat, drafts/suggestions and monthly
-            reports are complete and stay free permanently. Plus is specifically about voice
-            (a materially more expensive resource — open-ended spoken conversation) and a
-            handful of real conveniences, not gating basic text usage. */}
+        {/* The free tier isn't a stripped-down trial: finances, budgets, bills, receipts,
+            contacts, notes, tasks and AI chat are complete and stay free permanently. Plus is
+            for a business that's growing (more invoices, chasing payment, statements for repeat
+            clients) and for the AI that costs real money to run (voice, images, files, research). */}
+        {!subscribed && priceLabel && <div style={{ fontSize:20, fontWeight:700, color:C.white, letterSpacing:-.6, marginBottom:12 }}>{priceLabel}</div>}
+        <div style={{ fontSize:11, fontWeight:700, color:C.muted, letterSpacing:.6, marginBottom:8 }}>FOR YOUR BUSINESS</div>
+        <div style={{ display:"flex", flexDirection:"column", gap:10, marginBottom:14 }}>
+          {[
+            { t:"Unlimited invoices and quotes", d:`The free plan includes ${FREE_INVOICES_PER_MONTH} invoices and ${FREE_QUOTES_PER_MONTH} quotes a month.` },
+            { t:"Payment reminders", d:"A polite WhatsApp or email reminder for an unpaid invoice, with how much is due and how to pay." },
+            { t:"Client statements", d:"A statement of account for any client: every invoice and payment, the balance, and what's overdue." },
+          ].map(b => (
+            <div key={b.t} style={{ display:"flex", gap:9, alignItems:"flex-start" }}>
+              <Dot color={C.positive} />
+              <div>
+                <div style={{ fontSize:12.5, fontWeight:600, color:C.text }}>{b.t}</div>
+                <Mono style={{ color:C.muted, lineHeight:1.5 }}>{b.d}</Mono>
+              </div>
+            </div>
+          ))}
+        </div>
+        <div style={{ fontSize:11, fontWeight:700, color:C.muted, letterSpacing:.6, marginBottom:8 }}>MORE FROM KROFT'S AI</div>
         <div style={{ display:"flex", flexDirection:"column", gap:10, marginBottom:12 }}>
           {[
-            { t:"Unlimited voice mode", d:`Talk to KROFT as much as you want, hands-free — free plan gets ${voiceLimit} voice turns a day.` },
-            { t:"Budget rollover", d:"Unused budget carries into next month instead of resetting to zero." },
-            { t:"Longer conversation memory", d:"KROFT remembers more of a long conversation — 60 messages of context instead of 20." },
-            { t:"Scheduled reminder calls", d:"Set a time and KROFT rings you in the app, speaks the reminder, and can talk it through if you answer." },
+            { t:"Unlimited voice", d:`Talk to KROFT hands-free as much as you like. The free plan includes ${voiceLimit} voice turns a day.` },
+            { t:"No daily AI limits", d:"Photos, files, images, web research and Around Me without the free plan's daily limits." },
+            { t:"Morning summary", d:"An AI summary of your day around 8am, without asking." },
+            { t:"Scheduled reminder calls", d:"KROFT rings you in the app at the time you set, speaks the reminder, and can talk it through." },
+            { t:"Longer memory and budget rollover", d:"KROFT remembers 60 messages of a conversation instead of 20, and unused budget carries into next month." },
           ].map(b => (
             <div key={b.t} style={{ display:"flex", gap:9, alignItems:"flex-start" }}>
               <Dot color={C.positive} />
@@ -4033,9 +4145,9 @@ function ProfileSection({ nav, onNav, connections, user, onUpdateName, onEditBus
           ))}
         </div>
         <Mono style={{ display:"block", color:C.muted, lineHeight:1.6, marginBottom:12, paddingTop:10, borderTop:`1px solid ${C.div}` }}>
-          Finances, budgets, contacts, notes, tasks, recurring transactions and notifications are complete on the free plan and always will be — Plus is only about the AI calls above.
+          Finances, budgets, bills, receipts, contacts, notes, tasks and AI chat are complete on the free plan and always will be.
         </Mono>
-        {!subscribed && <Btn sm disabled={billingLoading} onClick={onUpgrade}>{billingLoading ? <Spinner size={14} color={C.black} thickness={2} /> : "Upgrade"}</Btn>}
+        {!subscribed && <Btn sm disabled={billingLoading} onClick={onUpgrade}>{billingLoading ? <Spinner size={14} color={C.black} thickness={2} /> : "See plans"}</Btn>}
       </ProfileRow>
     ),
     billing: (
@@ -4101,7 +4213,7 @@ function ProfileSection({ nav, onNav, connections, user, onUpdateName, onEditBus
           </>
         ) : (
           <>
-            <Mono style={{ display:"block", color:C.soft, lineHeight:1.7, marginBottom:10 }}>Nothing to manage yet — upgrade to KROFT Plus to remove your daily message limit.</Mono>
+            <Mono style={{ display:"block", color:C.soft, lineHeight:1.7, marginBottom:10 }}>Nothing to manage yet. You're on the free plan.</Mono>
             <Btn sm disabled={billingLoading} onClick={onUpgrade}>{billingLoading ? <Spinner size={14} color={C.black} thickness={2} /> : "Upgrade"}</Btn>
           </>
         )}
@@ -4239,7 +4351,8 @@ function ProfileSection({ nav, onNav, connections, user, onUpdateName, onEditBus
       { icon:"store", label:"Business", value:`${user.businessName || "Personal"} · ${user.currency}`, onClick:onEditBusinessDetails },
       subscribed
         ? { key:"plan", icon:"crown", label:"KROFT Plus", value:"Active" }
-        : { key:"plan", icon:"crown", label:"Upgrade plan", tone:"accent", value:subscriptionStatus === "past_due" ? "Renewal failed" : "" },
+        // Free users see the plans straight away; a failed renewal still opens the billing page.
+        : { key:"plan", icon:"crown", label:"Upgrade plan", tone:"accent", value:subscriptionStatus === "past_due" ? "Renewal failed" : "", onClick: subscriptionStatus === "past_due" ? undefined : onUpgrade },
       { key:"usage", icon:"gauge", label:"Usage and limits" },
       user.email && { icon:"at", label:"Email", detail:user.email },
       user.phone && { icon:"phone", label:"Phone", detail:user.phone },
@@ -4636,6 +4749,7 @@ function KroftApp({ onFullReset } = {}) {
   const [showInvoices, setShowInvoices] = useState(false);
   const [bills, setBills] = useState([]);              // supplier bills: money the business owes
   const [showBills, setShowBills] = useState(false);
+  const [showPlans, setShowPlans] = useState(null);     // the plan picker: null closed, else why it opened ("" from Upgrade)
   const [invoicesOpenDoc, setInvoicesOpenDoc] = useState(null); // { id, kind } to open straight to one (from a contact's profile)
   const [expenseCats, setExpenseCats] = useState(["Operations","Tech","Marketing","Travel","Rent","Other"]);
   // Monthly spending limits per category, as { [category]: amount }. Tracking spend without ever
@@ -4971,7 +5085,9 @@ function KroftApp({ onFullReset } = {}) {
     return true;
   };
 
-  const [subscribed, setSubscribed] = useState(false);
+  // Test builds only (npm run test:e2e builds with VITE_E2E=1): a test can play a Plus user.
+  // In the real app VITE_E2E is never set, so this is always false.
+  const [subscribed, setSubscribed] = useState(() => import.meta.env.VITE_E2E === "1" && (() => { try { return localStorage.getItem("kroft-e2e-plus") === "1"; } catch { return false; } })());
   // Raw subscriptions.status ("inactive" | "active" | "past_due" | "canceled") — kept alongside
   // the derived `subscribed` boolean so the UI can tell "never subscribed" apart from "a renewal
   // charge failed", which needs its own notice rather than just silently losing Plus access.
@@ -9665,7 +9781,7 @@ ${voiceMode
       {showInvoices && (
         <InvoicesScreen invoices={invoices} setInvoices={setInvoices} quotes={quotes} setQuotes={setQuotes} settings={invoiceSettings} setSettings={setInvoiceSettings}
           user={user} subscribed={subscribed} contacts={contacts} setContacts={setContacts} toast={toast} onClose={() => { setShowInvoices(false); setInvoicesOpenDoc(null); }}
-          openId={invoicesOpenDoc?.id} openKind={invoicesOpenDoc?.kind}
+          openId={invoicesOpenDoc?.id} openKind={invoicesOpenDoc?.kind} onUpgrade={() => setShowPlans("business")}
           onRecordPayment={(inv, amount, date, part) => {
             // Getting paid is income: recorded the same way as one added by hand, on the day the
             // money arrived.
@@ -9684,6 +9800,9 @@ ${voiceMode
             return item.id;
           }}
           onRemoveExpense={id => setExpenses(p => p.filter(x => x.id !== id))} />
+      )}
+      {showPlans !== null && (
+        <PlansSheet user={user} current={currentPlan({ subscribed })} onClose={() => setShowPlans(null)} toast={toast} />
       )}
       {showEntryHistory && (() => {
         const q = entryHistoryQuery.trim().toLowerCase();
@@ -11593,7 +11712,7 @@ ${voiceMode
               <h2 style={{ fontSize:22, fontWeight:700, color:C.white, letterSpacing:-1 }}>Reminders</h2>
               <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
                 <Btn sm v="outline" onClick={suggestSmartReminder} disabled={suggestingReminder}>{suggestingReminder ? <><Spinner size={11} color={C.soft} thickness={2} />Thinking…</> : "AI Suggest"}</Btn>
-                <Btn sm v="outline" onClick={() => { if (!subscribed) { toast("Scheduled calls are a KROFT Plus feature."); return; } setShowScheduleCall(v=>!v); }}>
+                <Btn sm v="outline" onClick={() => { if (!subscribed) { toast("Scheduled calls are a KROFT Plus feature."); setShowPlans(""); return; } setShowScheduleCall(v=>!v); }}>
                   {subscribed ? "Schedule a call" : "Schedule a call · Plus"}
                 </Btn>
                 <Btn sm onClick={() => setShowAddReminder(v=>!v)}>+ Add</Btn>
@@ -12804,7 +12923,7 @@ ${voiceMode
               subscriptionStatus={subscriptionStatus}
               autoRenews={autoRenews}
               billingLoading={billingLoading}
-              onUpgrade={startCheckout}
+              onUpgrade={() => setShowPlans("")}
               onManageBilling={cancelKroftPlus}
               voiceReplies={voiceReplies}
               onSetVoiceReplies={setVoiceReplies}

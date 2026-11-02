@@ -63,12 +63,31 @@ async function website(browser) {
   await page.getByRole("button", { name: "Back" }).click();
   await page.getByRole("tab", { name: "Clients" }).click();
   await page.getByText("Tunde Bakare").first().click();
-  await page.getByRole("button", { name: "Statement of account" }).click();
+  // Free plan: statements are a Plus feature.
+  await page.getByRole("button", { name: "Statement of account · Plus" }).click();
+  check("free plan: statements say they're part of Plus", await page.getByText("Client statements are a KROFT Plus feature.").isVisible());
+  check("…and the plans open", await page.getByRole("dialog", { name: "Choose your plan" }).isVisible());
+  check("no page errors (free)", errors.length === 0, errors.join(" | "));
+  await ctx.close();
+}
+
+// Statements as a Plus user (a test-build switch; the real app reads the subscription).
+async function plusStatement(browser) {
+  console.log("\nwebsite, Plus");
+  const ctx = await newShellContext(browser, null);
+  await ctx.addInitScript(() => localStorage.setItem("kroft-e2e-plus", "1"));
+  const page = await ctx.newPage();
+  const errors = []; page.on("pageerror", e => errors.push(e.message));
+  await page.goto(URL); await signUp(page);
+  await invoiceWithPayments(page);
+  await page.getByRole("tab", { name: "Clients" }).click();
+  await page.getByText("Tunde Bakare").first().click();
+  await page.getByRole("button", { name: "Statement of account", exact: true }).click();
   const shown = await page.getByAltText(/Preview of the statement for Tunde Bakare/).waitFor({ timeout: 10000 }).then(() => true, () => false);
   const body = await page.locator("body").innerText();
   check("statement shows invoiced, paid and the balance, with a preview", shown && /Invoiced\s*\n?\s*\$70,000\.00/.test(body) && /Paid\s*\n?\s*\$30,000\.00/.test(body) && /Balance due\s*\n?\s*\$40,000\.00/.test(body), body.slice(0, 300));
-  [dl] = await Promise.all([page.waitForEvent("download"), page.getByRole("button", { name: "Share or download PDF" }).click()]);
-  pdf = await pdfFromDownload(dl);
+  const [dl] = await Promise.all([page.waitForEvent("download"), page.getByRole("button", { name: "Share or download PDF" }).click()]);
+  const pdf = await pdfFromDownload(dl);
   check("statement downloads as a PDF named for the client and date", /^Statement Tunde Bakare \d{4}-\d{2}-\d{2}\.pdf$/.test(dl.suggestedFilename()) && pdf.startsWith("%PDF-1.4"), dl.suggestedFilename());
   await page.getByRole("tab", { name: "This year" }).click();
   check("period can be changed", await page.getByRole("tab", { name: "This year" }).getAttribute("aria-selected") === "true");
@@ -97,6 +116,7 @@ const server = await startServer();
 const browser = await chromium.launch();
 try {
   await website(browser);
+  await plusStatement(browser);
   await android(browser);
 } catch (err) {
   check("test run finished", false, err.message);
