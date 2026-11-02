@@ -20,6 +20,7 @@ import { createBill, billProblem, billStatus, billBalance, billPaid, billPayment
 import { receiptFor, receiptMessage, receiptFileName, statementCurrencies, statementFor, statementMessage, statementFileName, periodStart } from "./invoices/documents.js";
 import { saveFile } from "./saveFile.js";
 import { RIDE_APPS, rideOrder, rideLink, rideHint, rideDescription } from "./rides.js";
+import { pickNudge, markShown, markClosed, nudgePlace, emptyNudgeState } from "./nudges.js";
 import { contactRecords, contactMoney, contactSummary, initials, relativeDay } from "./contacts/profile.js";
 import { isNativeApp, nativeRedirect, openInSystemBrowser, scheduleDeviceReminders, verifyBiometric, getAppPermissions, requestAppPermission, saveFileFromApp, exactAlarmStatus, openExactAlarmSetting, getClientHeader, scheduleReminderAt, cancelReminderAt, appPlaysNotificationSound } from "./native.js";
 import { unlockAudio, playTick, playDone, resetSoundOn, setResetSoundOn, keepScreenOn } from "./resetSounds.js";
@@ -2005,6 +2006,27 @@ function MinimizedVoiceBar({ state, levelRef, onExpand, onStop }) {
         <Mono style={{ color:C.text }}>{label}</Mono>
       </button>
       <button onClick={onStop} aria-label="End voice conversation" style={{ width:26, height:26, borderRadius:"50%", border:`1px solid ${C.cardB}`, background:C.surface, color:C.text, fontSize:12, cursor:"pointer", flexShrink:0 }}>✕</button>
+    </div>
+  );
+}
+
+// An upgrade nudge (src/nudges.js): a small card with what a paid plan adds, a button to see the
+// plans and an X. In the chat it sits just above the message box; elsewhere it floats near the
+// bottom of the screen.
+function NudgeCard({ nudge, onUpgrade, onClose, style }) {
+  return (
+    <div role="dialog" aria-label={nudge.title} style={{ background:C.card, border:`1px solid ${C.cardB}`, borderRadius:24, padding:"18px 18px 16px", boxShadow:"0 12px 36px rgba(0,0,0,.18)", animation:"fadeUp .3s ease", boxSizing:"border-box", ...style }}>
+      <div style={{ display:"flex", alignItems:"flex-start", gap:10 }}>
+        <div style={{ flex:1, minWidth:0 }}>
+          <div style={{ fontSize:17, fontWeight:700, color:C.white, letterSpacing:-.4, lineHeight:1.3, marginBottom:6 }}>{nudge.title}</div>
+          <div style={{ fontSize:14, color:C.soft, lineHeight:1.5 }}>{nudge.body}</div>
+        </div>
+        <button onClick={onClose} aria-label="Close" style={{ background:"none", border:"none", color:C.soft, cursor:"pointer", fontSize:20, lineHeight:1, padding:4, marginTop:-4, flexShrink:0 }}>✕</button>
+      </div>
+      <button onClick={onUpgrade} style={{ marginTop:16, width:"100%", minHeight:46, display:"flex", alignItems:"center", justifyContent:"center", gap:8, borderRadius:999, border:"none", cursor:"pointer", background:C.accent, color:"#ffffff", fontSize:15, fontWeight:700, fontFamily:APP_FONT, boxShadow:`0 4px 14px ${C.accent}44` }}>
+        {nudge.to === "pro" && <svg viewBox="0 0 24 24" width={18} height={18} aria-hidden="true"><path d="M12 2.5c.6 4.6 2.9 6.9 7.5 7.5-4.6.6-6.9 2.9-7.5 7.5-.6-4.6-2.9-6.9-7.5-7.5 4.6-.6 6.9-2.9 7.5-7.5Z" fill="currentColor" /></svg>}
+        {nudge.cta}
+      </button>
     </div>
   );
 }
@@ -9662,6 +9684,42 @@ ${voiceMode
   // Keep the splash up past its normal 6s if data hasn't finished loading yet — extending a
   // fast, expected case by a beat is far better than flashing empty/default state (a fresh
   // signup screen, zeroed finances) for a returning user whose real data just hasn't arrived.
+  // Upgrade nudges: at most one a day, only where it helps (src/nudges.js). What was shown is
+  // remembered on this device. Test builds keep them off unless a test asks for them, so they
+  // can't sit over buttons other tests tap.
+  const nudgesOn = import.meta.env.VITE_E2E !== "1" || (() => { try { return localStorage.getItem("kroft-e2e-nudges") === "1"; } catch { return false; } })();
+  const nudgeStateRef = useRef(null);
+  if (nudgeStateRef.current === null) nudgeStateRef.current = (() => { try { return { ...emptyNudgeState(), ...(JSON.parse(localStorage.getItem("kroft-nudges")) || {}) }; } catch { return emptyNudgeState(); } })();
+  const saveNudgeState = st => { nudgeStateRef.current = st; try { localStorage.setItem("kroft-nudges", JSON.stringify(st)); } catch { /* fine: shown again later */ } };
+  const [nudge, setNudge] = useState(null);
+  const placeNow = nudgePlace({ tab, homeSection, workspaceSection, invoicesOpen: showInvoices });
+  const thisMonth = todayISO().slice(0, 7);
+  const nudgeFacts = {
+    chatTurns: aiMessages.filter(m => m.role === "user").length,
+    invoicesThisMonth: invoices.filter(inv => String(inv.issueDate || "").slice(0, 7) === thisMonth).length,
+    sentInvoices: invoices.filter(inv => inv.status && inv.status !== "draft").length,
+    entries: income.length + expenses.length,
+    projects: projects.length,
+  };
+  useEffect(() => {
+    setNudge(n => (n && n.place === placeNow ? n : null));
+    // Waits for any pop-up message to clear, so the two never pile up.
+    if (!nudgesOn || !dataLoaded || step !== "dashboard" || showPlans !== null || !placeNow || toasts.length > 0) return;
+    const t = setTimeout(() => {
+      const n = pickNudge({ plan, place: placeNow, facts: nudgeFacts, state: nudgeStateRef.current });
+      if (n) { setNudge(n); saveNudgeState(markShown(nudgeStateRef.current, n.id)); }
+    }, 1500);
+    return () => clearTimeout(t);
+  }, [placeNow, plan, dataLoaded, step, showPlans, toasts.length > 0, nudgeFacts.chatTurns, nudgeFacts.invoicesThisMonth, nudgeFacts.sentInvoices, nudgeFacts.entries, nudgeFacts.projects]);
+  const closeNudge = () => { if (nudge) saveNudgeState(markClosed(nudgeStateRef.current, nudge.id)); setNudge(null); };
+  const upgradeFromNudge = () => { const to = nudge?.to; setNudge(null); setShowPlans(to === "pro" ? "pro" : "nudge"); };
+  const floatingNudge = nudge && nudge.place !== "chat" && showPlans === null && (
+    <div style={{ position:"fixed", left:0, right:0, zIndex: nudge.place === "invoices" ? 335 : 260, display:"flex", justifyContent:"center", padding:"0 14px", pointerEvents:"none",
+      bottom: nudge.place === "invoices" ? "calc(env(safe-area-inset-bottom, 0px) + 16px)" : "calc(env(safe-area-inset-bottom, 0px) + 96px)" }}>
+      <NudgeCard nudge={nudge} onUpgrade={upgradeFromNudge} onClose={closeNudge} style={{ width:"100%", maxWidth:460, pointerEvents:"auto" }} />
+    </div>
+  );
+
   if (showSplash || !dataLoaded) return <SplashScreen fading={splashFading && dataLoaded} />;
 
   // Rendered on both the signed-in dashboard and the sign-in/onboarding screens — it used to live
@@ -9691,7 +9749,7 @@ ${voiceMode
 
   const toastStack = (
     <div role="status" aria-live="polite" aria-atomic="false"
-      style={{ position:"fixed", ...(step === "dashboard" && tab === "nova" ? { top:"calc(env(safe-area-inset-top, 0px) + 64px)" } : { bottom:`calc(env(safe-area-inset-bottom, 0px) + ${online ? 100 : 146}px)` }), left:"50%", transform:"translateX(-50%)", width:"min(340px, calc(100vw - 32px))", zIndex:1400, display:"flex", flexDirection:"column-reverse", alignItems:"center", gap:7, pointerEvents:"none" }}>
+      style={{ position:"fixed", ...(step === "dashboard" && tab === "nova" ? { top:"calc(env(safe-area-inset-top, 0px) + 64px)" } : { bottom:`calc(env(safe-area-inset-bottom, 0px) + ${(online ? 100 : 146) + (floatingNudge ? 210 : 0)}px)` }), left:"50%", transform:"translateX(-50%)", width:"min(340px, calc(100vw - 32px))", zIndex:1400, display:"flex", flexDirection:"column-reverse", alignItems:"center", gap:7, pointerEvents:"none" }}>
       {/* Centred just above the bottom bar (and above the offline note when it shows), so they
           never cover the header's buttons (help, Ask Kroft, Back) or the tabs under it; the newest
           sits nearest the bar. In the chat, whose message box is at the bottom, they sit under
@@ -10466,6 +10524,7 @@ ${voiceMode
       })()}
 
       {toastStack}
+      {floatingNudge}
       {offlineBanner}
       {appLockOverlay}
 
@@ -13181,6 +13240,11 @@ ${voiceMode
                 <Mono style={{ display:"block", color:C.muted, marginTop:10, lineHeight:1.6 }}>
                   KROFT can see your finances, schedule, tasks and contacts, and can add things for you. It can't delete or edit — that stays with you.
                 </Mono>
+              </div>
+            )}
+            {nudge && nudge.place === "chat" && showPlans === null && (
+              <div style={{ padding:"0 14px 10px", flexShrink:0 }}>
+                <NudgeCard nudge={nudge} onUpgrade={upgradeFromNudge} onClose={closeNudge} />
               </div>
             )}
             <div style={{ borderTop:`1px solid ${C.cardB}`, padding:"12px 16px calc(12px + env(safe-area-inset-bottom))", flexShrink:0, background:C.bg }}>
