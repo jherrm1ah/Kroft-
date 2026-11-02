@@ -7,6 +7,7 @@
 
 import { invoiceTotals, lineTotal, prettyDate, paymentLines, fromName, taxName, taxIdLine, docStatus, STATUS_LABEL, amountPaid, balanceDue } from "./model.js";
 import { receiptFor, statementFor } from "./documents.js";
+import { logoSize, loadLogo } from "./branding.js";
 
 const PAGE_W = 595.28, PAGE_H = 841.89;  // A4 in PDF points
 const SCALE = 2;                          // canvas pixels per point: sharp on phones and in print
@@ -102,8 +103,20 @@ function newPage(font) {
   return { canvas, ctx, text, setFont };
 }
 
+// KROFT Pro: the business's logo in the top-left corner, above its name. Returns the baseline
+// for the name: lower when there's a logo, so the two never overlap.
+const LOGO_TOP = 36;
+function drawLogo(page, logo) {
+  if (!logo) return 72;
+  const { width, height } = logoSize(logo.width, logo.height);
+  if (!width) return 72;
+  page.ctx.drawImage(logo, M, LOGO_TOP, width, height);
+  return LOGO_TOP + height + 28;
+}
+
 // Draws the invoice on as many A4 canvases as it needs and returns them.
-export function drawInvoicePages(inv, settings, user, fmt, { font = "Inter, sans-serif", today } = {}) {
+// brand: { logo (a loaded image or null), footer (show "Created with KROFT") }.
+export function drawInvoicePages(inv, settings, user, fmt, { font = "Inter, sans-serif", today, brand = { logo: null, footer: true } } = {}) {
   const pages = [];
   const t = invoiceTotals(inv);
   const money = n => fmt(n, inv.currency);
@@ -121,7 +134,7 @@ export function drawInvoicePages(inv, settings, user, fmt, { font = "Inter, sans
   const from = fromName(settings, user) || "Invoice";
   setFont(20, 700);
   const fromLines = wrap(ctx, from, 300);
-  let y = 72;
+  let y = drawLogo(page, brand.logo);
   fromLines.slice(0, 2).forEach((l, i) => text(l, M, y + i * 24, { size: 20, weight: 700 }));
   y += fromLines.slice(0, 2).length * 24 - 6;
   for (const l of [settings.address, settings.email || user?.email, settings.phone || user?.phone, taxIdLine(settings)].filter(Boolean)) {
@@ -218,10 +231,7 @@ export function drawInvoicePages(inv, settings, user, fmt, { font = "Inter, sans
     for (const l of noteLines) { y += 13; text(l, M, y, { size: 9.5, color: SOFT }); }
   }
 
-  pages.forEach((p, i) => {
-    p.text(pages.length > 1 ? `Page ${i + 1} of ${pages.length}` : "", M, PAGE_H - 32, { size: 8, color: MUTED });
-    p.text("Created with KROFT", PAGE_W - M, PAGE_H - 32, { size: 8, color: MUTED, align: "right" });
-  });
+  footer(pages, brand);
   return pages.map(p => p.canvas);
 }
 
@@ -233,7 +243,10 @@ const dataUrlBytes = url => {
 };
 
 // The finished PDF, plus a preview image of the first page.
-export async function invoicePdf(inv, settings, user, fmt, { font = "Inter, sans-serif", today } = {}) {
+// branding: { logo (data URL or ""), footer } from brandingFor() in branding.js.
+const toBrand = async (branding = {}) => ({ logo: branding.logo ? await loadLogo(branding.logo) : null, footer: branding.footer !== false });
+
+export async function invoicePdf(inv, settings, user, fmt, { font = "Inter, sans-serif", today, branding } = {}) {
   // A canvas draws nothing for text whose web font is still downloading, so load every weight
   // used, for every character on this document (accented names need a different font file than
   // plain English), before drawing.
@@ -243,7 +256,7 @@ export async function invoicePdf(inv, settings, user, fmt, { font = "Inter, sans
     await Promise.all([400, 600, 700].map(w => document.fonts?.load(`${w} 16px ${font}`, sample)));
     await document.fonts?.ready;
   } catch { /* draw with whatever is loaded */ }
-  const canvases = drawInvoicePages(inv, settings, user, fmt, { font, today });
+  const canvases = drawInvoicePages(inv, settings, user, fmt, { font, today, brand: await toBrand(branding) });
   const pages = canvases.map(c => ({ jpeg: dataUrlBytes(c.toDataURL("image/jpeg", 0.9)), width: c.width, height: c.height }));
   const bytes = buildPdf(pages, { title: `${inv.kind === "quote" ? "Quote" : "Invoice"} ${inv.number}`, author: fromName(settings, user) });
   return { bytes, preview: canvases[0].toDataURL("image/jpeg", 0.85), pageCount: canvases.length };
@@ -258,11 +271,11 @@ export const invoiceFileName = inv => `${inv.number}${inv.client?.name ? ` ${inv
 // ── Receipts and statements ──────────────────────────────────────────────────────────────────
 // The business's details on the left, the document's title, number and dates on the right.
 // Returns the y below the header.
-function docHeader(page, settings, user, { title, number, meta = [] }) {
+function docHeader(page, settings, user, { title, number, meta = [], brand = {} }) {
   const { ctx, text, setFont } = page;
   setFont(20, 700);
   const fromLines = wrap(ctx, fromName(settings, user) || title, 300).slice(0, 2);
-  let y = 72;
+  let y = drawLogo(page, brand.logo);
   fromLines.forEach((l, i) => text(l, M, y + i * 24, { size: 20, weight: 700 }));
   y += fromLines.length * 24 - 6;
   for (const l of [settings.address, settings.email || user?.email, settings.phone || user?.phone, taxIdLine(settings)].filter(Boolean)) {
@@ -275,10 +288,10 @@ function docHeader(page, settings, user, { title, number, meta = [] }) {
   return Math.max(y, 140) + 34;
 }
 
-function footer(pages) {
+function footer(pages, brand = {}) {
   pages.forEach((p, i) => {
     p.text(pages.length > 1 ? `Page ${i + 1} of ${pages.length}` : "", M, PAGE_H - 32, { size: 8, color: MUTED });
-    p.text("Created with KROFT", PAGE_W - M, PAGE_H - 32, { size: 8, color: MUTED, align: "right" });
+    if (brand.footer !== false) p.text("Created with KROFT", PAGE_W - M, PAGE_H - 32, { size: 8, color: MUTED, align: "right" });
   });
 }
 
@@ -291,12 +304,12 @@ function stamp(page, label, color, top) {
   text(label, PAGE_W - M - w / 2, top + 16, { size: 12, weight: 700, color, align: "center" });
 }
 
-export function drawReceiptPage(inv, paymentId, settings, user, fmt, { font = "Inter, sans-serif" } = {}) {
+export function drawReceiptPage(inv, paymentId, settings, user, fmt, { font = "Inter, sans-serif", brand = { logo: null, footer: true } } = {}) {
   const r = receiptFor(inv, paymentId);
   const page = newPage(font);
   const { ctx, text } = page;
   const money = n => fmt(n, r.currency);
-  let y = docHeader(page, settings, user, { title: "RECEIPT", number: r.number, meta: [`Received ${prettyDate(r.date)}`] });
+  let y = docHeader(page, settings, user, { title: "RECEIPT", number: r.number, meta: [`Received ${prettyDate(r.date)}`], brand });
   if (r.paidInFull) stamp(page, "PAID IN FULL", "#2f7d4f", 122);
 
   text("RECEIVED FROM", M, y, { size: 8.5, weight: 600, color: MUTED });
@@ -331,11 +344,11 @@ export function drawReceiptPage(inv, paymentId, settings, user, fmt, { font = "I
     y += 34;
   }
   text("Thank you for your payment.", M, y, { size: 10, color: SOFT });
-  footer([page]);
+  footer([page], brand);
   return [page.canvas];
 }
 
-export function drawStatementPages(st, settings, user, fmt, { font = "Inter, sans-serif", name = "" } = {}) {
+export function drawStatementPages(st, settings, user, fmt, { font = "Inter, sans-serif", name = "", brand = { logo: null, footer: true } } = {}) {
   const pages = [];
   let page = newPage(font);
   pages.push(page);
@@ -343,7 +356,7 @@ export function drawStatementPages(st, settings, user, fmt, { font = "Inter, san
   const money = n => fmt(n, st.currency);
   const BOTTOM = PAGE_H - 70;
   const meta = [`Date ${prettyDate(st.to)}`, ...(st.from ? [`Period ${prettyDate(st.from)} to ${prettyDate(st.to)}`] : [])];
-  let y = docHeader(page, settings, user, { title: "STATEMENT", number: "", meta });
+  let y = docHeader(page, settings, user, { title: "STATEMENT", number: "", meta, brand });
 
   text("TO", M, y, { size: 8.5, weight: 600, color: MUTED });
   y += 16;
@@ -416,7 +429,7 @@ export function drawStatementPages(st, settings, user, fmt, { font = "Inter, san
     text("PAYMENT DETAILS", M, y, { size: 8.5, weight: 600, color: MUTED });
     for (const l of pay) { y += 15; text(l, M, y, { size: 10 }); }
   }
-  footer(pages);
+  footer(pages, brand);
   return pages.map(p => p.canvas);
 }
 
@@ -433,14 +446,14 @@ async function loadFonts(font, parts) {
   } catch { /* draw with whatever is loaded */ }
 }
 
-export async function receiptPdf(inv, paymentId, settings, user, fmt, { font = "Inter, sans-serif" } = {}) {
+export async function receiptPdf(inv, paymentId, settings, user, fmt, { font = "Inter, sans-serif", branding } = {}) {
   await loadFonts(font, [fromName(settings, user), settings.address, settings.email, settings.phone, taxIdLine(settings), inv.client?.name, inv.client?.email, ...paymentLines(settings)]);
   const r = receiptFor(inv, paymentId);
-  return toPdf(drawReceiptPage(inv, paymentId, settings, user, fmt, { font }), `Receipt ${r.number}`, fromName(settings, user));
+  return toPdf(drawReceiptPage(inv, paymentId, settings, user, fmt, { font, brand: await toBrand(branding) }), `Receipt ${r.number}`, fromName(settings, user));
 }
 
-export async function statementPdf({ invoices, key, currency, from, to, name }, settings, user, fmt, { font = "Inter, sans-serif" } = {}) {
+export async function statementPdf({ invoices, key, currency, from, to, name }, settings, user, fmt, { font = "Inter, sans-serif", branding } = {}) {
   const st = statementFor({ invoices, key, currency, from, to });
   await loadFonts(font, [fromName(settings, user), settings.address, settings.email, settings.phone, taxIdLine(settings), name, st.client.email, ...paymentLines(settings)]);
-  return { ...(await toPdf(drawStatementPages(st, settings, user, fmt, { font, name }), `Statement ${name || ""}`.trim(), fromName(settings, user))), statement: st };
+  return { ...(await toPdf(drawStatementPages(st, settings, user, fmt, { font, name, brand: await toBrand(branding) }), `Statement ${name || ""}`.trim(), fromName(settings, user))), statement: st };
 }

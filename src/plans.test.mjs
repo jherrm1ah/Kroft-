@@ -11,8 +11,10 @@ eq("yearly is two months free", [P.monthsFree("plus", "NGN"), P.monthsFree("pro"
 eq("every paid plan costs less a year than 12 months", ["NGN", "USD"].every(c => ["plus", "pro"].every(id => P.PRICES[c][id].year < P.PRICES[c][id].month * 12)), true);
 eq("Pro costs more than Plus", ["NGN", "USD"].every(c => P.PRICES[c].pro.month > P.PRICES[c].plus.month), true);
 eq("current plan", [P.currentPlan({ subscribed: false }), P.currentPlan({ subscribed: true }), P.currentPlan({ subscribed: true, plan: "pro" })], ["free", "plus", "pro"]);
+eq("Pro only counts while the subscription is active", P.currentPlan({ subscribed: false, plan: "pro" }), "free");
 eq("features read as text, planned ones marked", [P.featureText("A"), P.featureText({ t: "B", soon: true })], ["A", "B"]);
-eq("Pro's unbuilt features are marked soon", P.PLANS.find(p => p.id === "pro").features.filter(f => f.soon).length, 3);
+eq("Pro's unbuilt features are marked soon (recurring invoices, bank import)", P.PLANS.find(p => p.id === "pro").features.filter(f => f.soon).map(P.featureText), ["Recurring invoices", "Bank statement import"]);
+eq("the logo is listed as ready in Pro", P.PLANS.find(p => p.id === "pro").features.some(f => typeof f === "string" && /logo/i.test(f)), true);
 eq("payments aren't switched on until Google is connected", P.PAYMENTS_READY, false);
 
 console.log(fail ? `\n${fail} FAILED` : "\nALL PASSED");
