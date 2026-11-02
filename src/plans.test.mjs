@@ -15,6 +15,10 @@ eq("Pro only counts while the subscription is active", P.currentPlan({ subscribe
 eq("features read as text, planned ones marked", [P.featureText("A"), P.featureText({ t: "B", soon: true })], ["A", "B"]);
 eq("Pro's unbuilt features are marked soon (recurring invoices, bank import)", P.PLANS.find(p => p.id === "pro").features.filter(f => f.soon).map(P.featureText), ["Recurring invoices", "Bank statement import"]);
 eq("the logo is listed as ready in Pro", P.PLANS.find(p => p.id === "pro").features.some(f => typeof f === "string" && /logo/i.test(f)), true);
+const list = id => P.PLANS.find(p => p.id === id).features.map(P.featureText).join(" | ");
+eq("Free says its AI extras have daily limits", /daily limits/.test(list("free")), true);
+eq("Plus lists the overdue alert", /overdue/.test(list("plus")), true);
+eq("Pro says what priority support means", /Priority support: your feedback is answered first/.test(list("pro")), true);
 eq("payments aren't switched on until Google is connected", P.PAYMENTS_READY, false);
 
 console.log(fail ? `\n${fail} FAILED` : "\nALL PASSED");

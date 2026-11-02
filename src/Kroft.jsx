@@ -2730,7 +2730,7 @@ function LogoutDialog({ onConfirm, onCancel }) {
 
 // Permanent account deletion. Deliberately harder to reach than log out: the user has to type
 // DELETE, because unlike log out there is no way back.
-function DeleteAccountDialog({ onConfirm, onCancel, synced, subscribed }) {
+function DeleteAccountDialog({ onConfirm, onCancel, synced, subscribed, plan }) {
   const [busy, setBusy] = useState(false);
   const [typed, setTyped] = useState("");
   const ref = useModalA11y(busy ? () => {} : onCancel);
@@ -2752,7 +2752,7 @@ function DeleteAccountDialog({ onConfirm, onCancel, synced, subscribed }) {
               ? "This permanently deletes your KROFT account and everything in it: chats, finances, contacts, notes, wellness entries and files. Linked Google or Microsoft accounts are disconnected."
               : "This permanently erases everything KROFT has stored on this device: chats, finances, contacts, notes, wellness entries and files."}
           </p>
-          {subscribed && <p style={{ margin:"0 0 10px" }}>Your KROFT Plus subscription will be cancelled.</p>}
+          {subscribed && <p style={{ margin:"0 0 10px" }}>Your {plan === "pro" ? "KROFT Pro" : "KROFT Plus"} subscription will be cancelled.</p>}
           <p style={{ margin:0 }}>This can't be undone. Download a backup first if you want to keep a copy.</p>
         </div>
         <label htmlFor="delete-confirm" style={{ display:"block", fontSize:14, color:C.text, margin:"0 8px 8px" }}>Type <b>DELETE</b> to confirm</label>
@@ -3585,7 +3585,10 @@ function AdminScreen({ fetcher, onClose, toast }) {
             {data.feedback.map(f => (
               <Card key={f.id} level="raised" style={{ padding:"10px 12px", opacity: f.done ? .55 : 1 }}>
                 <div style={{ display:"flex", justifyContent:"space-between", gap:8, marginBottom:4 }}>
-                  <Tag tone={f.kind === "problem" ? "negative" : f.kind === "praise" ? "positive" : "accent"}>{({ problem:"SOMETHING'S WRONG", idea:"IDEA", praise:"PRAISE" })[f.kind] || "FEEDBACK"}</Tag>
+                  <div style={{ display:"flex", gap:6 }}>
+                    <Tag tone={f.kind === "problem" ? "negative" : f.kind === "praise" ? "positive" : "accent"}>{({ problem:"SOMETHING'S WRONG", idea:"IDEA", praise:"PRAISE" })[f.kind] || "FEEDBACK"}</Tag>
+                    {f.pro && <Tag tone="positive">PRO · PRIORITY</Tag>}
+                  </div>
                   <Mono style={{ color:C.muted }}>{when(f.created_at)}</Mono>
                 </div>
                 <div style={{ fontSize:13, color:C.text, lineHeight:1.5, whiteSpace:"pre-wrap" }}>{f.message}</div>
@@ -4105,11 +4108,12 @@ function ProfileSwitch({ value, onChange }) {
   );
 }
 
-function ProfileSection({ onFeedback, isAdmin, onAdmin, nav, onNav, connections, user, onUpdateName, onEditBusinessDetails, onSignOut, theme, onToggleTheme, toast, subscribed, subscriptionStatus, autoRenews, billingLoading, onUpgrade, onManageBilling, usageStats, voiceReplies, onSetVoiceReplies, proactiveInsights, onSetProactiveInsights, wellnessAiContext, onSetWellnessAiContext, voicePref, onSetVoicePref, voiceSpeed, onSetVoiceSpeed, onSetupBiometric, onRemoveBiometric, biometricOn, onExportData, onImportData, onDeleteAccount, notifPermission, notifPrefs, onEnableNotifications, onSetNotifPref, onTestNotification, voiceTurnsCount, voiceLimit }) {
+function ProfileSection({ onFeedback, isAdmin, onAdmin, nav, onNav, connections, user, onUpdateName, onEditBusinessDetails, onSignOut, theme, onToggleTheme, toast, subscribed, plan = "free", subscriptionStatus, autoRenews, billingLoading, onUpgrade, onManageBilling, usageStats, voiceReplies, onSetVoiceReplies, proactiveInsights, onSetProactiveInsights, wellnessAiContext, onSetWellnessAiContext, voicePref, onSetVoicePref, voiceSpeed, onSetVoiceSpeed, onSetupBiometric, onRemoveBiometric, biometricOn, onExportData, onImportData, onDeleteAccount, notifPermission, notifPrefs, onEnableNotifications, onSetNotifPref, onTestNotification, voiceTurnsCount, voiceLimit }) {
   // nav.screen is null for the main hub, otherwise a key of SCREENS below. Held in KroftApp (see
   // profileNav there) so it survives the remount a theme change triggers.
   const { screen, openRow } = nav;
   const setOpenRow = row => onNav(n => ({ ...n, openRow:row }));
+  const planName = plan === "pro" ? "KROFT Pro" : "KROFT Plus";
   const fileInputRef = useRef(null);
   const [confirmLogout, setConfirmLogout] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -4395,7 +4399,7 @@ function ProfileSection({ onFeedback, isAdmin, onAdmin, nav, onNav, connections,
       <ProfileRow label="Manage Subscription" sub={subscribed ? "Change or cancel plan" : "You're on the free plan"} expanded={openRow==="managesub"} onToggle={()=>toggle("managesub")}>
         {subscribed ? (
           <>
-            <Mono style={{ display:"block", color:C.soft, lineHeight:1.7, marginBottom:10 }}>You're on KROFT Plus. Cancel any time, right here — there's no separate billing site to visit.</Mono>
+            <Mono style={{ display:"block", color:C.soft, lineHeight:1.7, marginBottom:10 }}>You're on {planName}. Cancel any time, right here — there's no separate billing site to visit.</Mono>
             <Btn sm v="outline" disabled={billingLoading} onClick={onManageBilling}>{billingLoading ? <Spinner size={14} color={C.soft} thickness={2} /> : "Cancel plan"}</Btn>
           </>
         ) : (
@@ -4439,7 +4443,7 @@ function ProfileSection({ onFeedback, isAdmin, onAdmin, nav, onNav, connections,
   const planSummary = (
     <Card style={{ marginBottom:16, border:`1px solid ${C.border}` }}>
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
-        <div style={{ fontSize:16, fontWeight:800, color:C.white }}>{subscribed ? "KROFT Plus" : "Free Plan"}</div>
+        <div style={{ fontSize:16, fontWeight:800, color:C.white }}>{subscribed ? planName : "Free Plan"}</div>
         <Tag tone={subscribed?"positive":undefined}>{subscribed ? "Active" : "Current"}</Tag>
       </div>
       {/* Chat, AI drafts/suggestions and monthly reports are unlimited on every plan — nothing
@@ -4464,8 +4468,11 @@ function ProfileSection({ onFeedback, isAdmin, onAdmin, nav, onNav, connections,
         <Mono style={{ display:"block", color:C.soft, marginBottom:14 }}>Unlimited chat, voice, drafts and reports.</Mono>
       )}
       {subscribed
-        ? <Btn sm v="outline" disabled={billingLoading} onClick={onManageBilling}>{billingLoading ? <Spinner size={14} color={C.soft} thickness={2} /> : "Cancel plan"}</Btn>
-        : <Btn sm disabled={billingLoading} onClick={onUpgrade}>{billingLoading ? <Spinner size={14} color={C.black} thickness={2} /> : "Upgrade to KROFT Plus"}</Btn>}
+        ? <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+            {plan === "plus" && <Btn sm onClick={onUpgrade}>See KROFT Pro</Btn>}
+            <Btn sm v="outline" disabled={billingLoading} onClick={onManageBilling}>{billingLoading ? <Spinner size={14} color={C.soft} thickness={2} /> : "Cancel plan"}</Btn>
+          </div>
+        : <Btn sm disabled={billingLoading} onClick={onUpgrade}>{billingLoading ? <Spinner size={14} color={C.black} thickness={2} /> : "See plans"}</Btn>}
     </Card>
   );
 
@@ -4473,7 +4480,7 @@ function ProfileSection({ onFeedback, isAdmin, onAdmin, nav, onNav, connections,
   // tapping into a screen only to tap again to reveal its one row is a wasted step.
   const SCREENS = {
     connected:       { title:"Connected apps", body:<ConnectedApps google={connections.google} microsoft={connections.microsoft} />, rows:[] },
-    plan:            { title:subscribed ? "KROFT Plus" : "Upgrade plan", top:planSummary, rows:["plus", "billing", "paymethods", "managesub"] },
+    plan:            { title:subscribed ? planName : "Upgrade plan", top:planSummary, rows:["plus", "billing", "paymethods", "managesub"] },
     usage:           { title:"Usage and limits", rows:["usage"] },
     appearance:      { title:"Appearance", rows:["appearance", "sounds"] },
     notifications:   { title:"Notifications", rows:["notifs"] },
@@ -4507,7 +4514,7 @@ function ProfileSection({ onFeedback, isAdmin, onAdmin, nav, onNav, connections,
           </Card>
         )}
         {s.bottom}
-        {confirmDelete && createPortal(<DeleteAccountDialog synced={isSupabaseConfigured} subscribed={subscribed}
+        {confirmDelete && createPortal(<DeleteAccountDialog synced={isSupabaseConfigured} subscribed={subscribed} plan={plan}
           onCancel={() => setConfirmDelete(false)} onConfirm={onDeleteAccount} />, document.body)}
       </div>
     );
@@ -4520,7 +4527,7 @@ function ProfileSection({ onFeedback, isAdmin, onAdmin, nav, onNav, connections,
     { title:"Account", items:[
       { icon:"store", label:"Business", value:`${user.businessName || "Personal"} · ${user.currency}`, onClick:onEditBusinessDetails },
       subscribed
-        ? { key:"plan", icon:"crown", label:"KROFT Plus", value:"Active" }
+        ? { key:"plan", icon:"crown", label:planName, value:"Active" }
         // Free users see the plans straight away; a failed renewal still opens the billing page.
         : { key:"plan", icon:"crown", label:"Upgrade plan", tone:"accent", value:subscriptionStatus === "past_due" ? "Renewal failed" : "", onClick: subscriptionStatus === "past_due" ? undefined : onUpgrade },
       { key:"usage", icon:"gauge", label:"Usage and limits" },
@@ -5081,6 +5088,7 @@ function KroftApp({ onFullReset } = {}) {
   const [newReminder, setNewReminder] = useState({ text:"", when:"", contactId:null });
   const [editingReminder, setEditingReminder] = useState(null);
   const [showAddReminder, setShowAddReminder] = useState(false);
+  const [showDoneReminders, setShowDoneReminders] = useState(false);   // Reminders: the Done list, folded away by default
   // Plus: KROFT calls at a set time instead of just showing a reminder. { id, title, note, date,
   // time, status: "pending"|"answered"|"missed"|"declined" }. Honest limitation, same as every
   // other notification here: this only works while KROFT is open in a tab (foreground or
@@ -12129,16 +12137,32 @@ ${voiceMode
         {/* ── WORKSPACE: REMINDERS ── */}
         {tab==="workspace" && workspaceSection==="reminders" && (
           <div style={{ animation:"fadeUp .4s ease" }}>
-            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:18 }}>
-              <h2 style={{ fontSize:22, fontWeight:700, color:C.white, letterSpacing:-1 }}>Reminders</h2>
-              <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
-                <Btn sm v="outline" onClick={suggestSmartReminder} disabled={suggestingReminder}>{suggestingReminder ? <><Spinner size={11} color={C.soft} thickness={2} />Thinking…</> : "AI Suggest"}</Btn>
-                <Btn sm v="outline" onClick={() => { if (!subscribed) { toast("Scheduled calls are a KROFT Plus feature."); setShowPlans(""); return; } setShowScheduleCall(v=>!v); }}>
-                  {subscribed ? "Schedule a call" : "Schedule a call · Plus"}
-                </Btn>
-                <Btn sm onClick={() => setShowAddReminder(v=>!v)}>+ Add</Btn>
-              </div>
-            </div>
+            {/* The screen's title is in the bar above, so this starts with what matters: how many
+                are left, one clear way to add a reminder, and the two extras side by side. */}
+            {(() => {
+              const left = smartReminders.filter(r => !r.done).length;
+              const done = smartReminders.length - left;
+              return (
+                <div style={{ marginBottom:18 }}>
+                  {smartReminders.length > 0 && (
+                    <div style={{ display:"flex", alignItems:"baseline", gap:8, marginBottom:14 }}>
+                      <div style={{ fontSize:28, fontWeight:700, color:C.white, letterSpacing:-1 }}>{left}</div>
+                      <Mono style={{ color:C.soft }}>{left === 1 ? "reminder to go" : "reminders to go"}{done ? ` · ${done} done` : ""}</Mono>
+                    </div>
+                  )}
+                  <Btn full onClick={() => setShowAddReminder(v=>!v)}><NavIcon id="plus" size={16} />{showAddReminder ? "Close" : "New reminder"}</Btn>
+                  <div style={{ display:"flex", gap:8, marginTop:8 }}>
+                    <Btn sm v="outline" style={{ flex:1, whiteSpace:"nowrap" }} onClick={suggestSmartReminder} disabled={suggestingReminder}>
+                      {suggestingReminder ? <><Spinner size={11} color={C.soft} thickness={2} />Thinking…</> : <><NavIcon id="wand" size={15} />AI suggest</>}
+                    </Btn>
+                    <Btn sm v="outline" style={{ flex:1, position:"relative", whiteSpace:"nowrap" }} aria-label={subscribed ? "Schedule a call" : "Schedule a call (KROFT Plus)"} onClick={() => { if (!subscribed) { toast("Scheduled calls are a KROFT Plus feature."); setShowPlans(""); return; } setShowScheduleCall(v=>!v); }}>
+                      <NavIcon id="phone" size={15} />Schedule a call
+                      {!subscribed && <Tag tone="accent" style={{ position:"absolute", top:-8, right:8, background:C.bg, fontSize:9, padding:"1px 6px" }}>PLUS</Tag>}
+                    </Btn>
+                  </div>
+                </div>
+              );
+            })()}
             {showAddReminder && (
               <Card style={{ marginBottom:13, border:`1px solid ${C.border}` }}>
                 <div style={{ fontSize:13, fontWeight:700, color:C.text, marginBottom:11 }}>New reminder</div>
@@ -12199,17 +12223,18 @@ ${voiceMode
 
             {smartReminders.length===0 && !showAddReminder && (
               <Card level="inset" style={{ textAlign:"center", padding:26, borderStyle:"dashed" }}>
-                <div style={{ fontSize:15, fontWeight:600, color:C.white, marginBottom:6 }}>No reminders yet</div>
-                <Mono style={{ display:"block", color:C.soft, marginBottom:18 }}>Add one yourself, or let KROFT suggest something useful.</Mono>
-                <div style={{ display:"flex", gap:9, justifyContent:"center" }}>
-                  <Btn sm onClick={() => setShowAddReminder(true)}>+ Add</Btn>
-                  <Btn sm v="outline" onClick={suggestSmartReminder} disabled={suggestingReminder}>{suggestingReminder ? <><Spinner size={11} color={C.soft} thickness={2} />Thinking…</> : "AI Suggest"}</Btn>
-                </div>
+                <NavIcon id="reminders" size={26} color={C.muted} />
+                <div style={{ fontSize:15, fontWeight:600, color:C.white, margin:"10px 0 6px" }}>No reminders yet</div>
+                <Mono style={{ display:"block", color:C.soft, lineHeight:1.6 }}>Add one above, or tap AI suggest and KROFT will find something worth remembering.</Mono>
               </Card>
             )}
-            {[...smartReminders].sort((a,b)=>(a.done===b.done)?0:a.done?1:-1).map(r => (
-              editingReminder && editingReminder.id===r.id ? (
-                <Card key={r.id} style={{ marginBottom:9, border:`1px solid ${C.soft}` }}>
+            {(() => {
+              const contactOf = r => r.contactId && contacts.find(c => c.id === r.contactId);
+              const toggle = r => { setSmartReminders(p => p.map(x => x.id === r.id ? { ...x, done:!x.done } : x)); if (!r.done) playSound("done"); };
+              // One row of the list. Tap the words to edit; tap the circle to tick it off; hold for
+              // more (edit, delete).
+              const row = (r, i) => editingReminder && editingReminder.id === r.id ? (
+                <div key={r.id} style={{ padding:"14px 16px", borderTop: i ? `1px solid ${C.div}` : "none" }}>
                   <div style={{ fontSize:13, fontWeight:700, color:C.text, marginBottom:11 }}>Edit reminder</div>
                   <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
                     <Inp placeholder="Remind me to…" value={editingReminder.text} onChange={e=>setEditingReminder(v=>({...v,text:e.target.value}))} style={{ flex:2, minWidth:140 }} />
@@ -12220,26 +12245,61 @@ ${voiceMode
                     <Btn sm v="outline" onClick={() => setEditingReminder(null)} style={{ flex:1 }}>Cancel</Btn>
                     <Btn sm onClick={() => { if (!editingReminder.text.trim()) return; setSmartReminders(p=>p.map(x=>x.id===r.id?editingReminder:x)); setEditingReminder(null); toast("Reminder updated."); }} style={{ flex:1 }}>Save</Btn>
                   </div>
-                </Card>
+                </div>
               ) : (
-              <Card key={r.id} {...longPress(() => setActionSheet(holdActions({ title:r.text, subtitle:r.when, onEdit:() => setEditingReminder({...r}), list:smartReminders, setList:setSmartReminders, id:r.id, deletedLabel:"Reminder removed." })))} style={{ marginBottom:9, opacity:r.done?.55:1, WebkitTouchCallout:"none", WebkitUserSelect:"none", userSelect:"none", }}>
-                <div style={{ display:"flex", alignItems:"center", gap:12 }}>
-                  <button onClick={() => setSmartReminders(p=>p.map(x=>x.id===r.id?{...x,done:!x.done}:x))} style={{ width:20, height:20, borderRadius:6, border:`1.5px solid ${r.done?C.white:C.soft}`, background:r.done?C.white:"transparent", cursor:"pointer", flexShrink:0, display:"flex", alignItems:"center", justifyContent:"center", color:C.black, fontSize:12, fontWeight:900 }}>
+                <div key={r.id} {...longPress(() => setActionSheet(holdActions({ title:r.text, subtitle:r.when, onEdit:() => setEditingReminder({...r}), list:smartReminders, setList:setSmartReminders, id:r.id, deletedLabel:"Reminder removed." })))}
+                  style={{ display:"flex", alignItems:"flex-start", gap:12, padding:"14px 16px", borderTop: i ? `1px solid ${C.div}` : "none", WebkitTouchCallout:"none", WebkitUserSelect:"none", userSelect:"none" }}>
+                  <button aria-label={r.done ? `Mark "${r.text}" not done` : `Mark "${r.text}" done`} onClick={() => toggle(r)}
+                    style={{ width:24, height:24, marginTop:1, borderRadius:"50%", border:`1.5px solid ${r.done ? C.positive : C.muted}`, background:r.done ? C.positive : "transparent", cursor:"pointer", flexShrink:0, display:"flex", alignItems:"center", justifyContent:"center", color:"#fff", fontSize:12, fontWeight:900, padding:0, transition:"all .18s ease" }}>
                     {r.done ? "✓" : ""}
                   </button>
-                  <div style={{ flex:1, minWidth:0 }}>
-                    <div style={{ display:"flex", alignItems:"center", gap:7, marginBottom:3, flexWrap:"wrap" }}>
-                      <div style={{ fontSize:13, fontWeight:600, color:C.white, textDecoration:r.done?"line-through":"none" }}>{r.text}</div>
+                  <div role="button" tabIndex={0} aria-label={`Edit "${r.text}"`} onClick={() => setEditingReminder({...r})} onKeyDown={e => { if (e.key==="Enter"||e.key===" ") { e.preventDefault(); setEditingReminder({...r}); } }} style={{ flex:1, minWidth:0, cursor:"pointer" }}>
+                    <div style={{ fontSize:14, fontWeight:600, lineHeight:1.4, color:r.done ? C.muted : C.white, textDecoration:r.done ? "line-through" : "none", overflowWrap:"anywhere" }}>{r.text}</div>
+                    <div style={{ display:"flex", alignItems:"center", gap:6, marginTop:5, flexWrap:"wrap" }}>
+                      <span style={{ display:"inline-flex", alignItems:"center", gap:4, color:C.soft }}><NavIcon id="reminders" size={13} /><Mono style={{ color:C.soft }}>{r.when || "No time set"}</Mono></span>
                       {r.aiSuggested && <Tag tone="accent">AI</Tag>}
-                      {r.contactId && contacts.find(c=>c.id===r.contactId) && <Tag>{contacts.find(c=>c.id===r.contactId).name}</Tag>}
+                      {contactOf(r) && <Tag>{contactOf(r).name}</Tag>}
                     </div>
-                    <Mono style={{ color:C.soft }}>{r.when}</Mono>
                   </div>
-                  <Btn sm v="outline" onClick={() => setEditingReminder({...r})}>Edit</Btn>
                 </div>
-              </Card>
-              )
-            ))}
+              );
+              const open = smartReminders.filter(r => !r.done);
+              const done = smartReminders.filter(r => r.done);
+              const label = text => <div style={{ fontSize:12, fontWeight:600, color:C.muted, margin:"0 2px 8px" }}>{text}</div>;
+              return (
+                <>
+                  {open.length > 0 && (
+                    <div style={{ marginBottom:18 }}>
+                      {label("To do")}
+                      <Card style={{ padding:0, overflow:"hidden" }}>{open.map(row)}</Card>
+                    </div>
+                  )}
+                  {open.length === 0 && done.length > 0 && (
+                    <Card level="inset" style={{ textAlign:"center", padding:22, marginBottom:18 }}>
+                      <div style={{ fontSize:15, fontWeight:600, color:C.white, marginBottom:4 }}>All done</div>
+                      <Mono style={{ color:C.soft }}>Nothing left to remember. Nice.</Mono>
+                    </Card>
+                  )}
+                  {done.length > 0 && (
+                    <div>
+                      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
+                        <button onClick={() => setShowDoneReminders(v => !v)} aria-expanded={showDoneReminders}
+                          style={{ background:"none", border:"none", padding:"6px 2px", cursor:"pointer", fontSize:12, fontWeight:600, color:C.muted, fontFamily:APP_FONT, display:"inline-flex", alignItems:"center", gap:6 }}>
+                          <span style={{ display:"inline-block", transform:`rotate(${showDoneReminders ? 90 : 0}deg)`, transition:"transform .18s ease" }}>›</span>
+                          Done ({done.length})
+                        </button>
+                        {showDoneReminders && <Btn sm v="ghost" style={{ color:C.soft }} onClick={() => {
+                          const prev = smartReminders;
+                          setSmartReminders(p => p.filter(r => !r.done));
+                          toast(`Cleared ${done.length} done reminder${done.length === 1 ? "" : "s"}.`, () => setSmartReminders(prev));
+                        }}>Clear done</Btn>}
+                      </div>
+                      {showDoneReminders && <Card style={{ padding:0, overflow:"hidden", opacity:.75 }}>{done.map(row)}</Card>}
+                    </div>
+                  )}
+                </>
+              );
+            })()}
           </div>
         )}
 
@@ -13344,7 +13404,7 @@ ${voiceMode
               subscriptionStatus={subscriptionStatus}
               autoRenews={autoRenews}
               billingLoading={billingLoading}
-              onUpgrade={() => setShowPlans("")}
+              onUpgrade={() => setShowPlans("")} plan={plan}
               onManageBilling={cancelKroftPlus}
               voiceReplies={voiceReplies}
               onSetVoiceReplies={setVoiceReplies}
