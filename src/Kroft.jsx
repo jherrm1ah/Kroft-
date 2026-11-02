@@ -10,6 +10,7 @@ import { DEFAULT_INVOICE_SETTINGS, taxName, userLocale, invoiceTotals, invoiceSt
 import { invoicePdf, invoiceFileName, receiptPdf, statementPdf } from "./invoices/pdf.js";
 import { PLANS, PAYMENTS_READY, planPrice, monthsFree, currentPlan, featureText } from "./plans.js";
 import { projectMoney, milestoneState, milestoneWhen, milestoneInvoice, milestoneInvoiceProblem, milestoneInvoiceItems, milestoneReminders, projectLineForAI } from "./projects/money.js";
+import { receiptPrompt, parseReceiptReply, shrinkPhoto, SCAN_PROBLEM } from "./receipts/scan.js";
 import { createBill, billProblem, billStatus, billBalance, billPaid, billPayments, billWhen, billIsOpen, recordBillPayment, removeBillPayment, syncBillsWithExpenses, billsSummary, supplierSummaries, sortBills, billReminders, billsForAI, billExpenseLabel, BILL_STATUS_LABEL } from "./bills/model.js";
 import { receiptFor, receiptMessage, receiptFileName, statementCurrencies, statementFor, statementMessage, statementFileName, periodStart } from "./invoices/documents.js";
 import { saveFile } from "./saveFile.js";
@@ -4785,6 +4786,8 @@ function KroftApp({ onFullReset } = {}) {
   const [newExp, setNewExp] = useState({ label:"", amount:"", cat:"Operations", date:todayISO(), repeat:"none" });
   const [showAddInc, setShowAddInc] = useState(false);
   const [showAddExp, setShowAddExp] = useState(false);
+  const [scan, setScan] = useState(null);              // Scan receipt: { photo, busy } while reading, then { photo, result }
+  const scanInputRef = useRef(null);
   // Entry History: a single combined, reverse-chronological feed of every income and expense
   // entry — the inline Transactions section below already lists everything, but as two separate
   // per-type cards, each independently sorted, so there's nowhere that shows "what did I log on
@@ -6242,6 +6245,34 @@ function KroftApp({ onFullReset } = {}) {
       }
     }
     return fetch(path, { ...opts, headers });
+  };
+
+  // Scan receipt: shrink the photo, have KROFT's AI read it (counted as "vision"), then show
+  // what it read to check. Nothing is saved until the person picks expense or bill.
+  const scanReceipt = async e => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    let photo;
+    try { photo = await shrinkPhoto(file); } catch { toast("That file isn't a photo KROFT can read."); return; }
+    setScan({ photo, busy:true });
+    const today = todayISO();
+    const opts = { categories:expenseCats, currency:user.currency, today };
+    try {
+      const res = await aiFetch("/api/chat", { method:"POST", headers:{ "X-Kroft-Usage-Type":"vision" }, body:JSON.stringify({
+        model:"gemini-3.6-flash", max_tokens:300, system:receiptPrompt(opts),
+        messages:[{ role:"user", content:[{ type:"image", source:{ type:"base64", media_type:"image/jpeg", data:photo.slice(photo.indexOf(",") + 1) } }, { type:"text", text:"Read this receipt." }] }],
+      }) });
+      if (res.status === 429) { setScan(null); toast("You've used today's receipt scans on the free plan."); setShowPlans(""); return; }
+      if (!res.ok) throw new Error(String(res.status));
+      const data = await res.json();
+      const result = parseReceiptReply((data.content || []).map(b => b.text || "").join(""), opts);
+      if (!result.ok) { setScan(null); toast(SCAN_PROBLEM[result.reason]); return; }
+      setScan({ photo, result });
+    } catch {
+      setScan(null);
+      toast(online ? "Couldn't read the receipt right now. Add it by hand, or try again in a moment." : "You're offline. Scan the receipt again once you're back online.");
+    }
   };
 
   // The actual source of truth for Gmail/Calendar connection state — called after a successful
@@ -9830,6 +9861,46 @@ ${voiceMode
           }}
           onRemoveExpense={id => setExpenses(p => p.filter(x => x.id !== id))} />
       )}
+      <input ref={scanInputRef} type="file" accept="image/*" capture="environment" aria-label="Receipt photo" style={{ display:"none" }} onChange={scanReceipt} />
+      {scan && (
+        <div role="dialog" aria-modal="true" aria-label="Scanned receipt" style={{ position:"fixed", inset:0, zIndex:335, background:"rgba(0,0,0,.45)", display:"flex", alignItems:"flex-end", justifyContent:"center" }} onClick={() => !scan.busy && setScan(null)}>
+          <div onClick={e => e.stopPropagation()} style={{ width:"100%", maxWidth:520, background:C.bg, borderRadius:"20px 20px 0 0", padding:"18px 16px calc(18px + env(safe-area-inset-bottom))", display:"flex", flexDirection:"column", gap:12 }}>
+            <div style={{ display:"flex", gap:12, alignItems:"center" }}>
+              <img src={scan.photo} alt="Your receipt" style={{ width:64, height:84, objectFit:"cover", borderRadius:10, border:`1px solid ${C.cardB}`, flexShrink:0 }} />
+              {scan.busy ? (
+                <div style={{ display:"flex", alignItems:"center", gap:10 }}><Spinner size={16} color={C.accent} /><span style={{ fontSize:14, color:C.text }}>Reading your receipt…</span></div>
+              ) : (
+                <div style={{ minWidth:0 }}>
+                  <div style={{ fontSize:16, fontWeight:700, color:C.white, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{scan.result.merchant}</div>
+                  <div style={{ fontSize:22, fontWeight:700, color:C.white, letterSpacing:-.6 }}>{fmtCur(scan.result.total, scan.result.currency)}</div>
+                  <Mono style={{ color:C.soft }}>{[fmtDate(scan.result.date), scan.result.category, scan.result.due && `due ${fmtDate(scan.result.due)}`].filter(Boolean).join(" · ")}</Mono>
+                </div>
+              )}
+            </div>
+            {!scan.busy && (
+              <>
+                <Mono style={{ color:C.muted, lineHeight:1.6 }}>Read by KROFT's AI. Check it before you save; you can change anything.</Mono>
+                {(() => {
+                  const r = scan.result;
+                  const asExpense = () => { setNewExp({ label:r.merchant, amount:String(r.total), cat:r.category || (expenseCats.includes("Operations") ? "Operations" : expenseCats[0]), date:r.date, repeat:"none", cur:r.currency }); setShowAddInc(false); setShowAddExp(true); setScan(null); };
+                  const asBill = () => {
+                    const bill = createBill({ supplier:r.merchant, amount:r.total, currency:r.currency, category:r.category, billDate:r.date, dueDate:r.due || undefined, today:todayISO(), id:String(uid()) });
+                    setBills(p => [bill, ...p]); setScan(null); setShowBills(true);
+                    toast(`Bill from ${r.merchant} saved. Pay it from Bills.`);
+                  };
+                  const expenseBtn = <Btn key="e" full v={r.due ? "outline" : "solid"} onClick={asExpense}>Add as expense (paid)</Btn>;
+                  const billBtn = <Btn key="b" full v={r.due ? "solid" : "outline"} onClick={asBill}>Save as a bill to pay</Btn>;
+                  return r.due ? [billBtn, expenseBtn] : [expenseBtn, billBtn];
+                })()}
+                <div style={{ display:"flex", gap:8 }}>
+                  <Btn sm v="outline" style={{ flex:1 }} onClick={() => { setScan(null); scanInputRef.current?.click(); }}>Retake</Btn>
+                  <Btn sm v="outline" style={{ flex:1 }} onClick={() => setScan(null)}>Cancel</Btn>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
       {showPlans !== null && (
         <PlansSheet user={user} current={currentPlan({ subscribed })} onClose={() => setShowPlans(null)} toast={toast} />
       )}
@@ -10323,6 +10394,7 @@ ${voiceMode
             <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:18 }}>
               <Btn sm onClick={() => { setShowAddInc(v=>!v); setShowAddExp(false); }}>Add Income</Btn>
               <Btn sm v="outline" onClick={() => { setShowAddExp(v=>!v); setShowAddInc(false); }}>Add Expense</Btn>
+              <Btn sm v="outline" onClick={() => scanInputRef.current?.click()}>Scan receipt</Btn>
               <Btn sm v="outline" onClick={() => setShowInvoices(true)}>Invoices{(() => { const n = invoices.filter(inv => invoiceStatus(inv, todayISO()) === "overdue").length; return n ? ` · ${n} overdue` : ""; })()}</Btn>
               <Btn sm v="outline" onClick={() => setShowBills(true)}>Bills{(() => { const n = bills.filter(b => billStatus(b, todayISO()) === "overdue").length; return n ? ` · ${n} overdue` : ""; })()}</Btn>
               <Btn sm v="outline" onClick={exportFinanceCsv}>Export</Btn>
@@ -10640,7 +10712,7 @@ ${voiceMode
                   const amt = parseAmount(newExp.amount);
                   if (amt === null) { toast("Enter an amount greater than zero."); return; }
                   const isFirstEverEntry = income.length === 0 && expenses.length === 0;
-                  const base = { id:uid(), ...newExp, amount:amt, date:newExp.date||todayISO(), cur:user.currency };
+                  const base = { id:uid(), ...newExp, amount:amt, date:newExp.date||todayISO(), cur:newExp.cur||user.currency };
                   // A repeating entry counts as its own first posting, so nextDate starts one
                   // cadence ahead — otherwise the engine would immediately duplicate it.
                   if (base.repeat && base.repeat !== "none") base.nextDate = advanceRepeatDate(base.date, base.repeat);
