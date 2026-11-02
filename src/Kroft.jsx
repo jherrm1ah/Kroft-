@@ -8,6 +8,8 @@ import { copyRich, copyPlain } from "./markdown/clipboard.js";
 import { offlineUserId, flushPending, clearOfflineData, hasUnsyncedChanges, unreadableKeys } from "./storageShim.js";
 import { DEFAULT_INVOICE_SETTINGS, taxName, userLocale, invoiceTotals, invoiceStatus, invoiceAllowance, quoteAllowance, createInvoice, createQuote, invoiceFromQuote, invoiceProblem, FREE_INVOICES_PER_MONTH, FREE_QUOTES_PER_MONTH, whatsappLink, sendMessage, reminderMessage, quoteMessage, prettyDate, STATUS_LABEL, invoicesForAI, quotesForAI, daysBetween, docStatus, clientSummaries, clientKey, recordPayment, removePayment, amountPaid, balanceDue, paymentsOf, hasPayments, syncInvoicesWithIncome, quoteStatus, fromName } from "./invoices/model.js";
 import { invoicePdf, invoiceFileName, receiptPdf, statementPdf } from "./invoices/pdf.js";
+import { PLANS, PAYMENTS_READY, planPrice, monthsFree, currentPlan, featureText } from "./plans.js";
+import { createBill, billProblem, billStatus, billBalance, billPaid, billPayments, billWhen, billIsOpen, recordBillPayment, removeBillPayment, syncBillsWithExpenses, billsSummary, supplierSummaries, sortBills, billReminders, billsForAI, billExpenseLabel, BILL_STATUS_LABEL } from "./bills/model.js";
 import { receiptFor, receiptMessage, receiptFileName, statementCurrencies, statementFor, statementMessage, statementFileName, periodStart } from "./invoices/documents.js";
 import { saveFile } from "./saveFile.js";
 import { contactRecords, contactMoney, contactSummary, initials, relativeDay } from "./contacts/profile.js";
@@ -3379,7 +3381,10 @@ function InvoicesScreen({ invoices, setInvoices, quotes, setQuotes, settings, se
                 <Btn sm style={{ flex:1 }} onClick={() => startNew("invoice", c)}>New invoice</Btn>
                 <Btn sm v="outline" style={{ flex:1 }} onClick={() => startNew("quote", c)}>New quote</Btn>
               </div>
-              {c.invoiceCount > 0 && <Btn sm v="outline" full onClick={() => { setStmt({ period: "all", currency: null }); setView("statement"); }}>Statement of account</Btn>}
+              {c.invoiceCount > 0 && <Btn sm v="outline" full onClick={() => {
+                if (!subscribed) { toast("Client statements are a KROFT Plus feature."); onUpgrade?.(); return; }
+                setStmt({ period: "all", currency: null }); setView("statement");
+              }}>{subscribed ? "Statement of account" : "Statement of account · Plus"}</Btn>}
               <div style={{ fontSize:12, fontWeight:600, color:C.muted, marginTop:6 }}>History</div>
               <div style={{ display:"flex", flexDirection:"column", gap:9 }}>{docs.map(d => docRow(d, "client"))}</div>
             </>
@@ -3490,6 +3495,344 @@ function InvoicesScreen({ invoices, setInvoices, quotes, setQuotes, settings, se
   );
 }
 
+// The plan picker: shown whenever someone taps Upgrade, so they see what Free, Plus and Pro each
+// include and cost before paying for anything. Plans and prices are in src/plans.js.
+function PlansSheet({ user, current, onClose, toast }) {
+  const [period, setPeriod] = useState("month");
+  const [chosen, setChosen] = useState(null);           // a paid plan picked, before paying
+  const money = p => fmtCur(p.amount, p.currency).replace(/[.,]00$/, "");
+  const per = period === "year" ? "a year" : "a month";
+  const plan = id => PLANS.find(x => x.id === id);
+
+  if (chosen) {
+    const p = planPrice(chosen, period, user.currency);
+    return (
+      <div role="dialog" aria-modal="true" aria-label="Upgrade" style={{ position:"fixed", inset:0, zIndex:340, background:C.bg, display:"flex", flexDirection:"column" }}>
+        <div style={{ display:"flex", alignItems:"center", gap:10, padding:"calc(12px + env(safe-area-inset-top)) 16px 12px", borderBottom:`1px solid ${C.cardB}` }}>
+          <button onClick={() => setChosen(null)} aria-label="Back" style={{ background:"none", border:"none", color:C.white, cursor:"pointer", fontSize:20, padding:"2px 4px", lineHeight:1 }}>←</button>
+          <h2 style={{ fontSize:17, fontWeight:700, color:C.white, letterSpacing:-.5 }}>KROFT {plan(chosen).name}</h2>
+        </div>
+        <div style={{ flex:1, overflowY:"auto", padding:16, display:"flex", flexDirection:"column", gap:14 }}>
+          <Card level="raised">
+            <Mono style={{ display:"block", color:C.muted, marginBottom:4 }}>{period === "year" ? "Billed yearly" : "Billed monthly"}</Mono>
+            <div style={{ fontSize:26, fontWeight:700, color:C.white, letterSpacing:-.8 }}>{money(p)} <span style={{ fontSize:14, fontWeight:500, color:C.soft }}>{per}</span></div>
+            <Mono style={{ display:"block", color:C.soft, marginTop:6, lineHeight:1.6 }}>Cancel any time. You keep {plan(chosen).name} until the end of the period you paid for.</Mono>
+          </Card>
+          {PAYMENTS_READY ? null : (
+            <Card level="inset" style={{ borderStyle:"dashed" }}>
+              <div style={{ fontSize:14, fontWeight:600, color:C.white, marginBottom:4 }}>Payment through Google is almost ready</div>
+              <Mono style={{ display:"block", color:C.soft, lineHeight:1.6 }}>You'll pay with Google Pay, using the card already on your Google account. We're finishing the setup with Google. Nothing has been charged.</Mono>
+            </Card>
+          )}
+          <Btn full disabled={!PAYMENTS_READY} onClick={() => toast("Payment through Google is almost ready.")}>{PAYMENTS_READY ? "Pay with Google Pay" : "Google Pay · coming soon"}</Btn>
+          <Btn full v="outline" onClick={onClose}>Not now</Btn>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div role="dialog" aria-modal="true" aria-label="Choose your plan" style={{ position:"fixed", inset:0, zIndex:340, background:C.bg, display:"flex", flexDirection:"column" }}>
+      <div style={{ display:"flex", alignItems:"center", gap:10, padding:"calc(12px + env(safe-area-inset-top)) 16px 12px", borderBottom:`1px solid ${C.cardB}` }}>
+        <button onClick={onClose} aria-label="Close" style={{ background:"none", border:"none", color:C.white, cursor:"pointer", fontSize:20, padding:"2px 4px", lineHeight:1 }}>←</button>
+        <h2 style={{ fontSize:17, fontWeight:700, color:C.white, letterSpacing:-.5 }}>Choose your plan</h2>
+      </div>
+      <div style={{ flex:1, overflowY:"auto", padding:16 }}>
+        <div role="tablist" aria-label="Billing period" style={{ display:"flex", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:3, marginBottom:16 }}>
+          {[["month", "Monthly"], ["year", `Yearly · ${monthsFree("plus", user.currency)} months free`]].map(([k, l]) => (
+            <button key={k} role="tab" aria-selected={period === k} onClick={() => setPeriod(k)}
+              style={{ flex:1, background: period === k ? C.card : "transparent", color: period === k ? C.white : C.soft, border:"none", borderRadius:9, padding:"8px 6px", fontSize:13, fontWeight:600, cursor:"pointer", fontFamily:APP_FONT, boxShadow: period === k ? C.shadowBase : "none" }}>{l}</button>
+          ))}
+        </div>
+        <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+          {PLANS.map(pl => {
+            const p = planPrice(pl.id, period, user.currency);
+            const isCurrent = pl.id === current;
+            return (
+              <Card key={pl.id} level="raised" style={{ border:`1.5px solid ${pl.popular ? C.accent : C.cardB}` }}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:10, marginBottom:4 }}>
+                  <div>
+                    <div style={{ fontSize:18, fontWeight:700, color:C.white }}>{pl.name}</div>
+                    <Mono style={{ color:C.soft }}>{pl.tagline}</Mono>
+                  </div>
+                  {isCurrent ? <Tag tone="positive">CURRENT</Tag> : pl.popular ? <Tag tone="accent">MOST POPULAR</Tag> : null}
+                </div>
+                <div style={{ fontSize:22, fontWeight:700, color:C.white, letterSpacing:-.6, margin:"8px 0 10px" }}>
+                  {p ? <>{money(p)} <span style={{ fontSize:13, fontWeight:500, color:C.soft }}>{per}</span></> : <>{money({ amount:0, currency:planPrice("plus", "month", user.currency).currency })} <span style={{ fontSize:13, fontWeight:500, color:C.soft }}>forever</span></>}
+                </div>
+                <div style={{ display:"flex", flexDirection:"column", gap:6, marginBottom:12 }}>
+                  {pl.features.map(f => (
+                    <div key={featureText(f)} style={{ display:"flex", gap:8, alignItems:"center" }}>
+                      <Dot color={f.soon ? C.muted : C.positive} />
+                      <Mono style={{ fontSize:12.5, color: f.soon ? C.soft : C.text }}>{featureText(f)}</Mono>
+                      {f.soon && <Tag>SOON</Tag>}
+                    </div>
+                  ))}
+                </div>
+                {isCurrent ? <Btn full v="outline" disabled>Your plan</Btn>
+                  : pl.id === "free" ? null
+                  : <Btn full v={pl.popular ? "solid" : "outline"} onClick={() => setChosen(pl.id)}>{`Choose ${pl.name}`}</Btn>}
+              </Card>
+            );
+          })}
+        </div>
+        <Mono style={{ display:"block", color:C.muted, textAlign:"center", lineHeight:1.6, margin:"16px 0 8px" }}>Prices in {planPrice("plus", "month", user.currency).currency === "NGN" ? "naira" : "US dollars"}. Everything on the free plan stays free.</Mono>
+      </div>
+    </div>
+  );
+}
+
+// Supplier bills (Finance › Bills): what the business owes, when it's due, and paying it in full
+// or in parts. Each payment is an expense entry (onPay), so Finance's totals, budgets and the
+// export include it; the bill logic lives in src/bills/model.js.
+const BILL_TONE = { due:null, soon:"warning", overdue:"negative", partial:"warning", paid:"positive", cancelled:null };
+
+function BillsScreen({ bills, setBills, user, contacts, categories, toast, onClose, onPay, onRemoveExpense }) {
+  const today = todayISO();
+  const fmt = fmtCur;
+  const [view, setView] = useState("list");            // list | edit | view
+  const [filter, setFilter] = useState("open");         // open | overdue | paid | all
+  const [currentId, setCurrentId] = useState(null);
+  const [draft, setDraft] = useState(null);
+  const [payForm, setPayForm] = useState(null);         // { amount, date } while paying
+  const current = bills.find(b => b.id === currentId) || null;
+  const sum = billsSummary(bills, today);
+  const suppliers = supplierSummaries(bills, today);
+  const knownSuppliers = [...new Set([...bills.map(b => b.supplier), ...contacts.map(c => c.name)].filter(Boolean))].slice(0, 60);
+
+  const header = (title, onBack, right) => (
+    <div style={{ display:"flex", alignItems:"center", gap:10, padding:"calc(12px + env(safe-area-inset-top)) 16px 12px", borderBottom:`1px solid ${C.cardB}`, flexShrink:0 }}>
+      <button onClick={onBack} aria-label="Back" style={{ background:"none", border:"none", color:C.white, cursor:"pointer", fontSize:20, padding:"2px 4px", lineHeight:1 }}>←</button>
+      <h2 style={{ fontSize:17, fontWeight:700, color:C.white, letterSpacing:-.5, flex:1, minWidth:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{title}</h2>
+      {right}
+    </div>
+  );
+  const chips = (items, value, onChange, label) => (
+    <div role="tablist" aria-label={label} style={{ display:"flex", gap:6, flexWrap:"wrap", marginBottom:12 }}>
+      {items.map(([k, l]) => (
+        <button key={k} role="tab" aria-selected={value === k} onClick={() => onChange(k)}
+          style={{ background: value === k ? C.text : C.surface, color: value === k ? C.bg : C.soft, border:`1px solid ${value === k ? C.text : C.cardB}`, borderRadius:99, padding:"6px 12px", fontSize:12, fontWeight:600, cursor:"pointer", fontFamily:APP_FONT }}>{l}</button>
+      ))}
+    </div>
+  );
+  const update = (id, next) => setBills(list => list.map(b => (b.id === id ? next : b)));
+  const open = b => { setPayForm(null); setCurrentId(b.id); setView("view"); };
+  const startNew = () => {
+    setDraft({ id:null, supplier:"", ref:"", description:"", amount:"", category:"", billDate:"", dueDate:"", notes:"" });
+    setView("edit");
+  };
+  const startEdit = b => { setDraft({ ...b, amount:String(b.amount) }); setView("edit"); };
+
+  const saveDraft = () => {
+    const amount = parseAmount(draft.amount);
+    const supplier = draft.supplier.trim();
+    const contact = contacts.find(c => (c.name || "").toLowerCase() === supplier.toLowerCase());
+    const candidate = { ...draft, supplier, amount: amount ?? 0 };
+    const problem = billProblem(candidate);
+    if (problem) { toast(problem); return; }
+    if (draft.id) {
+      const existing = bills.find(b => b.id === draft.id);
+      update(draft.id, { ...existing, supplier, supplierId: contact?.id ?? existing.supplierId ?? null, ref:draft.ref.trim(), description:draft.description.trim(), amount, category:draft.category, billDate:draft.billDate || existing.billDate, dueDate:draft.dueDate || draft.billDate || existing.dueDate, notes:draft.notes.trim() });
+      setCurrentId(draft.id);
+      toast("Bill updated.");
+    } else {
+      const bill = createBill({ ...draft, supplier, supplierId: contact?.id ?? null, amount, currency:user.currency, today, id:String(uid()) });
+      setBills(list => [bill, ...list]);
+      setCurrentId(bill.id);
+      toast(`Bill from ${supplier} saved.`);
+    }
+    setDraft(null); setView("view");
+  };
+
+  const pay = b => {
+    const amount = parseAmount(payForm?.amount);
+    const date = /^\d{4}-\d{2}-\d{2}$/.test(payForm?.date || "") ? payForm.date : today;
+    const due = billBalance(b);
+    if (amount === null) { toast("Enter the amount you paid."); return; }
+    if (amount > due + 0.005) { toast(`That's more than the ${fmt(due, b.currency)} still owed.`); return; }
+    if (date > today) { toast("The payment date can't be in the future."); return; }
+    const part = amount < due - 0.005 || billPaid(b) > 0;
+    const expenseId = onPay(b, amount, date, part);
+    const next = recordBillPayment(b, { id:String(uid()), amount, date, expenseId });
+    update(b.id, next);
+    setPayForm(null);
+    toast(billBalance(next) <= 0 ? `Bill from ${b.supplier} paid. ${fmt(amount, b.currency)} added to your expenses.` : `${fmt(amount, b.currency)} paid. ${fmt(billBalance(next), b.currency)} still owed.`);
+  };
+  const undoPayment = (b, p) => {
+    if (!window.confirm(`Remove the ${fmt(p.amount, b.currency)} payment of ${prettyDate(p.date)}? Its expense entry is removed too.`)) return;
+    update(b.id, removeBillPayment(b, p.id));
+    if (p.expenseId) onRemoveExpense(p.expenseId);
+  };
+  const remove = b => {
+    if (billPayments(b).length) { toast("Remove its payments first. They're in your expenses."); return; }
+    if (!window.confirm(`Delete the bill from ${b.supplier}?`)) return;
+    setBills(list => list.filter(x => x.id !== b.id));
+    setCurrentId(null); setView("list");
+  };
+  const cancel = b => update(b.id, { ...b, status: b.status === "cancelled" ? "open" : "cancelled" });
+
+  const row = b => {
+    const st = billStatus(b, today);
+    return (
+      <Card key={b.id} level="raised" style={{ cursor:"pointer", padding:"12px 14px" }} onClick={() => open(b)}>
+        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:10 }}>
+          <div style={{ minWidth:0 }}>
+            <div style={{ fontSize:14, fontWeight:600, color:C.white, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{b.supplier}</div>
+            <Mono style={{ display:"block", color: st === "overdue" ? C.negative : C.muted, marginTop:2 }}>{[b.ref, billWhen(b, today, prettyDate)].filter(Boolean).join(" · ")}</Mono>
+          </div>
+          <div style={{ textAlign:"right", flexShrink:0 }}>
+            <div style={{ fontSize:14, fontWeight:700, color:C.white }}>{fmt(st === "paid" || st === "cancelled" ? b.amount : billBalance(b), b.currency)}</div>
+            <Tag tone={BILL_TONE[st]} style={{ marginTop:3, display:"inline-block" }}>{BILL_STATUS_LABEL[st].toUpperCase()}</Tag>
+          </div>
+        </div>
+      </Card>
+    );
+  };
+
+  let body;
+  if (view === "edit" && draft) {
+    const set = patch => setDraft(d => ({ ...d, ...patch }));
+    body = (
+      <>
+        {header(draft.id ? "Edit bill" : "New bill", () => { setDraft(null); setView(draft.id ? "view" : "list"); })}
+        <div style={{ flex:1, minHeight:0, overflowY:"auto", padding:16, display:"flex", flexDirection:"column", gap:12 }}>
+          <InvoiceField label="Who it's from"><Inp list="kroft-suppliers" placeholder="Supplier, landlord, utility…" value={draft.supplier} onChange={e => set({ supplier:e.target.value })} /></InvoiceField>
+          <datalist id="kroft-suppliers">{knownSuppliers.map(n => <option key={n} value={n} />)}</datalist>
+          <div style={{ display:"flex", gap:10 }}>
+            <InvoiceField label={`Amount (${draft.currency || user.currency})`} style={{ flex:1 }}><Inp inputMode="decimal" value={draft.amount} onChange={e => set({ amount:e.target.value })} /></InvoiceField>
+            <InvoiceField label="Their reference (optional)" style={{ flex:1 }}><Inp placeholder="Invoice no." value={draft.ref} onChange={e => set({ ref:e.target.value.slice(0, 40) })} /></InvoiceField>
+          </div>
+          <InvoiceField label="What it's for (optional)"><Inp value={draft.description} onChange={e => set({ description:e.target.value })} /></InvoiceField>
+          <div style={{ display:"flex", gap:10 }}>
+            <InvoiceField label="Bill date (optional)" style={{ flex:1 }}><Inp type="date" value={draft.billDate} onChange={e => set({ billDate:e.target.value })} /></InvoiceField>
+            <InvoiceField label="Due date" style={{ flex:1 }}><Inp type="date" value={draft.dueDate} onChange={e => set({ dueDate:e.target.value })} /></InvoiceField>
+          </div>
+          <div>
+            <Mono style={{ display:"block", color:C.muted, marginBottom:6 }}>Expense category, when it's paid</Mono>
+            {chips(categories.map(c => [c, c]), draft.category, category => set({ category }), "Expense category")}
+          </div>
+          <InvoiceField label="Notes (optional)"><Inp value={draft.notes} onChange={e => set({ notes:e.target.value })} /></InvoiceField>
+          <Btn full onClick={saveDraft}>Save bill</Btn>
+          <Mono style={{ color:C.muted, lineHeight:1.6, textAlign:"center" }}>KROFT reminds you the day before it's due and on the day.</Mono>
+        </div>
+      </>
+    );
+  } else if (view === "view" && current) {
+    const b = current;
+    const st = billStatus(b, today);
+    const pays = billPayments(b);
+    body = (
+      <>
+        {header(b.supplier, () => { setCurrentId(null); setView("list"); }, pays.length === 0 && st !== "cancelled" ? <button onClick={() => startEdit(b)} style={{ background:"none", border:"none", color:C.accent, fontSize:14, fontWeight:600, cursor:"pointer", padding:"4px 2px" }}>Edit</button> : null)}
+        <div style={{ flex:1, minHeight:0, overflowY:"auto", padding:16, display:"flex", flexDirection:"column", gap:12 }}>
+          <Card level="raised">
+            <div style={{ display:"flex", justifyContent:"space-between", gap:12 }}>
+              <div style={{ minWidth:0 }}>
+                <Mono style={{ display:"block", color:C.muted, marginBottom:3 }}>{st === "paid" ? "Paid" : st === "cancelled" ? "Cancelled" : "You owe"}</Mono>
+                <div style={{ fontSize:24, fontWeight:700, color:C.white, letterSpacing:-.8 }}>{fmt(st === "paid" || st === "cancelled" ? b.amount : billBalance(b), b.currency)}</div>
+                {billPaid(b) > 0 && st !== "paid" && <Mono style={{ display:"block", color:C.soft, marginTop:3 }}>{fmt(billPaid(b), b.currency)} paid of {fmt(b.amount, b.currency)}</Mono>}
+              </div>
+              <div style={{ textAlign:"right", flexShrink:0 }}>
+                <Tag tone={BILL_TONE[st]}>{BILL_STATUS_LABEL[st].toUpperCase()}</Tag>
+                <Mono style={{ display:"block", color: st === "overdue" ? C.negative : C.soft, marginTop:6 }}>{billWhen(b, today, prettyDate)}</Mono>
+              </div>
+            </div>
+          </Card>
+          <Card level="inset" style={{ padding:12 }}>
+            {[["Reference", b.ref], ["For", b.description], ["Bill date", prettyDate(b.billDate)], ["Due", prettyDate(b.dueDate)], ["Category", b.category], ["Notes", b.notes]].filter(([, v]) => v).map(([l, v]) => (
+              <div key={l} style={{ display:"flex", justifyContent:"space-between", gap:12, padding:"5px 0" }}>
+                <Mono style={{ color:C.muted }}>{l}</Mono><Mono style={{ color:C.text, textAlign:"right" }}>{v}</Mono>
+              </div>
+            ))}
+          </Card>
+
+          {billIsOpen(b, today) && (payForm ? (
+            <Card level="raised" style={{ padding:12 }}>
+              <div style={{ display:"flex", gap:10 }}>
+                <InvoiceField label={`Amount paid (${b.currency})`} style={{ flex:1 }}><Inp inputMode="decimal" value={payForm.amount} onChange={e => setPayForm(f => ({ ...f, amount:e.target.value }))} /></InvoiceField>
+                <InvoiceField label="Date paid" style={{ flex:1 }}><Inp type="date" value={payForm.date} max={today} onChange={e => setPayForm(f => ({ ...f, date:e.target.value }))} /></InvoiceField>
+              </div>
+              <Mono style={{ display:"block", color:C.muted, margin:"8px 0 10px", lineHeight:1.6 }}>{fmt(billBalance(b), b.currency)} owed. A smaller amount is a part payment. It's added to your expenses.</Mono>
+              <div style={{ display:"flex", gap:8 }}>
+                <Btn sm style={{ flex:1 }} onClick={() => pay(b)}>Save payment</Btn>
+                <Btn sm v="outline" style={{ flex:1 }} onClick={() => setPayForm(null)}>Cancel</Btn>
+              </div>
+            </Card>
+          ) : <Btn full onClick={() => setPayForm({ amount:String(billBalance(b)), date:today })}>Record payment</Btn>)}
+
+          {pays.length > 0 && (
+            <Card level="inset" style={{ padding:12 }}>
+              <div style={{ fontSize:13, fontWeight:600, color:C.white, marginBottom:6 }}>Payments</div>
+              {pays.map(p => (
+                <div key={p.id} style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:8, padding:"6px 0", borderTop:`1px solid ${C.div}` }}>
+                  <Mono style={{ color:C.text }}>{prettyDate(p.date)}</Mono>
+                  <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                    <span style={{ fontSize:13, fontWeight:600, color:C.negative }}>{fmt(p.amount, b.currency)}</span>
+                    <button aria-label={`Remove payment of ${prettyDate(p.date)}`} onClick={() => undoPayment(b, p)} style={{ background:"none", border:"none", color:C.muted, cursor:"pointer", fontSize:15, padding:"2px 6px" }}>✕</button>
+                  </div>
+                </div>
+              ))}
+              <Mono style={{ display:"block", color:C.muted, marginTop:6, lineHeight:1.6 }}>Each payment is in your expenses too.</Mono>
+            </Card>
+          )}
+          <div style={{ display:"flex", gap:8, marginTop:4 }}>
+            {pays.length === 0 && <Btn sm v="outline" style={{ flex:1 }} onClick={() => cancel(b)}>{st === "cancelled" ? "Reopen" : "Cancel bill"}</Btn>}
+            <Btn sm v="outline" style={{ flex:1 }} onClick={() => remove(b)}>Delete</Btn>
+          </div>
+        </div>
+      </>
+    );
+  } else {
+    const shown = sortBills(bills.filter(b => {
+      const st = billStatus(b, today);
+      return filter === "all" || (filter === "open" ? billIsOpen(b, today) : filter === "overdue" ? st === "overdue" : st === "paid");
+    }), today);
+    body = (
+      <>
+        {header("Bills", onClose)}
+        <div style={{ flex:1, minHeight:0, overflowY:"auto", padding:16 }}>
+          <Btn full onClick={startNew}>New bill</Btn>
+          <Mono style={{ display:"block", color:C.muted, margin:"8px 0 16px", textAlign:"center" }}>Money you owe suppliers. Paying a bill adds it to your expenses.</Mono>
+          {sum.openCount > 0 && (
+            <Card level="raised" style={{ marginBottom:14 }}>
+              <Mono style={{ display:"block", color:C.muted, marginBottom:4 }}>You owe</Mono>
+              <div style={{ fontSize:22, fontWeight:700, color:C.white, letterSpacing:-.8 }}>{sumByCur(sum.owed, fmt)}</div>
+              <Mono style={{ display:"block", color: sum.overdueCount ? C.negative : C.soft, marginTop:3 }}>
+                {[`${sum.openCount} to pay`, sum.overdueCount ? `${sumByCur(sum.overdue, fmt)} overdue` : "", sum.soonCount ? `${sumByCur(sum.soon, fmt)} due this week` : ""].filter(Boolean).join(" · ")}
+              </Mono>
+              {suppliers.length > 1 && (
+                <div style={{ marginTop:10, paddingTop:8, borderTop:`1px solid ${C.div}` }}>
+                  {suppliers.slice(0, 4).map(s => (
+                    <div key={s.key} style={{ display:"flex", justifyContent:"space-between", gap:10, padding:"3px 0" }}>
+                      <Mono style={{ color:C.text, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{s.name}{s.count > 1 ? ` (${s.count})` : ""}</Mono>
+                      <Mono style={{ color: s.overdueCount ? C.negative : C.text, flexShrink:0 }}>{sumByCur(s.owed, fmt)}</Mono>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Card>
+          )}
+          {bills.length > 0 && chips([["open", `To pay${sum.openCount ? ` ${sum.openCount}` : ""}`], ["overdue", `Overdue${sum.overdueCount ? ` ${sum.overdueCount}` : ""}`], ["paid", "Paid"], ["all", "All"]], filter, setFilter, "Filter bills")}
+          {bills.length === 0 ? (
+            <Card level="inset" style={{ textAlign:"center", padding:26, borderStyle:"dashed" }}>
+              <div style={{ fontSize:15, fontWeight:600, color:C.white, marginBottom:6 }}>No bills yet</div>
+              <Mono style={{ display:"block", color:C.soft, lineHeight:1.6 }}>Add what you owe suppliers, rent or utilities, and KROFT reminds you before each one is due. Or just tell KROFT: "I owe Dangote ₦250,000 for cement, due Friday."</Mono>
+            </Card>
+          ) : shown.length === 0 ? (
+            <Card level="inset" style={{ textAlign:"center", padding:22, borderStyle:"dashed" }}><Mono style={{ color:C.soft }}>{filter === "open" ? "Nothing to pay. You're all caught up." : "Nothing here."}</Mono></Card>
+          ) : <div style={{ display:"flex", flexDirection:"column", gap:9 }}>{shown.map(row)}</div>}
+        </div>
+      </>
+    );
+  }
+
+  return (
+    <div role="dialog" aria-modal="true" aria-label="Bills" style={{ position:"fixed", inset:0, zIndex:330, background:C.bg, display:"flex", flexDirection:"column" }}>
+      {body}
+    </div>
+  );
+}
+
 // Android app only: what KROFT is allowed to use on this phone, with a button to ask for anything
 // that's still off. Android stops showing its prompt after someone taps "Don't allow" twice; from
 // then on only the phone's Settings can turn it back on, which the hint below says.
@@ -3582,6 +3925,9 @@ function ProfileSection({ nav, onNav, connections, user, onUpdateName, onEditBus
   const [confirmLogout, setConfirmLogout] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const toggle = k => setOpenRow(openRow===k ? null : k);
+  // The Plus price, from KROFT's plans (src/plans.js), in the person's currency.
+  const plusPrice = planPrice("plus", "month", user.currency);
+  const priceLabel = plusPrice ? `${fmtCur(plusPrice.amount, plusPrice.currency).replace(/[.,]00$/, "")} a month` : "";
   const initials = user.name ? user.name.split(" ").map(n=>n[0]).join("").toUpperCase().slice(0,2) : "?";
   const goBack = () => onNav({ screen:null, openRow:null });
 
@@ -3759,17 +4105,35 @@ function ProfileSection({ nav, onNav, connections, user, onUpdateName, onEditBus
     ),
     plus: (
       <ProfileRow label="What's in Plus" sub={subscribed ? "Active" : "Free plan"} expanded={openRow==="plus"} onToggle={()=>toggle("plus")}>
-        {/* The free tier isn't a stripped-down trial — finances, budgets, contacts, notes,
-            recurring transactions, notifications, AI chat, drafts/suggestions and monthly
-            reports are complete and stay free permanently. Plus is specifically about voice
-            (a materially more expensive resource — open-ended spoken conversation) and a
-            handful of real conveniences, not gating basic text usage. */}
+        {/* The free tier isn't a stripped-down trial: finances, budgets, bills, receipts,
+            contacts, notes, tasks and AI chat are complete and stay free permanently. Plus is
+            for a business that's growing (more invoices, chasing payment, statements for repeat
+            clients) and for the AI that costs real money to run (voice, images, files, research). */}
+        {!subscribed && priceLabel && <div style={{ fontSize:20, fontWeight:700, color:C.white, letterSpacing:-.6, marginBottom:12 }}>{priceLabel}</div>}
+        <div style={{ fontSize:11, fontWeight:700, color:C.muted, letterSpacing:.6, marginBottom:8 }}>FOR YOUR BUSINESS</div>
+        <div style={{ display:"flex", flexDirection:"column", gap:10, marginBottom:14 }}>
+          {[
+            { t:"Unlimited invoices and quotes", d:`The free plan includes ${FREE_INVOICES_PER_MONTH} invoices and ${FREE_QUOTES_PER_MONTH} quotes a month.` },
+            { t:"Payment reminders", d:"A polite WhatsApp or email reminder for an unpaid invoice, with how much is due and how to pay." },
+            { t:"Client statements", d:"A statement of account for any client: every invoice and payment, the balance, and what's overdue." },
+          ].map(b => (
+            <div key={b.t} style={{ display:"flex", gap:9, alignItems:"flex-start" }}>
+              <Dot color={C.positive} />
+              <div>
+                <div style={{ fontSize:12.5, fontWeight:600, color:C.text }}>{b.t}</div>
+                <Mono style={{ color:C.muted, lineHeight:1.5 }}>{b.d}</Mono>
+              </div>
+            </div>
+          ))}
+        </div>
+        <div style={{ fontSize:11, fontWeight:700, color:C.muted, letterSpacing:.6, marginBottom:8 }}>MORE FROM KROFT'S AI</div>
         <div style={{ display:"flex", flexDirection:"column", gap:10, marginBottom:12 }}>
           {[
-            { t:"Unlimited voice mode", d:`Talk to KROFT as much as you want, hands-free — free plan gets ${voiceLimit} voice turns a day.` },
-            { t:"Budget rollover", d:"Unused budget carries into next month instead of resetting to zero." },
-            { t:"Longer conversation memory", d:"KROFT remembers more of a long conversation — 60 messages of context instead of 20." },
-            { t:"Scheduled reminder calls", d:"Set a time and KROFT rings you in the app, speaks the reminder, and can talk it through if you answer." },
+            { t:"Unlimited voice", d:`Talk to KROFT hands-free as much as you like. The free plan includes ${voiceLimit} voice turns a day.` },
+            { t:"No daily AI limits", d:"Photos, files, images, web research and Around Me without the free plan's daily limits." },
+            { t:"Morning summary", d:"An AI summary of your day around 8am, without asking." },
+            { t:"Scheduled reminder calls", d:"KROFT rings you in the app at the time you set, speaks the reminder, and can talk it through." },
+            { t:"Longer memory and budget rollover", d:"KROFT remembers 60 messages of a conversation instead of 20, and unused budget carries into next month." },
           ].map(b => (
             <div key={b.t} style={{ display:"flex", gap:9, alignItems:"flex-start" }}>
               <Dot color={C.positive} />
@@ -3781,9 +4145,9 @@ function ProfileSection({ nav, onNav, connections, user, onUpdateName, onEditBus
           ))}
         </div>
         <Mono style={{ display:"block", color:C.muted, lineHeight:1.6, marginBottom:12, paddingTop:10, borderTop:`1px solid ${C.div}` }}>
-          Finances, budgets, contacts, notes, tasks, recurring transactions and notifications are complete on the free plan and always will be — Plus is only about the AI calls above.
+          Finances, budgets, bills, receipts, contacts, notes, tasks and AI chat are complete on the free plan and always will be.
         </Mono>
-        {!subscribed && <Btn sm disabled={billingLoading} onClick={onUpgrade}>{billingLoading ? <Spinner size={14} color={C.black} thickness={2} /> : "Upgrade"}</Btn>}
+        {!subscribed && <Btn sm disabled={billingLoading} onClick={onUpgrade}>{billingLoading ? <Spinner size={14} color={C.black} thickness={2} /> : "See plans"}</Btn>}
       </ProfileRow>
     ),
     billing: (
@@ -3849,7 +4213,7 @@ function ProfileSection({ nav, onNav, connections, user, onUpdateName, onEditBus
           </>
         ) : (
           <>
-            <Mono style={{ display:"block", color:C.soft, lineHeight:1.7, marginBottom:10 }}>Nothing to manage yet — upgrade to KROFT Plus to remove your daily message limit.</Mono>
+            <Mono style={{ display:"block", color:C.soft, lineHeight:1.7, marginBottom:10 }}>Nothing to manage yet. You're on the free plan.</Mono>
             <Btn sm disabled={billingLoading} onClick={onUpgrade}>{billingLoading ? <Spinner size={14} color={C.black} thickness={2} /> : "Upgrade"}</Btn>
           </>
         )}
@@ -3987,7 +4351,8 @@ function ProfileSection({ nav, onNav, connections, user, onUpdateName, onEditBus
       { icon:"store", label:"Business", value:`${user.businessName || "Personal"} · ${user.currency}`, onClick:onEditBusinessDetails },
       subscribed
         ? { key:"plan", icon:"crown", label:"KROFT Plus", value:"Active" }
-        : { key:"plan", icon:"crown", label:"Upgrade plan", tone:"accent", value:subscriptionStatus === "past_due" ? "Renewal failed" : "" },
+        // Free users see the plans straight away; a failed renewal still opens the billing page.
+        : { key:"plan", icon:"crown", label:"Upgrade plan", tone:"accent", value:subscriptionStatus === "past_due" ? "Renewal failed" : "", onClick: subscriptionStatus === "past_due" ? undefined : onUpgrade },
       { key:"usage", icon:"gauge", label:"Usage and limits" },
       user.email && { icon:"at", label:"Email", detail:user.email },
       user.phone && { icon:"phone", label:"Phone", detail:user.phone },
@@ -4382,6 +4747,9 @@ function KroftApp({ onFullReset } = {}) {
   const [quotes, setQuotes] = useState([]);
   const [invoiceSettings, setInvoiceSettings] = useState(DEFAULT_INVOICE_SETTINGS);
   const [showInvoices, setShowInvoices] = useState(false);
+  const [bills, setBills] = useState([]);              // supplier bills: money the business owes
+  const [showBills, setShowBills] = useState(false);
+  const [showPlans, setShowPlans] = useState(null);     // the plan picker: null closed, else why it opened ("" from Upgrade)
   const [invoicesOpenDoc, setInvoicesOpenDoc] = useState(null); // { id, kind } to open straight to one (from a contact's profile)
   const [expenseCats, setExpenseCats] = useState(["Operations","Tech","Marketing","Travel","Rent","Other"]);
   // Monthly spending limits per category, as { [category]: amount }. Tracking spend without ever
@@ -4717,7 +5085,9 @@ function KroftApp({ onFullReset } = {}) {
     return true;
   };
 
-  const [subscribed, setSubscribed] = useState(false);
+  // Test builds only (npm run test:e2e builds with VITE_E2E=1): a test can play a Plus user.
+  // In the real app VITE_E2E is never set, so this is always false.
+  const [subscribed, setSubscribed] = useState(() => import.meta.env.VITE_E2E === "1" && (() => { try { return localStorage.getItem("kroft-e2e-plus") === "1"; } catch { return false; } })());
   // Raw subscriptions.status ("inactive" | "active" | "past_due" | "canceled") — kept alongside
   // the derived `subscribed` boolean so the UI can tell "never subscribed" apart from "a renewal
   // charge failed", which needs its own notice rather than just silently losing Plus access.
@@ -4775,7 +5145,7 @@ function KroftApp({ onFullReset } = {}) {
       if (Array.isArray(p.incomeCats)) setIncomeCats(p.incomeCats);
       if (Array.isArray(p.expenseCats)) setExpenseCats(p.expenseCats);
     }
-    if (data.finance) { setIncome(data.finance.income||[]); setExpenses(data.finance.expenses||[]); setBudgets(data.finance.budgets||{}); setBudgetAlerts(data.finance.budgetAlerts||{}); setBudgetCarryover(data.finance.budgetCarryover||{}); if (data.finance.budgetRolloverMonth) setBudgetRolloverMonth(data.finance.budgetRolloverMonth); setInvoices(data.finance.invoices||[]); setQuotes(data.finance.quotes||[]); setInvoiceSettings({ ...DEFAULT_INVOICE_SETTINGS, ...(data.finance.invoiceSettings||{}) }); }
+    if (data.finance) { setIncome(data.finance.income||[]); setExpenses(data.finance.expenses||[]); setBudgets(data.finance.budgets||{}); setBudgetAlerts(data.finance.budgetAlerts||{}); setBudgetCarryover(data.finance.budgetCarryover||{}); if (data.finance.budgetRolloverMonth) setBudgetRolloverMonth(data.finance.budgetRolloverMonth); setInvoices(data.finance.invoices||[]); setQuotes(data.finance.quotes||[]); setInvoiceSettings({ ...DEFAULT_INVOICE_SETTINGS, ...(data.finance.invoiceSettings||{}) }); setBills(data.finance.bills||[]); }
     if (data.productivity) {
       // Normalizes any task saved with a priority outside the app's real set (Urgent/High/
       // Normal/Low) back to Normal — Ask Kroft used to default to a nonexistent "Medium" here,
@@ -4915,9 +5285,9 @@ function KroftApp({ onFullReset } = {}) {
 
   useEffect(() => {
     if (!dataLoaded) return;
-    const t = setTimeout(() => { window.storage.set(STORAGE_KEYS.finance, JSON.stringify({ income, expenses, budgets, budgetAlerts, budgetCarryover, budgetRolloverMonth, invoices, quotes, invoiceSettings }), false).catch(()=>{}); }, 900);
+    const t = setTimeout(() => { window.storage.set(STORAGE_KEYS.finance, JSON.stringify({ income, expenses, budgets, budgetAlerts, budgetCarryover, budgetRolloverMonth, invoices, quotes, invoiceSettings, bills }), false).catch(()=>{}); }, 900);
     return () => clearTimeout(t);
-  }, [dataLoaded, income, expenses, budgets, budgetAlerts, budgetCarryover, budgetRolloverMonth, invoices, quotes, invoiceSettings]);
+  }, [dataLoaded, income, expenses, budgets, budgetAlerts, budgetCarryover, budgetRolloverMonth, invoices, quotes, invoiceSettings, bills]);
 
   // Income entries are the record of money received. If one that came from an invoice payment
   // is edited or deleted anywhere (Entry history, KROFT chat), the invoice follows, so the two
@@ -4926,6 +5296,11 @@ function KroftApp({ onFullReset } = {}) {
     if (!dataLoaded) return;
     setInvoices(prev => syncInvoicesWithIncome(prev, income, todayISO()));
   }, [dataLoaded, income, invoices]);
+  // The same for bills: a bill payment is an expense entry, and the bill follows it.
+  useEffect(() => {
+    if (!dataLoaded) return;
+    setBills(prev => syncBillsWithExpenses(prev, expenses));
+  }, [dataLoaded, expenses, bills]);
 
   useEffect(() => {
     if (!dataLoaded) return;
@@ -7066,6 +7441,7 @@ Budgets this month: ${budgetStatus().length
 Recent income: ${list(income.slice().reverse(), 5, r => `${r.label} ${money(r.amount)} (${r.date})`)}
 Recent expenses: ${list(expenses.slice().reverse(), 5, r => `${r.label} ${money(r.amount)} ${r.cat} (${r.date})`)}
 Invoices: ${invoicesForAI(invoices, today, fmtCur)}
+Bills to pay (money owed to suppliers): ${billsForAI(bills, today, fmtCur)}
 Quotes: ${quotesForAI(quotes, today, fmtCur)}
 Clients who owe money: ${(() => { const owing = clientSummaries({ invoices, quotes, contacts, today }).filter(c => Object.keys(c.owed).length); return owing.length ? owing.slice(0, 8).map(c => `${c.name} ${Object.entries(c.owed).map(([cur, v]) => fmtCur(v, cur)).join(" + ")}${c.overdueCount ? " (overdue)" : ""}`).join("; ") : "none"; })()}
 
@@ -7149,8 +7525,9 @@ Valid types and their fields:
 {"type":"delete_note","title":"string"}
 {"type":"send_email","to":"string","subject":"string","body":"string"}
 {"type":"add_invoice","client":"string","items":[{"description":"string","qty":number,"price":number}],"due":"YYYY-MM-DD","notes":"string"}
+{"type":"add_bill","supplier":"string","amount":number,"due":"YYYY-MM-DD","ref":"string","description":"string","cat":"string"}
 {"type":"add_quote","client":"string","items":[{"description":"string","qty":number,"price":number}],"valid_until":"YYYY-MM-DD","notes":"string"}
-Rules: amounts are positive numbers with no currency symbol. Resolve relative dates ("tomorrow", "next Friday") against the current date above and emit an absolute YYYY-MM-DD. Expense categories to prefer: ${expenseCats.join(", ")}. Income categories to prefer: ${incomeCats.join(", ")}. add_invoice is for "invoice/bill [client] for …": it creates a draft invoice in ${user.currency} that the person reviews and sends from Finance › Invoices, so say it's ready to review, not that it was sent; price is per unit and qty defaults to 1; leave "due" out unless they gave a date. Getting paid for an invoice is marked there too, not with add_income. add_quote is the same for "quote/estimate [client] for …" (a price before the work starts); turning an accepted quote into an invoice is done in Finance › Invoices › Quotes. Emit at most one action per reply, only when clearly asked to save, change or remove something — never for a question like "how much did I spend?". complete_task, edit_appointment, and every delete_* type match an EXISTING item by its title/label/text against the lists above — use the shortest distinctive wording from that list, not a paraphrase, so the match is unambiguous. edit_appointment only needs the field(s) actually changing (e.g. just "time" to only move the time). Only set send_email's "to" to an address that actually appears in CONTACTS or EMAIL above — never guess or construct one; if you don't have a real address for who they mean, say so and ask for it instead of emitting the action.
+Rules: amounts are positive numbers with no currency symbol. Resolve relative dates ("tomorrow", "next Friday") against the current date above and emit an absolute YYYY-MM-DD. Expense categories to prefer: ${expenseCats.join(", ")}. Income categories to prefer: ${incomeCats.join(", ")}. add_invoice is for "invoice/bill [client] for …": it creates a draft invoice in ${user.currency} that the person reviews and sends from Finance › Invoices, so say it's ready to review, not that it was sent; price is per unit and qty defaults to 1; leave "due" out unless they gave a date. Getting paid for an invoice is marked there too, not with add_income. add_bill is for money they OWE a supplier and will pay later ("I owe Dangote 250k for cement, due Friday", "PHCN bill 30,000 due on the 20th"): it records the bill in Finance › Bills; paying it later records the expense there, so don't also emit add_expense; leave "due" out unless they gave a date. add_quote is the same for "quote/estimate [client] for …" (a price before the work starts); turning an accepted quote into an invoice is done in Finance › Invoices › Quotes. Emit at most one action per reply, only when clearly asked to save, change or remove something — never for a question like "how much did I spend?". complete_task, edit_appointment, and every delete_* type match an EXISTING item by its title/label/text against the lists above — use the shortest distinctive wording from that list, not a paraphrase, so the match is unambiguous. edit_appointment only needs the field(s) actually changing (e.g. just "time" to only move the time). Only set send_email's "to" to an address that actually appears in CONTACTS or EMAIL above — never guess or construct one; if you don't have a real address for who they mean, say so and ask for it instead of emitting the action.
 ${voiceMode
   ? `You're in a spoken voice conversation right now. Never emit a delete_* or send_email action block here — that confirmation step needs a screen this voice UI doesn't have. If asked to delete or send something, say you'll get it ready but they'll need to confirm it in the app, and leave out the action block entirely.`
   : `delete_* and send_email are NOT executed immediately — the app shows a confirm/cancel step first, so word your sentence as an offer ("I'll have that ready to send — just confirm it") rather than a completed fact. Every other action type above already happened by the time your reply is read, so word those as done.`}`;
@@ -7223,6 +7600,19 @@ ${voiceMode
         return {
           label:`${isInc?"Income":"Expense"} added: ${label} ${fmtCur(amt,user.currency)}`,
           undo:() => (isInc ? setIncome : setExpenses)(p => p.filter(x => x.id !== item.id)),
+        };
+      }
+      case "add_bill": {
+        const supplier = str(action.supplier); if (!supplier) return null;
+        const amount = parseAmount(action.amount);
+        if (amount === null) return { label:`I couldn't tell how much the bill from ${supplier} is. Try "I owe ${supplier} 50,000, due Friday".` };
+        const c = contacts.find(x => (x.name || "").toLowerCase() === supplier.toLowerCase());
+        const cat = expenseCats.find(x => x.toLowerCase() === str(action.cat).toLowerCase()) || "";
+        const bill = createBill({ supplier, supplierId:c?.id ?? null, ref:str(action.ref), description:str(action.description), amount, currency:user.currency, category:cat, dueDate: validDate(action.due) ? action.due : undefined, today:todayISO(), id:String(uid()) });
+        setBills(p => [bill, ...p]);
+        return {
+          label:`Bill from ${supplier} saved: ${fmtCur(amount, bill.currency)}, ${(w => w[0].toLowerCase() + w.slice(1))(billWhen(bill, todayISO(), prettyDate))}. Pay it from Finance › Bills.`,
+          undo:() => setBills(p => p.filter(x => x.id !== bill.id)),
         };
       }
       case "add_quote":
@@ -7940,6 +8330,16 @@ ${voiceMode
     }, 1500);
     return () => clearTimeout(t);
   }, [dataLoaded, smartReminders]);
+
+  // Bills: a phone reminder at 9am the day before a bill is due and on the day, while it's unpaid.
+  useEffect(() => {
+    if (!dataLoaded || (!isSupabaseConfigured && !isNativeApp)) return;
+    const items = billReminders(bills, todayISO(), Date.now(), fmtCur);
+    const t = setTimeout(() => {
+      (isNativeApp ? scheduleDeviceReminders("bill:", items) : authedFetch("/api/push/schedule", { method:"POST", body:JSON.stringify({ prefix:"bill:", items }) })).catch(() => {});
+    }, 1500);
+    return () => clearTimeout(t);
+  }, [dataLoaded, bills]);
 
   // Plus: scheduled calls. Kept independent of notifPermission — the in-app ringing overlay
   // doesn't need OS notification permission at all, only the accompanying system notification
@@ -9381,7 +9781,7 @@ ${voiceMode
       {showInvoices && (
         <InvoicesScreen invoices={invoices} setInvoices={setInvoices} quotes={quotes} setQuotes={setQuotes} settings={invoiceSettings} setSettings={setInvoiceSettings}
           user={user} subscribed={subscribed} contacts={contacts} setContacts={setContacts} toast={toast} onClose={() => { setShowInvoices(false); setInvoicesOpenDoc(null); }}
-          openId={invoicesOpenDoc?.id} openKind={invoicesOpenDoc?.kind}
+          openId={invoicesOpenDoc?.id} openKind={invoicesOpenDoc?.kind} onUpgrade={() => setShowPlans("business")}
           onRecordPayment={(inv, amount, date, part) => {
             // Getting paid is income: recorded the same way as one added by hand, on the day the
             // money arrived.
@@ -9390,6 +9790,19 @@ ${voiceMode
             return item.id;
           }}
           onRemoveIncome={id => setIncome(p => p.filter(x => x.id !== id))} />
+      )}
+      {showBills && (
+        <BillsScreen bills={bills} setBills={setBills} user={user} contacts={contacts} categories={expenseCats} toast={toast} onClose={() => setShowBills(false)}
+          onPay={(bill, amount, date, part) => {
+            // Paying a bill is an expense, on the day it was paid, in the bill's category.
+            const item = { id:uid(), label:billExpenseLabel(bill, part), amount, cat: expenseCats.includes(bill.category) ? bill.category : (expenseCats.includes("Operations") ? "Operations" : expenseCats[0]), date, cur:bill.currency, billId:bill.id, repeat:"none" };
+            setExpenses(p => [...p, item]);
+            return item.id;
+          }}
+          onRemoveExpense={id => setExpenses(p => p.filter(x => x.id !== id))} />
+      )}
+      {showPlans !== null && (
+        <PlansSheet user={user} current={currentPlan({ subscribed })} onClose={() => setShowPlans(null)} toast={toast} />
       )}
       {showEntryHistory && (() => {
         const q = entryHistoryQuery.trim().toLowerCase();
@@ -9882,6 +10295,7 @@ ${voiceMode
               <Btn sm onClick={() => { setShowAddInc(v=>!v); setShowAddExp(false); }}>Add Income</Btn>
               <Btn sm v="outline" onClick={() => { setShowAddExp(v=>!v); setShowAddInc(false); }}>Add Expense</Btn>
               <Btn sm v="outline" onClick={() => setShowInvoices(true)}>Invoices{(() => { const n = invoices.filter(inv => invoiceStatus(inv, todayISO()) === "overdue").length; return n ? ` · ${n} overdue` : ""; })()}</Btn>
+              <Btn sm v="outline" onClick={() => setShowBills(true)}>Bills{(() => { const n = bills.filter(b => billStatus(b, todayISO()) === "overdue").length; return n ? ` · ${n} overdue` : ""; })()}</Btn>
               <Btn sm v="outline" onClick={exportFinanceCsv}>Export</Btn>
             </div>
             {!dataLoaded && <><SkeletonCard lines={2} /><SkeletonCard lines={4} /></>}
@@ -11298,7 +11712,7 @@ ${voiceMode
               <h2 style={{ fontSize:22, fontWeight:700, color:C.white, letterSpacing:-1 }}>Reminders</h2>
               <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
                 <Btn sm v="outline" onClick={suggestSmartReminder} disabled={suggestingReminder}>{suggestingReminder ? <><Spinner size={11} color={C.soft} thickness={2} />Thinking…</> : "AI Suggest"}</Btn>
-                <Btn sm v="outline" onClick={() => { if (!subscribed) { toast("Scheduled calls are a KROFT Plus feature."); return; } setShowScheduleCall(v=>!v); }}>
+                <Btn sm v="outline" onClick={() => { if (!subscribed) { toast("Scheduled calls are a KROFT Plus feature."); setShowPlans(""); return; } setShowScheduleCall(v=>!v); }}>
                   {subscribed ? "Schedule a call" : "Schedule a call · Plus"}
                 </Btn>
                 <Btn sm onClick={() => setShowAddReminder(v=>!v)}>+ Add</Btn>
@@ -12509,7 +12923,7 @@ ${voiceMode
               subscriptionStatus={subscriptionStatus}
               autoRenews={autoRenews}
               billingLoading={billingLoading}
-              onUpgrade={startCheckout}
+              onUpgrade={() => setShowPlans("")}
               onManageBilling={cancelKroftPlus}
               voiceReplies={voiceReplies}
               onSetVoiceReplies={setVoiceReplies}
