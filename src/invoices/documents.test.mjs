@@ -75,5 +75,13 @@ eq("paid-up statement message", D.statementMessage({ ...all, closing: 0, overdue
 eq("periods", [D.periodStart("all", today), D.periodStart("year", today), D.periodStart("90", today)], [null, "2026-01-01", "2026-08-04"]);
 eq("statement file name", D.statementFileName("Tunde Bákàrè", today), "Statement Tunde Bakare 2026-11-01.pdf");
 
+// Statements carry the pay link only while something is owed.
+{
+  const owing = { closing: 5000, overdue: 0, currency: "NGN" }, paid = { closing: 0, overdue: 0, currency: "NGN" };
+  const f = (n, c) => `${c} ${n}`;
+  eq("statement message: pay link when money is owed", D.statementMessage(owing, f, "Tunde", "Ada Studio", "https://paystack.com/pay/ada").includes("Pay online: https://paystack.com/pay/ada"), true);
+  eq("statement message: no pay link when fully paid", D.statementMessage(paid, f, "Tunde", "Ada Studio", "https://paystack.com/pay/ada").includes("Pay online"), false);
+}
+
 console.log(fail ? `\n${fail} FAILED` : "\nALL PASSED");
 if (fail) process.exit(1);

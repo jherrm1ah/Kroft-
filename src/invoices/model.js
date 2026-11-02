@@ -31,6 +31,7 @@ export const DEFAULT_INVOICE_SETTINGS = {
   accountName: "",
   accountNumber: "",     // or an IBAN
   otherPayment: "",      // anything else a client needs: SWIFT/BIC, sort code, routing number, PayPal, mobile money
+  payLink: "",           // the business's own online payment link (Paystack, Flutterwave, Selar, PayPal, Stripe…)
   prefix: "INV",
   nextNumber: 1,
   dueDays: 7,
@@ -297,6 +298,24 @@ export function whatsappLink(phone, text) {
 
 export const fromName = (settings, user = {}) => (settings.businessName || user.businessName || user.name || "").trim();
 
+// The business's own online payment link, tidied (https:// added when left off), or "" when it
+// isn't a usable web address. Clients tap "Pay now" on an invoice to open it, and the money goes
+// straight to the business: KROFT never handles it, so it can't tell when it's been paid (the
+// person records the payment as usual).
+export function payLink(settings) {
+  let s = String(settings?.payLink || "").trim();
+  if (!s || /\s/.test(s)) return "";
+  if (!/^[a-z][a-z\d+.-]*:/i.test(s)) s = `https://${s}`;
+  try {
+    const u = new URL(s);
+    if (!/^https?:$/.test(u.protocol) || !/^[^.]+(\.[^.]+)*\.[a-z]{2,}$/i.test(u.hostname)) return "";
+    return u.toString();
+  } catch { return ""; }
+}
+
+// The "Pay online" line for messages, or nothing when there's no link or nothing is owed.
+const payOnline = (settings, owed = true) => (owed && payLink(settings) ? [`Pay online: ${payLink(settings)}`] : []);
+
 export function paymentLines(settings) {
   const lines = [];
   if (settings.bankName) lines.push(`Bank: ${settings.bankName}`);
@@ -311,7 +330,7 @@ export function sendMessage(inv, settings, user, fmt) {
   const { total } = invoiceTotals(inv);
   const who = inv.client?.name ? `Hi ${inv.client.name.split(/\s+/)[0]},` : "Hello,";
   const from = fromName(settings, user);
-  const pay = paymentLines(settings);
+  const pay = [...payOnline(settings, inv.status !== "paid"), ...paymentLines(settings)];
   return [
     who,
     "",
@@ -330,7 +349,7 @@ export function reminderMessage(inv, settings, user, fmt, today) {
   const late = inv.dueDate ? daysBetween(inv.dueDate, today) : 0;
   const when = late > 0 ? `was due ${late === 1 ? "yesterday" : `${late} days ago`} (${prettyDate(inv.dueDate)})`
     : late === 0 ? "is due today" : `is due ${prettyDate(inv.dueDate)}`;
-  const pay = paymentLines(settings);
+  const pay = [...payOnline(settings), ...paymentLines(settings)];
   return [
     who,
     "",

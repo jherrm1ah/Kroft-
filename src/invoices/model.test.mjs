@@ -78,6 +78,23 @@ eq("image length matches the JPEG", /\/Filter \/DCTDecode \/Length 7 >>/.test(te
 eq("non-ASCII author written as UTF-16", pdfString("Adé"), "<FEFF004100640065301>".replace("0065301", "00E9"));
 eq("PDF strings escape brackets", pdfString("a(b)c\\"), "(a\\(b\\)c\\\\)");
 
+// ── Pay now (the business's own payment link) ──
+eq("pay link: kept as typed when it's a full address", M.payLink({ payLink: "https://paystack.com/pay/ada-studio" }), "https://paystack.com/pay/ada-studio");
+eq("pay link: https added when left off", M.payLink({ payLink: "  flutterwave.com/pay/ada " }), "https://flutterwave.com/pay/ada");
+eq("pay link: not a web address → none", [M.payLink({ payLink: "my bank" }), M.payLink({ payLink: "javascript:alert(1)" }), M.payLink({ payLink: "localhost:3000" }), M.payLink({}), M.payLink({ payLink: "ftp://x.com" })], ["", "", "", "", ""]);
+const linked = { ...M.DEFAULT_INVOICE_SETTINGS, bankName: "GTBank", accountNumber: "0123456789", payLink: "paystack.com/pay/ada" };
+const due = { number: "INV-0009", client: { name: "Tunde Bakare" }, items: [{ qty: 1, price: 1000 }], currency: "NGN", dueDate: "2026-11-08", issueDate: today, status: "sent" };
+eq("invoice message: the pay link first, then bank details", M.sendMessage(due, linked, {}, fmt).split("\n").slice(-6, -2), ["Payment details:", "Pay online: https://paystack.com/pay/ada", "Bank: GTBank", "Account number: 0123456789"]);
+eq("reminder: has the pay link", M.reminderMessage(due, linked, {}, fmt, "2026-11-10").includes("Pay online: https://paystack.com/pay/ada"), true);
+eq("a paid invoice's message has no pay link", M.sendMessage({ ...due, status: "paid" }, linked, {}, fmt).includes("Pay online"), false);
+eq("no link set: messages as before", M.sendMessage(due, { ...linked, payLink: "" }, {}, fmt).includes("Pay online"), false);
+
+const linkedPdf = new TextDecoder("latin1").decode(buildPdf([{ jpeg: fakeJpeg, width: 10, height: 14, links: [{ x: 48, y: 600, w: 112, h: 30, url: "https://paystack.com/pay/ada" }] }], { title: "Invoice INV-0009" }));
+eq("PDF: the Pay now button is a tappable link", /\/Annots \[7 0 R\]/.test(linkedPdf) && /\/Subtype \/Link \/Rect \[48 211\.89 160 241\.89\][^>]*\/URI \(https:\/\/paystack\.com\/pay\/ada\)/.test(linkedPdf), true);
+const lxAt = Number(linkedPdf.match(/startxref\n(\d+)/)[1]);
+const lOffsets = [...linkedPdf.slice(lxAt).matchAll(/^(\d{10}) 00000 n $/gm)].map(m => Number(m[1]));
+eq("PDF with a link: every xref offset still points at its object", lOffsets.length === 7 && lOffsets.every((o, i) => linkedPdf.slice(o).startsWith(`${i + 1} 0 obj`)), true);
+
 // ── Quotes ──
 {
   const { quote, settings: s2 } = M.createQuote({ settings: { quotePrefix: "QUO", nextQuoteNumber: 2, quoteValidDays: 10, nextNumber: 9 }, client: { name: "Ada" }, items: [{ description: "Website", qty: 1, price: 300000 }], currency: "NGN", today, id: "q1", clientId: "c1" });
