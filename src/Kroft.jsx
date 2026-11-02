@@ -357,17 +357,6 @@ const MOOD_ORB_GLOW = {
   stressed: "121,148,222",
   angry:    "224,104,97",
 };
-// Same idea as MOOD_ORB_GLOW — a distinct, vivid identity per Wellness tab row icon (Your
-// Patterns/Quick Reset/Sleep/Journal/Mood log) rather than every row reading identically in plain
-// gray. Deliberately its own palette, not reused from MOOD_ORB_GLOW's mood colors, so a badge here
-// never accidentally reads as "this feature = that mood."
-const WELLNESS_ROW_GLOW = {
-  patterns: "156,120,214",
-  reset:    "222,150,68",
-  sleep:    "84,132,214",
-  journal:  "70,168,150",
-  mood:     "226,104,150",
-};
 
 // Turns written text into something that reads aloud cleanly. AI replies come back with
 // markdown, and a speech engine reads it literally — "star star Net profit star star",
@@ -2591,27 +2580,21 @@ function Briefing({ user, income, expenses, emails, appts, onClose }) {
 }
 
 // ── PROFILE PAGE ───────────────────────────────────────────────────────────────
-// Each Profile icon sits in its own tinted circle — the same badge language as the Wellness
-// rows (WELLNESS_ROW_GLOW) and the Breaks/Water tiles — rather than a bare line icon, so the
-// list reads as KROFT's own design. RGB triplets for rgba() tints, like the other glow maps.
-const PROFILE_ICON_TINT = {
-  store:"200,140,50", crown:"140,105,200", gauge:"56,150,140", at:"70,120,200", phone:"70,150,95",
-  link:"70,120,200", contrast:"110,115,130", reminders:"200,140,50", mic:"210,95,120", wand:"140,105,200",
-  lock:"70,150,95", eye:"56,150,140", cloud:"70,120,200", flag:"210,95,120", nova:"99,102,170",
-};
 
 // One row on the Profile hub: icon, label, and an optional current value on the right or detail
 // line underneath. Without onClick it's a read-only row (e.g. the account's email address).
 function SettingsRow({ icon, label, value, detail, onClick, tone, isLast }) {
   const color = tone === "accent" ? C.accent : tone === "danger" ? C.negative : C.text;
-  const iconColor = tone === "danger" ? C.negative : `rgb(${PROFILE_ICON_TINT[icon] || "110,115,130"})`;
-  const iconBg = tone === "danger" ? C.negativeBg : `rgba(${PROFILE_ICON_TINT[icon] || "110,115,130"},.14)`;
+  // One icon style across the app: a plain outline icon in a quiet round badge (the same as
+  // Workspace). Colour only where it means something: the accent for Upgrade, red for danger.
+  const iconColor = tone === "danger" ? C.negative : tone === "accent" ? C.accent : C.text;
+  const iconBg = tone === "danger" ? C.negativeBg : tone === "accent" ? C.accentBg : C.surface;
   const interactive = !!onClick;
   return (
     <div {...(interactive ? { role:"button", tabIndex:0, onClick, onKeyDown:e => { if (e.key==="Enter"||e.key===" ") { e.preventDefault(); onClick(); } } } : {})}
       className={interactive ? "row" : undefined}
       style={{ display:"flex", alignItems:"center", gap:14, padding:"15px 18px", minHeight:56, boxSizing:"border-box", cursor:interactive?"pointer":"default", borderBottom:isLast?"none":`1px solid ${C.div}`, transition:"background .15s ease" }}>
-      <div style={{ width:34, height:34, borderRadius:"50%", background:iconBg, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+      <div style={{ width:34, height:34, borderRadius:"50%", background:iconBg, border:`1px solid ${tone ? "transparent" : C.cardB}`, boxSizing:"border-box", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
         <NavIcon id={icon} size={18} color={iconColor} />
       </div>
       <div style={{ flex:1, minWidth:0 }}>
@@ -2841,7 +2824,7 @@ function ProfileScreenHeader({ title, onBack }) {
   );
 }
 
-function ProfileRow({ label, sub, expanded, onToggle, children, right, icon, glow }) {
+function ProfileRow({ label, sub, expanded, onToggle, children, right, icon }) {
   return (
     <div style={{ borderBottom:`1px solid ${C.div}` }}>
       {/* className="row" gets the app's shared hover highlight (pointer devices only — see the
@@ -2854,8 +2837,8 @@ function ProfileRow({ label, sub, expanded, onToggle, children, right, icon, glo
               Breaks/Water tiles, only passed by the Wellness tab's rows so Profile's own rows
               (which don't pass icon/glow) render exactly as before. */}
           {icon && (
-            <div style={{ width:30, height:30, borderRadius:"50%", background:`rgba(${glow},.16)`, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
-              <NavIcon id={icon} size={14} color={`rgb(${glow})`} />
+            <div style={{ width:30, height:30, borderRadius:"50%", background:C.surface, border:`1px solid ${C.cardB}`, boxSizing:"border-box", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+              <NavIcon id={icon} size={14} color={C.text} />
             </div>
           )}
           <div style={{ minWidth:0 }}>
@@ -12745,6 +12728,8 @@ ${voiceMode
 
         {tab==="wellness" && (() => {
           const wTone = wellness>80?"positive":wellness>60?"accent":"warning";
+          // Anything logged yet: a mood check-in, a break or water today, or an earlier day's score.
+          const hasWellnessData = moodLog.length > 0 || wellnessHistory.length > 0 || selfCare.breaks + selfCare.water > 0;
           const wColor = {positive:C.positive,accent:C.accent,warning:C.warning}[wTone];
           return (
           <div style={{ animation:"fadeUp .4s ease" }}>
@@ -12753,9 +12738,9 @@ ${voiceMode
                 the score's own tone (the same positiveBg/accentBg/warningBg tokens already used
                 for tags elsewhere, just applied as a real background here) and a rounder radius
                 make the color something felt across the whole card, not a hairline accent. */}
-            <Card style={{ marginBottom:14, background:{positive:C.positiveBg,accent:C.accentBg,warning:C.warningBg}[wTone], border:`1px solid ${wColor}33`, borderRadius:26 }}>
+            <Card style={{ marginBottom:14, borderRadius:26 }}>
               <div style={{ display:"flex", justifyContent:"center", alignItems:"center", gap:10, marginBottom:14 }}>
-                <Mono style={{ color:wColor, letterSpacing:.8 }}>Wellness score today</Mono>
+                <Mono style={{ color:C.text, fontWeight:700, letterSpacing:.6 }}>Wellness score today</Mono>
                 {/* Real streak — days with an actual mood check-in, not just the app being open
                     (see wellnessStreak's own comment). Hidden at 0 rather than showing "0 days",
                     which reads as a scoreboard shaming you on day one. */}
@@ -12771,21 +12756,23 @@ ${voiceMode
                   "this one is about you" the way a progress ring does. */}
               <div style={{ position:"relative", width:132, height:132, margin:"0 auto 16px" }}>
                 <svg viewBox="0 0 132 132" style={{ width:132, height:132, transform:"rotate(-90deg)" }}>
-                  <circle cx="66" cy="66" r="56" fill="none" stroke={C.card} strokeWidth="11" />
-                  <circle cx="66" cy="66" r="56" fill="none" stroke={wColor} strokeWidth="11" strokeLinecap="round"
+                  <circle cx="66" cy="66" r="56" fill="none" stroke={C.cardB} strokeWidth="11" />
+                  {hasWellnessData && <circle cx="66" cy="66" r="56" fill="none" stroke={wColor} strokeWidth="11" strokeLinecap="round"
                     strokeDasharray={2*Math.PI*56} strokeDashoffset={2*Math.PI*56*(1-wellness/100)}
-                    style={{ transition:"stroke-dashoffset .8s ease" }} />
+                    style={{ transition:"stroke-dashoffset .8s ease" }} />}
                 </svg>
                 <div style={{ position:"absolute", inset:0, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center" }}>
-                  <NavIcon id="wellness" size={16} color={wColor} />
-                  <div style={{ fontSize:34, fontWeight:700, color:wColor, letterSpacing:-1.5, lineHeight:1.2 }}>{wellness}</div>
+                  <NavIcon id="wellness" size={16} color={hasWellnessData ? wColor : C.muted} />
+                  <div style={{ fontSize:34, fontWeight:700, color:hasWellnessData ? wColor : C.muted, letterSpacing:-1.5, lineHeight:1.2 }}>{hasWellnessData ? wellness : "–"}</div>
                   <Mono style={{ color:C.muted, fontSize:10 }}>/ 100</Mono>
                 </div>
               </div>
-              <div style={{ fontSize:13, color:C.soft, marginBottom:16, textAlign:"center" }}>{wellness>80?"You are thriving today.":wellness>60?"Doing well — watch your stress.":"Take a break — your body needs it."}</div>
+              {/* No score is shown until something's been logged: a made-up "75, doing well" on
+                  day one isn't true, and people stop trusting a number like that. */}
+              <div style={{ fontSize:13, color:C.soft, marginBottom:16, textAlign:"center", lineHeight:1.5 }}>{!hasWellnessData ? "No score yet. Log how you feel, a break or some water, and KROFT starts your score." : wellness>80?"You are thriving today.":wellness>60?"Doing well — watch your stress.":"Take a break — your body needs it."}</div>
               <div style={{ display:"flex", gap:8, marginBottom:12 }}>
                 <Btn sm onClick={() => { const tip = rand(wellnessTips()).text; if (voiceReplies) speak(tip); toast(tip); }} style={{ flex:1 }}>Get tip</Btn>
-                <Btn sm v="outline" onClick={() => { speak(`Wellness score: ${wellness} out of 100.`); toast("Reading score…"); }} style={{ flex:1 }}>Read score</Btn>
+                {hasWellnessData && <Btn sm v="outline" onClick={() => { speak(`Wellness score: ${wellness} out of 100.`); toast("Reading score…"); }} style={{ flex:1 }}>Read score</Btn>}
               </div>
               {/* Icon tiles instead of plain outlined pills — matching the quick-access language
                   used elsewhere (Overview/Finance/Workspace). Colored from the start rather than
@@ -12799,9 +12786,9 @@ ${voiceMode
                   const count = selfCare[a.key], cap = SELF_CARE_CAP[a.key], maxed = count >= cap;
                   return (
                     <button key={a.key} disabled={maxed} onClick={() => { setWellness(s=>Math.min(100,s+a.bonus)); setSelfCare(c=>({...c, [a.key]:c[a.key]+1})); toast(`${a.label==="Took a break"?"Break":"Water"} logged. Wellness +${a.bonus}`); }}
-                      style={{ background:C.card, border:`1px solid ${maxed?wColor+"77":wColor+"2a"}`, borderRadius:16, padding:"12px 10px", cursor:maxed?"not-allowed":"pointer", textAlign:"left" }}>
-                      <div style={{ width:30, height:30, borderRadius:"50%", background:maxed?wColor+"30":wColor+"16", display:"flex", alignItems:"center", justifyContent:"center", marginBottom:8 }}>
-                        <NavIcon id={a.id} size={14} color={wColor} />
+                      style={{ background:C.card, border:`1px solid ${maxed ? C.positive+"77" : C.cardB}`, borderRadius:16, padding:"12px 10px", cursor:maxed?"not-allowed":"pointer", textAlign:"left" }}>
+                      <div style={{ width:30, height:30, borderRadius:"50%", background:C.surface, border:`1px solid ${maxed ? C.positive : C.cardB}`, boxSizing:"border-box", display:"flex", alignItems:"center", justifyContent:"center", marginBottom:8 }}>
+                        <NavIcon id={a.id} size={14} color={maxed ? C.positive : C.text} />
                       </div>
                       <div style={{ fontSize:12, fontWeight:700, color:C.white, marginBottom:2 }}>{maxed?a.done:a.label}</div>
                       <Mono style={{ color:C.muted, fontSize:10 }}>{count}/{cap}{maxed?" ✓":""}</Mono>
@@ -12841,7 +12828,7 @@ ${voiceMode
             <Card style={{ marginBottom:14, borderRadius:22, padding:"4px 16px" }}>
               <ProfileRow
                 label="Your Patterns"
-                icon="patterns" glow={WELLNESS_ROW_GLOW.patterns}
+                icon="patterns"
                 sub={wellnessPatterns.length > 0 ? `${wellnessPatterns.length} pattern${wellnessPatterns.length!==1?"s":""} found` : "Keep logging to find patterns"}
                 expanded={openWellnessRow==="patterns"}
                 onToggle={() => setOpenWellnessRow(v => v==="patterns" ? null : "patterns")}>
@@ -12871,7 +12858,7 @@ ${voiceMode
               </ProfileRow>
               <ProfileRow
                 label="Quick Reset"
-                icon="timer" glow={WELLNESS_ROW_GLOW.reset}
+                icon="timer"
                 sub={quickResetLog.length > 0 ? `${quickResetLog.length} session${quickResetLog.length!==1?"s":""} completed` : "5 guided sessions"}
                 expanded={openWellnessRow==="reset"}
                 onToggle={() => setOpenWellnessRow(v => v==="reset" ? null : "reset")}>
@@ -12887,7 +12874,7 @@ ${voiceMode
               </ProfileRow>
               <ProfileRow
                 label="Sleep"
-                icon="moon" glow={WELLNESS_ROW_GLOW.sleep}
+                icon="moon"
                 sub={sleepLog.length > 0 ? `Last: ${sleepLog[sleepLog.length-1].hours}h on ${fmtDate(sleepLog[sleepLog.length-1].date)}` : "Not logged yet"}
                 expanded={openWellnessRow==="sleep"}
                 onToggle={() => setOpenWellnessRow(v => v==="sleep" ? null : "sleep")}>
@@ -12924,7 +12911,7 @@ ${voiceMode
               </ProfileRow>
               <ProfileRow
                 label="Wellness Journal"
-                icon="journal" glow={WELLNESS_ROW_GLOW.journal}
+                icon="journal"
                 sub={journalEntries.length > 0 ? `${journalEntries.length} entr${journalEntries.length!==1?"ies":"y"} saved` : "No entries yet"}
                 expanded={openWellnessRow==="journal"}
                 onToggle={() => setOpenWellnessRow(v => v==="journal" ? null : "journal")}>
@@ -12964,7 +12951,7 @@ ${voiceMode
               </ProfileRow>
               <ProfileRow
                 label="Mood log"
-                icon="smile" glow={WELLNESS_ROW_GLOW.mood}
+                icon="smile"
                 sub={moodLog.length===0 ? "No mood entries yet" : wellnessStreak > 0 ? `${wellnessStreak} day streak` : `${moodLog.length} entr${moodLog.length!==1?"ies":"y"}`}
                 expanded={openWellnessRow==="mood"}
                 onToggle={() => setOpenWellnessRow(v => v==="mood" ? null : "mood")}>
