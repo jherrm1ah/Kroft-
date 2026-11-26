@@ -45,6 +45,18 @@ export const SOUNDS = {
   tickFinal: [{ f: G6, at: 0, len: 0.06, gain: 0.2, wood: true }],
   // …and the signature, resolving up to G6, when it's over.
   resetDone: [...signature, { f: G6, at: 0.42, len: 1.4, gain: 0.26 }],
+  // A live voice conversation connecting: a quick rising pair, like a call picking up…
+  liveStart: [
+    { f: G5, at: 0, len: 0.16, gain: 0.22 },
+    { f: D6, at: 0.09, len: 0.18, gain: 0.24 },
+    { f: G6, at: 0.18, len: 0.42, gain: 0.22 },
+  ],
+  // …and ending: the same notes falling back, softer, like hanging up.
+  liveEnd: [
+    { f: G6, at: 0, len: 0.16, gain: 0.16 },
+    { f: D6, at: 0.09, len: 0.18, gain: 0.16 },
+    { f: G5, at: 0.18, len: 0.45, gain: 0.15 },
+  ],
 };
 
 export const ATTACK = 0.006;       // seconds to full volume

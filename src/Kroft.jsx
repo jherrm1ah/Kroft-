@@ -93,17 +93,18 @@ const DARK = {
   // settings rows, which are a genuinely solid, visible grey with no border needed at all).
   // Raised to a real grey, then dialed back down several times from the first pass (which read
   // too bright) — still clearly its own surface at a glance, just a darker one.
-  card:"#181818", cardB:"#202020", surface:"#141414",
-  hover:"#1c1c1c", white:"#ffffff", black:"#000000",
-  offWhite:"#f5f5f7",
+  // iOS dark system colours: secondarySystemGroupedBackground cards on a black page.
+  card:"#1c1c1e", cardB:"#2c2c2e", surface:"#1c1c1e",
+  hover:"#2c2c2e", white:"#ffffff", black:"#000000",
+  offWhite:"#f2f2f7",
   text:"#ffffff",        // primary text — pure white on black, max contrast
-  soft:"#d4d4d8",        // secondary text — light grey, clearly readable (was low-contrast grey)
-  muted:"#a1a1aa",       // tertiary/placeholder — still readable, used sparingly
-  border:"#2a2a2a",      // visible borders / dividers on dark surfaces — bumped alongside card/
+  soft:"#d1d1d6",        // secondary text — light grey, clearly readable (was low-contrast grey)
+  muted:"#98989f",       // tertiary/placeholder — still readable, used sparingly
+  border:"#38383a",      // visible borders / dividers on dark surfaces — bumped alongside card/
                           // cardB above so a `hi` card's emphasis border/ring still reads clearly
                           // against the now-lighter card fill instead of nearly vanishing into it.
-  div:"#1c1c1c",
-  invBg:"#f5f5f7", invText:"#0a0a0a", // inverse surface for chips/pills on dark
+  div:"#38383a",
+  invBg:"#f2f2f7", invText:"#000000", // inverse surface for chips/pills on dark
   // Muted/desaturated versions of the original Tailwind-400 tones (#4ade80/#f87171/#fbbf24/
   // #818cf8) — those read as bright "candy" colors once reused everywhere (tags, chart fills,
   // borders), especially stacked across several cards on one screen. Still clearly distinct
@@ -127,27 +128,26 @@ const DARK = {
   glowRGB:"255,255,255",
 };
 const LIGHT = {
-  // Neutral black and white: a cool light grey page, white cards, near-black ink and black
-  // buttons. No warm tint and no colour accent; colour is kept for meaning only (money in/out,
-  // warnings).
-  bg:"#f5f5f7", card:"#ffffff", cardB:"#e4e4e7", surface:"#ffffff",
-  hover:"#ececef", white:"#0a0a0a", black:"#ffffff",
+  // Apple's light system colours, in black and white: the grouped grey page (#f2f2f7), white
+  // sections, black text, Apple's secondary text greys and hairline separators. No colour
+  // accent; colour is kept for meaning only (money in/out, warnings).
+  bg:"#f2f2f7", card:"#ffffff", cardB:"#e5e5ea", surface:"#ffffff",
+  hover:"#e5e5ea", white:"#000000", black:"#ffffff",
   offWhite:"#000000",
-  text:"#0a0a0a",        // primary text — near-black on light grey
-  soft:"#3f3f46",        // secondary text — dark grey, clearly readable
-  muted:"#71717a",       // tertiary/placeholder
-  border:"#d4d4d8",      // visible borders / dividers on light surfaces
-  div:"#e4e4e7",
-  invBg:"#0a0a0a", invText:"#f5f5f7",
-  // See DARK's positive/negative/warning/accent comment — same desaturation, same contrast bar,
-  // checked against both bg and card since text on either uses this color directly.
-  positive:"#457154", positiveBg:"rgba(69,113,84,.10)",
-  negative:"#a04b3f", negativeBg:"rgba(160,75,63,.10)",
-  warning:"#87672a", warningBg:"rgba(135,103,42,.10)",
-  accent:"#0a0a0a", accentBg:"rgba(10,10,10,.06)",
-  fill:"rgba(10,10,10,.04)", fillStrong:"rgba(10,10,10,.07)",
-  shadowRaised:"0 8px 22px rgba(0,0,0,.08)", shadowBase:"0 1px 3px rgba(0,0,0,.05)",
-  glowRGB:"10,10,10",
+  text:"#000000",        // label
+  soft:"#3c3c43",        // secondary label
+  muted:"#6e6e73",       // tertiary text (Apple's caption grey, still 4.5:1 on white)
+  border:"#c6c6c8",      // separator
+  div:"#e5e5ea",
+  invBg:"#000000", invText:"#f2f2f7",
+  positive:"#2e7d4f", positiveBg:"rgba(52,199,89,.12)",
+  negative:"#c4352b", negativeBg:"rgba(255,59,48,.10)",
+  warning:"#9a6700", warningBg:"rgba(255,149,0,.12)",
+  accent:"#000000", accentBg:"rgba(0,0,0,.05)",
+  fill:"rgba(118,118,128,.08)", fillStrong:"rgba(118,118,128,.14)",
+  // Grouped sections on iOS are flat; only floating things (sheets, menus) get a soft shadow.
+  shadowRaised:"0 8px 30px rgba(0,0,0,.08)", shadowBase:"none",
+  glowRGB:"0,0,0",
 };
 // The Briefing plays over an always-dark scrim for focus, so it reads its colors from DARK
 // regardless of the active theme. Without this it inherits light tokens and renders a
@@ -815,18 +815,18 @@ const CARD_LEVELS = {
   // layout. 20/16/12 is the modest middle: every card in the app reads at the same softness as
   // the ones already tuned individually this way (Tasks/Projects/Calendar/Email), without going
   // back to the bubble-y original.
-  raised: { radius:16, pad:20, shadow:() => C.shadowRaised },
-  base:   { radius:14, pad:16, shadow:() => C.shadowBase },
+  raised: { radius:14, pad:20, shadow:() => C.shadowBase },
+  base:   { radius:12, pad:16, shadow:() => C.shadowBase },
   // inset was left at the old 12 during that pass — almost every use of it is a single, centered
   // "nothing here yet" empty-state card (never stacked, so the bubble concern above doesn't
   // apply), which is exactly the kind of card that reads worst when it's the sharpest-cornered
   // thing on the whole screen. Raised to match `raised` above.
-  inset:  { radius:16, pad:12, shadow:() => "none" },
+  inset:  { radius:12, pad:12, shadow:() => "none" },
 };
 const Card = ({ children, style, onClick, hi, level="base", ...rest }) => {
   const L = CARD_LEVELS[level] || CARD_LEVELS.base;
   return (
-    <div onClick={onClick} {...rest} style={{ background:C.card, border:`1px solid ${hi?C.border:C.cardB}`, borderRadius:L.radius, padding:L.pad, boxShadow:hi?`0 0 0 1px ${C.border},${C.shadowRaised}`:L.shadow(), cursor:onClick?"pointer":"default", transition:"border-color .18s", ...style }}>
+    <div onClick={onClick} {...rest} style={{ background:C.card, border:`1px solid ${hi?C.border:"transparent"}`, borderRadius:L.radius, padding:L.pad, boxShadow:hi?`0 0 0 1px ${C.border},${C.shadowRaised}`:L.shadow(), cursor:onClick?"pointer":"default", transition:"border-color .18s", ...style }}>
       {children}
     </div>
   );
@@ -7493,6 +7493,7 @@ function KroftApp({ onFullReset } = {}) {
         onError: msg => { if (voiceOpenRef.current) setVoiceError(msg); },
         onEnd: reason => {
           liveRef.current = null; setLiveOn(false); stopMeter();
+          playSound("liveEnd");
           if (!voiceOpenRef.current) return;
           setVoiceState("idle");
           if (reason === "time_limit") setVoiceError("That's the time limit for one live conversation. Tap to start another.");
@@ -7502,6 +7503,7 @@ function KroftApp({ onFullReset } = {}) {
       liveStartingRef.current = false; setLiveConnecting(false);
       if (!voiceOpenRef.current) { session.stop("closed"); return; }
       liveRef.current = session; setLiveOn(true); setMicPrimed(true);
+      playSound("liveStart");
       startMeter();
     } catch (err) {
       liveStartingRef.current = false; setLiveConnecting(false);
@@ -10515,7 +10517,7 @@ ${voiceMode
       {showConfetti && <Confetti onDone={() => setShowConfetti(false)} />}
 
       {tab!=="workspace" && (
-      <header style={{ borderBottom:`1px solid ${C.cardB}`, padding:"11px 16px", display:"flex", alignItems:"center", justifyContent:"space-between", background:C.bg, position:"sticky", top:0, zIndex:200, backdropFilter:"blur(14px)", gap:10 }}>
+      <header style={{ borderBottom:`0.5px solid ${theme==="dark"?"rgba(255,255,255,.15)":"rgba(0,0,0,.15)"}`, padding:"11px 16px", display:"flex", alignItems:"center", justifyContent:"space-between", background:theme==="dark"?"rgba(0,0,0,.72)":"rgba(242,242,247,.78)", position:"sticky", top:0, zIndex:200, backdropFilter:"saturate(180%) blur(20px)", WebkitBackdropFilter:"saturate(180%) blur(20px)", gap:10 }}>
         <div style={{ display:"flex", alignItems:"center", gap:9, minWidth:0, flexShrink:1 }}>
           <div style={{ flexShrink:0, width:28 }}><KroftMark size={28} color={C.text} /></div>
           <div style={{ minWidth:0, overflow:"hidden" }}>
@@ -10550,11 +10552,11 @@ ${voiceMode
         {tab==="home" && (
           // Home's three sections as one full-width switch: big enough to notice and tap, with the
           // open one filled in solid so it's obvious where you are.
-          <div role="tablist" aria-label="Home sections" style={{ marginBottom:20, display:"grid", gridTemplateColumns:"repeat(3, 1fr)", gap:4, padding:4, background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:16 }}>
+          <div role="tablist" aria-label="Home sections" style={{ marginBottom:20, display:"grid", gridTemplateColumns:"repeat(3, 1fr)", gap:2, padding:2, background:"rgba(118,118,128,.12)", borderRadius:11 }}>
             {[{k:"overview",l:"Overview"},{k:"finance",l:"Finance"},{k:"around",l:"Around Me"}].map(s => {
               const on = homeSection===s.k;
               return (
-                <button key={s.k} role="tab" aria-selected={on} onClick={() => setHomeSection(s.k)} style={{ minWidth:0, minHeight:42, padding:"8px 6px", borderRadius:12, border:"none", cursor:"pointer", background:on ? C.text : "transparent", color:on ? C.bg : C.soft, fontSize:14, fontWeight:700, fontFamily:APP_FONT, letterSpacing:-.1, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis", boxShadow:on ? "0 2px 8px rgba(0,0,0,.12)" : "none", transition:"background .18s ease, color .18s ease" }}>
+                <button key={s.k} role="tab" aria-selected={on} onClick={() => setHomeSection(s.k)} style={{ minWidth:0, minHeight:40, padding:"6px 6px", borderRadius:9, border:"none", cursor:"pointer", background:on ? (theme==="dark" ? "#636366" : "#ffffff") : "transparent", color:C.text, fontSize:13.5, fontWeight:on ? 600 : 500, fontFamily:APP_FONT, letterSpacing:-.1, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis", boxShadow:on ? "0 3px 8px rgba(0,0,0,.12), 0 3px 1px rgba(0,0,0,.04)" : "none", transition:"background .2s ease, box-shadow .2s ease" }}>
                   {s.l}
                 </button>
               );
@@ -13499,28 +13501,20 @@ ${voiceMode
         )}
       </main>
 
-      {/* Bottom navigation — dark minimal pill, rounded icons, subtle glow on the active tab */}
-      <nav style={{ position:"fixed", left:0, right:0, bottom:0, zIndex:250, display:"flex", justifyContent:"center", padding:"0 16px 18px", pointerEvents:"none" }}>
-        <div style={{ display:"flex", alignItems:"center", gap:4, padding:"8px", borderRadius:28, background:theme==="dark"?"rgba(19,19,19,.82)":"rgba(255,255,255,.88)", backdropFilter:"blur(20px)", border:`1px solid ${C.cardB}`, boxShadow:C.shadowRaised, pointerEvents:"all" }}>
+      {/* Bottom tab bar, iOS style: full width, frosted glass, a hairline on top, icon over label,
+          the open tab in full black and the others in grey. */}
+      <nav style={{ position:"fixed", left:0, right:0, bottom:0, zIndex:250, background:theme==="dark"?"rgba(22,22,24,.86)":"rgba(249,249,249,.86)", backdropFilter:"saturate(180%) blur(20px)", WebkitBackdropFilter:"saturate(180%) blur(20px)", borderTop:`0.5px solid ${theme==="dark"?"rgba(255,255,255,.15)":"rgba(0,0,0,.18)"}`, paddingBottom:"env(safe-area-inset-bottom)" }}>
+        <div style={{ display:"flex", maxWidth:560, margin:"0 auto" }}>
           {NAV_TABS.map(t => {
             const active = tab === t.id;
+            const color = active ? C.text : (theme==="dark" ? "#8e8e93" : "#8e8e93");
             return (
               <button key={t.id} onClick={() => { haptic(12); setTab(t.id); if (t.id==="workspace") setWorkspaceSection(null); }} title={t.label} aria-current={active?"page":undefined}
-                style={{
-                  width:64, height:52, borderRadius:18, border:"none", cursor:"pointer",
-                  display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:4,
-                  // The active tab was previously marked only by a faint white wash and glow,
-                  // which is nearly invisible on a light nav. A filled inverse pill reads at a
-                  // glance in both themes.
-                  background: active ? C.text : "transparent",
-                  transition:"background .18s",
-                }}>
-                {/* Keyed on the active transition so the icon pops in fresh every time this
-                    becomes the selected tab, not just background-fades like before. */}
+                style={{ flex:1, height:54, border:"none", background:"transparent", cursor:"pointer", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:3, WebkitTapHighlightColor:"transparent" }}>
                 <span key={active ? `${t.id}-on` : t.id} style={{ display:"inline-flex", animation: active ? "tabPop .3s cubic-bezier(.34,1.56,.64,1)" : "none" }}>
-                  <NavIcon id={t.id} size={20} color={active ? C.card : C.muted} />
+                  <NavIcon id={t.id} size={24} color={color} />
                 </span>
-                <span style={{ fontSize:9, fontWeight:700, color: active ? C.card : C.muted, letterSpacing:.3, fontFamily:APP_FONT }}>{t.label}</span>
+                <span style={{ fontSize:10, fontWeight:active ? 600 : 500, color, letterSpacing:.1, fontFamily:APP_FONT }}>{t.label}</span>
               </button>
             );
           })}
