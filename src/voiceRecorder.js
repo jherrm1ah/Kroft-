@@ -47,7 +47,7 @@ export function bytesToBase64(bytes) {
   return btoa(bin);
 }
 
-// Sends the clip to /api/chat (Gemini understands audio) and returns the words, or "" if nothing
+// Sends the clip to /api/chat (OpenAI speech-to-text, transcribe_only) and returns the words, or "" if nothing
 // was said. Uses the signed-in session like every other AI call.
 export async function transcribeClip(base64Wav, lang) {
   const { getClientHeader } = await import("./native.js");
@@ -62,6 +62,9 @@ export async function transcribeClip(base64Wav, lang) {
     method: "POST",
     headers,
     body: JSON.stringify({
+      // Straight to speech-to-text (api/_lib/openai.js); the rest is kept for the request log.
+      transcribe_only: true,
+      language: (lang || "").slice(0, 2).toLowerCase() || undefined,
       max_tokens: 1024,
       system: "You are a speech-to-text engine. Write down exactly what is said in the audio, in the language it is spoken"
         + (lang ? ` (most likely ${lang})` : "")

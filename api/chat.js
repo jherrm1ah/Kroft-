@@ -11,8 +11,8 @@
 // Kroft.jsx's six call sites and its SSE stream reader all speak Anthropic's Messages API
 // shape (model/max_tokens/system/messages/stream in, content[]/content_block_delta out) —
 // that's just the request/response contract this endpoint expects the client to use, not a
-// claim about which provider answers it. Only GEMINI_API_KEY is used right now (Anthropic
-// support is deliberately not wired in yet — see api/_lib/gemini.js for the shape translation).
+// claim about which provider answers it. OpenAI answers every request (OPENAI_API_KEY); see
+// api/_lib/openai.js for the translation.
 //
 // Runs on the Edge runtime (not the default Node serverless runtime) specifically so the
 // response can be streamed straight through: Kroft's main chat sends { stream: true } and
@@ -20,7 +20,7 @@
 // Node function would break streaming and delay the whole reply until it's fully generated.
 export const config = { runtime: "edge" };
 
-import { callGemini } from "./_lib/gemini.js";
+import { callOpenAI } from "./_lib/openai.js";
 import { getAuthedUser, supabaseAdmin } from "./_lib/supabaseAdmin.js";
 
 // Every AI usage limit is read from the plan_limits table (see supabase/schema.sql) instead of
@@ -84,7 +84,7 @@ export default async function handler(req, ctx) {
   }
 
   // Without the auth check below, /api/chat is a public, unauthenticated, unlimited proxy to the
-  // server's own paid Gemini/Anthropic key — callable directly (curl, a script) by anyone who
+  // server's own paid OpenAI key — callable directly (curl, a script) by anyone who
   // finds the URL, with no signup and no rate limit, regardless of what the frontend's own UI
   // gates behind sign-in (every call site in Kroft.jsx used a bare fetch() with no Authorization
   // header at all). Only enforced when Supabase is actually configured server-side — local-only
@@ -132,13 +132,13 @@ export default async function handler(req, ctx) {
     }
   }
 
-  const geminiKey = process.env.GEMINI_API_KEY;
-  if (!geminiKey) {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) {
     // Missing config, not a bad request — mirrors friendlyError()'s 401/403 branch in
     // Kroft.jsx ("I couldn't authenticate with the AI service.") rather than surfacing a
     // generic network failure.
     return new Response(
-      JSON.stringify({ error: "Server is not configured with a GEMINI_API_KEY." }),
+      JSON.stringify({ error: "Server is not configured with an OPENAI_API_KEY." }),
       { status: 401, headers: { "Content-Type": "application/json" } }
     );
   }
@@ -153,5 +153,5 @@ export default async function handler(req, ctx) {
     });
   }
 
-  return callGemini(rawBody, geminiKey, { onUsage: logUsage });
+  return callOpenAI(rawBody, apiKey, { onUsage: logUsage });
 }

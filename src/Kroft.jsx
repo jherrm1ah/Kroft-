@@ -5248,7 +5248,7 @@ function KroftApp({ onFullReset } = {}) {
   const [aiLoading, setAiLoading] = useState(false);
   // Pending attachments for the message currently being composed — cleared once it's sent.
   // { id, kind:"image"|"file", name, type, size, dataUrl }. Images are genuinely sent to the AI
-  // as real inline image data (see runKroftCompletion below and api/_lib/gemini.js) — KROFT can
+  // as real inline image data (see runKroftCompletion below and api/_lib/openai.js) — KROFT can
   // actually see them. A non-image file isn't parsed or read; only its name goes to the model,
   // same honesty as everywhere else in this app that doesn't pretend to a capability it lacks.
   const [aiAttachments, setAiAttachments] = useState([]);
@@ -6511,7 +6511,7 @@ function KroftApp({ onFullReset } = {}) {
     const opts = { categories:expenseCats, currency:user.currency, today };
     try {
       const res = await aiFetch("/api/chat", { method:"POST", headers:{ "X-Kroft-Usage-Type":"vision" }, body:JSON.stringify({
-        model:"gemini-3.6-flash", max_tokens:300, system:receiptPrompt(opts),
+        model:"openai", max_tokens:300, system:receiptPrompt(opts),
         messages:[{ role:"user", content:[{ type:"image", source:{ type:"base64", media_type:"image/jpeg", data:photo.slice(photo.indexOf(",") + 1) } }, { type:"text", text:"Read this receipt." }] }],
       }) });
       if (res.status === 429) { setScan(null); toast("You've used today's receipt scans on the free plan."); setShowPlans(""); return; }
@@ -8167,7 +8167,7 @@ ${voiceMode
     : "Something went wrong reaching the AI service.";
 
   // A message with image attachments is sent as real Anthropic-shaped content blocks (text +
-  // image) — api/_lib/gemini.js translates these into genuine Gemini inline image parts, so
+  // image) — api/_lib/openai.js translates these into genuine OpenAI image parts, so
   // KROFT actually sees the image, not just a mention of it. A non-image file attachment is
   // never parsed or read; only its name is folded into the text, the same honesty as everywhere
   // else in this app about what it can and can't actually do.
@@ -8195,7 +8195,7 @@ ${voiceMode
     }
     const recent = messages.slice(-historyLimit());
     const body = {
-      model:"gemini-3.6-flash",
+      model:"openai",
       max_tokens:2048,
       system:krofSysPrompt(voiceMode),
       messages:recent.map(m => ({ role:m.role, content:buildMessageContent(m) })),
@@ -8203,7 +8203,7 @@ ${voiceMode
     };
 
     // Neither the initial request nor an in-progress stream is guaranteed to ever resolve on its
-    // own — a stalled auth/quota check server-side, or Gemini's own stream stopping mid-reply
+    // own — a stalled auth/quota check server-side, or the AI's own stream stopping mid-reply
     // without properly closing the connection, otherwise leaves every await below pending
     // forever. That's exactly what voice mode's "Thinking" state looked like happening live: no
     // error, no timeout, just stuck. An idle timer (reset on every real chunk of progress, not a
@@ -8241,7 +8241,7 @@ ${voiceMode
         if (data?.error === "quota_exceeded") throw new KroftError(data.message);
       }
       // api/chat.js's two 401 causes ("Not authenticated" — no/expired Supabase session sent
-      // with the request — vs. a server with no GEMINI_API_KEY/ANTHROPIC_API_KEY set at all)
+      // with the request — vs. a server with no OPENAI_API_KEY set at all)
       // both used to collapse into the same generic "couldn't authenticate" message, which gave
       // no way to tell a missing sign-in from a missing deploy config. Surfacing which one
       // actually happened turns this from a dead end into something fixable.
@@ -8524,7 +8524,7 @@ ${voiceMode
       // Tagged "background_ai", not the default "chat": this runs on a timer, unprompted, and
       // should never eat into the user's real chat quota (api/chat.js falls back to "chat" for
       // any call with no usage-type header, which this used to hit silently).
-      const res = await aiFetch("/api/chat", { method:"POST", headers:{"Content-Type":"application/json","X-Kroft-Usage-Type":"background_ai"}, body:JSON.stringify({ model:"gemini-3.6-flash", max_tokens:80, system:"Write exactly one short sentence greeting the user by name and flagging the single most useful thing about their day from the context — a tight schedule, a budget issue, or an open task count if nothing else stands out. Never state a specific dollar amount, even if one seems implied — this reads out loud on a lock screen others may see. Plain text, no preamble, no quotes, under 22 words.", messages:[{ role:"user", content:context }] }) });
+      const res = await aiFetch("/api/chat", { method:"POST", headers:{"Content-Type":"application/json","X-Kroft-Usage-Type":"background_ai"}, body:JSON.stringify({ model:"openai", max_tokens:80, system:"Write exactly one short sentence greeting the user by name and flagging the single most useful thing about their day from the context — a tight schedule, a budget issue, or an open task count if nothing else stands out. Never state a specific dollar amount, even if one seems implied — this reads out loud on a lock screen others may see. Plain text, no preamble, no quotes, under 22 words.", messages:[{ role:"user", content:context }] }) });
       const data = await res.json();
       const text = data.content?.map(b=>b.text||"").join("").trim();
       return (res.ok && text) || `Good morning, ${firstNameOf(user.name)||"there"} — ${openTasks.length} tasks open today.`;
@@ -9102,7 +9102,7 @@ ${voiceMode
       const hadQueued = hasUnsyncedChanges();
       await flushPending();
       if (unreadableKeys().length) await hydrateAllGroups();
-      if (hadQueued && !hasUnsyncedChanges()) toast("Back online. Your changes are synced.");
+      // Syncs quietly: no "back online" message, it all happens behind the scenes.
     };
     window.addEventListener("offline", goOffline);
     window.addEventListener("online", goOnline);
@@ -9217,7 +9217,7 @@ ${voiceMode
   const aiDraftReply = async email => {
     toast("KROFT is drafting a reply…");
     try {
-      const res = await aiFetch("/api/chat", { method:"POST", headers:{"Content-Type":"application/json","X-Kroft-Usage-Type":"extra"}, body:JSON.stringify({ model:"gemini-3.6-flash", max_tokens:400, messages:[{ role:"user", content:`Draft a concise professional reply (under 5 sentences). From: ${email.from}, Subject: ${email.subject}, Body: "${email.body}"` }] }) });
+      const res = await aiFetch("/api/chat", { method:"POST", headers:{"Content-Type":"application/json","X-Kroft-Usage-Type":"extra"}, body:JSON.stringify({ model:"openai", max_tokens:400, messages:[{ role:"user", content:`Draft a concise professional reply (under 5 sentences). From: ${email.from}, Subject: ${email.subject}, Body: "${email.body}"` }] }) });
       const data = await res.json();
       const body = data.content?.map(b=>b.text||"").join("").trim();
       if (!res.ok || !body) { toast("Draft failed — try again."); return; }
@@ -9234,7 +9234,7 @@ ${voiceMode
     setSuggestingReminder(true);
     const context = `Appointments: ${appts.length>0 ? appts.map(a=>`${a.title} at ${a.time} on ${a.date}`).join("; ") : "none"}. Tasks: ${tasks.length>0 ? tasks.filter(t=>!t.done).map(t=>t.title).join("; ") : "none"}. Mood: ${mood}.`;
     try {
-      const res = await aiFetch("/api/chat", { method:"POST", headers:{"Content-Type":"application/json","X-Kroft-Usage-Type":"extra"}, body:JSON.stringify({ model:"gemini-3.6-flash", max_tokens:120, system:"Suggest exactly ONE short, genuinely useful reminder for this user based on their context. Reply with ONLY the reminder text itself — no preamble, no quotes, under 15 words.", messages:[{ role:"user", content:context }] }) });
+      const res = await aiFetch("/api/chat", { method:"POST", headers:{"Content-Type":"application/json","X-Kroft-Usage-Type":"extra"}, body:JSON.stringify({ model:"openai", max_tokens:120, system:"Suggest exactly ONE short, genuinely useful reminder for this user based on their context. Reply with ONLY the reminder text itself — no preamble, no quotes, under 15 words.", messages:[{ role:"user", content:context }] }) });
       const data = await res.json();
       const suggestion = data.content?.map(b=>b.text||"").join("").trim();
       if (!res.ok || !suggestion) { toast("Couldn't get a suggestion — try again."); }
@@ -9259,7 +9259,7 @@ ${voiceMode
     setGeneratingReport(true);
     const context = `Month: ${monthLabel(today)}. Income entries: ${monthInc.length} totaling ${fmtCur(incTotal,user.currency)}. Expense entries: ${monthExp.length} totaling ${fmtCur(expTotal,user.currency)}. Net: ${fmtCur(net,user.currency)}. Top expense categories: ${topCats.length>0?topCats.map(([c,v])=>`${c} (${fmtCur(v,user.currency)})`).join(", "):"none"}. Business: ${user.businessName||"not set"} (${user.businessType||""}).`;
     try {
-      const res = await aiFetch("/api/chat", { method:"POST", headers:{"Content-Type":"application/json","X-Kroft-Usage-Type":"report"}, body:JSON.stringify({ model:"gemini-3.6-flash", max_tokens:400, system:"You are KROFT, a bookkeeping assistant. Given a user's monthly income/expense summary, write a short end-of-month summary: 2-3 sentences on what the numbers show, then 2-3 practical observations about their own spending patterns. Describe what happened in their data — do not recommend financial products, investments, tax positions, borrowing, or anything requiring a licensed advisor. Frame observations as prompts to consider, not instructions. No preamble, no headers, plain text only.", messages:[{ role:"user", content:context }] }) });
+      const res = await aiFetch("/api/chat", { method:"POST", headers:{"Content-Type":"application/json","X-Kroft-Usage-Type":"report"}, body:JSON.stringify({ model:"openai", max_tokens:400, system:"You are KROFT, a bookkeeping assistant. Given a user's monthly income/expense summary, write a short end-of-month summary: 2-3 sentences on what the numbers show, then 2-3 practical observations about their own spending patterns. Describe what happened in their data — do not recommend financial products, investments, tax positions, borrowing, or anything requiring a licensed advisor. Frame observations as prompts to consider, not instructions. No preamble, no headers, plain text only.", messages:[{ role:"user", content:context }] }) });
       const data = await res.json();
       const advice = (res.ok && data.content?.map(b=>b.text||"").join("").trim()) || "Couldn't generate advice right now — try again shortly.";
       setMonthlyReport({ month:monthLabel(today), incTotal, expTotal, net, topCats, advice, generatedAt:Date.now() });
@@ -9294,7 +9294,7 @@ ${voiceMode
     setGeneratingRecap(true);
     const context = `This week (${weekAgoISO} to ${today}): ${weekInc.length} income entries totaling ${fmtCur(incTotal,user.currency)}, ${weekExp.length} expense entries totaling ${fmtCur(expTotal,user.currency)}, net ${fmtCur(incTotal-expTotal,user.currency)}. ${weekAppts.length} appointments this week. Mood entries this week: ${weekMoods.length ? weekMoods.map(m=>m.mood).join(", ") : "none logged"}. Currently ${openTasks} open task${openTasks!==1?"s":""} (a snapshot, not scoped to this week).`;
     try {
-      const res = await aiFetch("/api/chat", { method:"POST", headers:{"Content-Type":"application/json","X-Kroft-Usage-Type":"report"}, body:JSON.stringify({ model:"gemini-3.6-flash", max_tokens:180, system:"You are KROFT, a personal assistant writing someone a recap of their own week. Given real numbers across their finances, appointments and mood, write 2-3 warm, specific sentences on what genuinely happened — real progress if the data shows it, a plain observation if it doesn't. Never invent a number you weren't given, and never imply a number for something not mentioned (like tasks) unless it was explicitly given as this week's. No guilt, no urgency, no sales language, no headers or bullets — plain sentences someone would actually want to read.", messages:[{ role:"user", content:context }] }) });
+      const res = await aiFetch("/api/chat", { method:"POST", headers:{"Content-Type":"application/json","X-Kroft-Usage-Type":"report"}, body:JSON.stringify({ model:"openai", max_tokens:180, system:"You are KROFT, a personal assistant writing someone a recap of their own week. Given real numbers across their finances, appointments and mood, write 2-3 warm, specific sentences on what genuinely happened — real progress if the data shows it, a plain observation if it doesn't. Never invent a number you weren't given, and never imply a number for something not mentioned (like tasks) unless it was explicitly given as this week's. No guilt, no urgency, no sales language, no headers or bullets — plain sentences someone would actually want to read.", messages:[{ role:"user", content:context }] }) });
       const data = await res.json();
       const summary = (res.ok && data.content?.map(b=>b.text||"").join("").trim()) || "Couldn't put your recap together right now — try again shortly.";
       setWeeklyRecap({ weekStart:weekAgoISO, weekEnd:today, incTotal, expTotal, apptsCount:weekAppts.length, moodCount:weekMoods.length, openTasks, summary, generatedAt:Date.now() });
@@ -9547,7 +9547,7 @@ ${voiceMode
 
     let searchTerm = categoryOrQuery;
     if (isNaturalLanguage) {
-      // Let Gemini interpret the natural-language request into a place-type query. Tagged as its
+      // Let the AI interpret the natural-language request into a place-type query. Tagged as its
       // own "location_search" pool (separate from the now-unlimited plain-text AI calls) since
       // repeated AI-powered nearby searches carry a real external-API cost the app wants to
       // meter — if the free allowance is exhausted, the server's 429 has no `content` field, so
@@ -9557,7 +9557,7 @@ ${voiceMode
         const res = await aiFetch("/api/chat", {
           method:"POST", headers:{"Content-Type":"application/json","X-Kroft-Usage-Type":"location_search"},
           body:JSON.stringify({
-            model:"gemini-3.6-flash", max_tokens:60,
+            model:"openai", max_tokens:60,
             system:"Convert the user's request into a single short search term (2-4 words max) suitable for a places search API, such as 'coffee shop', 'pharmacy open now', 'budget hotel', or 'ATM'. Reply with ONLY the search term, nothing else.",
             messages:[{ role:"user", content:categoryOrQuery }],
           }),
@@ -9711,35 +9711,13 @@ ${voiceMode
 
   if (showSplash || !dataLoaded) return <SplashScreen fading={splashFading && dataLoaded} />;
 
-  // Rendered on both the signed-in dashboard and the sign-in/onboarding screens — it used to live
-  // only in the dashboard view, so every toast fired before sign-in (e.g. "Check your email to
-  // confirm your account") silently never appeared.
-  // Above every overlay, including voice mode (1200). Toasts carry the undo for an action KROFT
-  // just took — and a misheard amount is far likelier by voice than by typing, so burying the
-  // undo behind the voice overlay hid it exactly where it mattered most. aria-live so toasts are
-  // announced rather than shown only; "polite" waits for a pause instead of cutting across
-  // whatever is being read.
-  // Placed where it never sits over a control, and it ignores taps either way: above the bottom
-  // navigation in the app, at the top on the sign-in screens (nothing there to cover), and not at
-  // all in the chat, which shows its own note above the message box instead.
-  const offlineBanner = !online && !(step === "dashboard" && tab === "nova") && (
-    <div role="status" style={{ position:"fixed", left:"50%", transform:"translateX(-50%)", zIndex:1350, pointerEvents:"none",
-      ...(step === "dashboard" ? { bottom:"calc(96px + env(safe-area-inset-bottom))" } : { top:"calc(10px + env(safe-area-inset-top))" }),
-      display:"flex", alignItems:"center", gap:8, maxWidth:"calc(100vw - 32px)", boxSizing:"border-box", padding:"8px 14px", borderRadius:999,
-      background:C.text, color:C.bg, fontSize:13, fontWeight:600, fontFamily:APP_FONT, boxShadow:"0 8px 24px rgba(0,0,0,.18)" }}>
-      <svg viewBox="0 0 24 24" width={15} height={15} aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink:0 }}>
-        <path d="M3 3l18 18M8.5 16.5a5 5 0 0 1 7 0M5 13a10 10 0 0 1 4.3-2.6M19 13a10 10 0 0 0-2.2-1.6M1.5 9.5a15 15 0 0 1 4.6-3M22.5 9.5A15 15 0 0 0 11 5.1M12 20h.01" />
-      </svg>
-      <span style={{ overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
-        {step === "dashboard" ? "You're offline. Changes will sync later." : "You're offline. Connect to sign in."}
-      </span>
-    </div>
-  );
+  // No offline banner: going offline is handled behind the scenes (changes queue on the phone and
+  // sync when the connection returns), so nothing pops up over the app.
 
   const toastStack = (
     <div role="status" aria-live="polite" aria-atomic="false"
-      style={{ position:"fixed", ...(step === "dashboard" && tab === "nova" ? { top:"calc(env(safe-area-inset-top, 0px) + 64px)" } : { bottom:`calc(env(safe-area-inset-bottom, 0px) + ${(online ? 100 : 146) + (floatingNudge ? 210 : 0)}px)` }), left:"50%", transform:"translateX(-50%)", width:"min(340px, calc(100vw - 32px))", zIndex:1400, display:"flex", flexDirection:"column-reverse", alignItems:"center", gap:7, pointerEvents:"none" }}>
-      {/* Centred just above the bottom bar (and above the offline note when it shows), so they
+      style={{ position:"fixed", ...(step === "dashboard" && tab === "nova" ? { top:"calc(env(safe-area-inset-top, 0px) + 64px)" } : { bottom:`calc(env(safe-area-inset-bottom, 0px) + ${100 + (floatingNudge ? 210 : 0)}px)` }), left:"50%", transform:"translateX(-50%)", width:"min(340px, calc(100vw - 32px))", zIndex:1400, display:"flex", flexDirection:"column-reverse", alignItems:"center", gap:7, pointerEvents:"none" }}>
+      {/* Centred just above the bottom bar, so they
           never cover the header's buttons (help, Ask Kroft, Back) or the tabs under it; the newest
           sits nearest the bar. In the chat, whose message box is at the bottom, they sit under
           the header instead.
@@ -9762,7 +9740,6 @@ ${voiceMode
     <div key={themeTick} style={{ fontFamily:APP_FONT, overflowX:"hidden", maxWidth:"100vw", touchAction:"pan-y" }}>
       <style>{G}</style>
       {toastStack}
-      {offlineBanner}
       {appLockOverlay}
 
       {step === "welcome" && (
@@ -10514,7 +10491,6 @@ ${voiceMode
 
       {toastStack}
       {floatingNudge}
-      {offlineBanner}
       {appLockOverlay}
 
       {showConfetti && <Confetti onDone={() => setShowConfetti(false)} />}
@@ -13265,12 +13241,6 @@ ${voiceMode
                   handleAiAttach(e, "image");
                   if (took) setAiInput(v => v.trim() ? v : "Log this receipt as an expense.");
                 }} />
-                {!online && (
-                  <div role="status" style={{ display:"flex", alignItems:"center", gap:8, margin:"0 4px 8px", fontSize:13, color:C.soft }}>
-                    <span aria-hidden="true" style={{ width:8, height:8, borderRadius:"50%", background:C.warning, flexShrink:0 }} />
-                    You're offline. KROFT can answer again once you're back online.
-                  </div>
-                )}
                 {aiAttachments.length > 0 && (
                   <div style={{ display:"flex", flexWrap:"wrap", gap:6, marginBottom:8, padding:"0 4px" }}>
                     {aiAttachments.map(a => (
