@@ -8,14 +8,14 @@
     "errorPath": "app-offline.html"
   },
   "android": {
-    "backgroundColor": "#f4f2ee",
+    "backgroundColor": "#f5f5f7",
     "allowMixedContent": false,
     "appendUserAgent": "KROFTAndroid"
   },
   "plugins": {
     "LocalNotifications": {
       "smallIcon": "ic_stat_kroft",
-      "iconColor": "#4f5389"
+      "iconColor": "#0a0a0a"
     }
   }
 }

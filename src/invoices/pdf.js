@@ -12,7 +12,7 @@ import { logoSize, loadLogo } from "./branding.js";
 const PAGE_W = 595.28, PAGE_H = 841.89;  // A4 in PDF points
 const SCALE = 2;                          // canvas pixels per point: sharp on phones and in print
 const M = 48;                             // page margin
-const ACCENT = "#4f5389", INK = "#141414", SOFT = "#5c5a55", MUTED = "#8a877f", LINE = "#e4e1da", BAND = "#f4f2ee";
+const ACCENT = "#0a0a0a", INK = "#141414", SOFT = "#52525b", MUTED = "#71717a", LINE = "#e4e4e7", BAND = "#f5f5f7";
 
 // ── PDF wrapper ──────────────────────────────────────────────────────────────────────────────
 const enc = s => new TextEncoder().encode(s);

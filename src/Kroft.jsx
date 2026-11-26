@@ -94,15 +94,15 @@ const DARK = {
   // too bright) — still clearly its own surface at a glance, just a darker one.
   card:"#181818", cardB:"#202020", surface:"#141414",
   hover:"#1c1c1c", white:"#ffffff", black:"#000000",
-  offWhite:"#f4f2ee",
+  offWhite:"#f5f5f7",
   text:"#ffffff",        // primary text — pure white on black, max contrast
-  soft:"#dcd8d0",        // secondary text — bright off-white, clearly readable (was low-contrast grey)
-  muted:"#9a968e",       // tertiary/placeholder — still readable, used sparingly
+  soft:"#d4d4d8",        // secondary text — light grey, clearly readable (was low-contrast grey)
+  muted:"#a1a1aa",       // tertiary/placeholder — still readable, used sparingly
   border:"#2a2a2a",      // visible borders / dividers on dark surfaces — bumped alongside card/
                           // cardB above so a `hi` card's emphasis border/ring still reads clearly
                           // against the now-lighter card fill instead of nearly vanishing into it.
   div:"#1c1c1c",
-  invBg:"#f4f2ee", invText:"#0a0a0a", // inverse surface for chips/pills on dark
+  invBg:"#f5f5f7", invText:"#0a0a0a", // inverse surface for chips/pills on dark
   // Muted/desaturated versions of the original Tailwind-400 tones (#4ade80/#f87171/#fbbf24/
   // #818cf8) — those read as bright "candy" colors once reused everywhere (tags, chart fills,
   // borders), especially stacked across several cards on one screen. Still clearly distinct
@@ -110,7 +110,7 @@ const DARK = {
   positive:"#7dbd8f", positiveBg:"rgba(125,189,143,.12)",  // income, completed, gains
   negative:"#d9776a", negativeBg:"rgba(217,119,106,.12)",  // expense, urgent, deficit
   warning:"#c9a350", warningBg:"rgba(201,163,80,.12)",     // on hold, pending, due soon
-  accent:"#8891c4", accentBg:"rgba(136,145,196,.14)",      // AI, links, in-progress
+  accent:"#f5f5f7", accentBg:"rgba(255,255,255,.10)",      // links, selected, in-progress (white on black)
   // Translucent fills for notices/inset panels. These were previously hardcoded as
   // rgba(255,255,255,.04–.09), which is invisible against a light surface — so every error
   // box and inset panel lost its background entirely in light mode.
@@ -126,23 +126,26 @@ const DARK = {
   glowRGB:"255,255,255",
 };
 const LIGHT = {
-  bg:"#f4f2ee", card:"#ffffff", cardB:"#e6e2da", surface:"#ffffff",
-  hover:"#ece8e0", white:"#0a0a0a", black:"#ffffff",
+  // Neutral black and white: a cool light grey page, white cards, near-black ink and black
+  // buttons. No warm tint and no colour accent; colour is kept for meaning only (money in/out,
+  // warnings).
+  bg:"#f5f5f7", card:"#ffffff", cardB:"#e4e4e7", surface:"#ffffff",
+  hover:"#ececef", white:"#0a0a0a", black:"#ffffff",
   offWhite:"#000000",
-  text:"#0a0a0a",        // primary text — near-black on off-white
-  soft:"#3a3833",        // secondary text — dark and clearly readable
-  muted:"#6b6860",       // tertiary/placeholder
-  border:"#d6d1c5",      // visible borders / dividers on light surfaces
-  div:"#e6e2da",
-  invBg:"#0a0a0a", invText:"#f4f2ee",
+  text:"#0a0a0a",        // primary text — near-black on light grey
+  soft:"#3f3f46",        // secondary text — dark grey, clearly readable
+  muted:"#71717a",       // tertiary/placeholder
+  border:"#d4d4d8",      // visible borders / dividers on light surfaces
+  div:"#e4e4e7",
+  invBg:"#0a0a0a", invText:"#f5f5f7",
   // See DARK's positive/negative/warning/accent comment — same desaturation, same contrast bar,
   // checked against both bg and card since text on either uses this color directly.
   positive:"#457154", positiveBg:"rgba(69,113,84,.10)",
   negative:"#a04b3f", negativeBg:"rgba(160,75,63,.10)",
   warning:"#87672a", warningBg:"rgba(135,103,42,.10)",
-  accent:"#4f5389", accentBg:"rgba(79,83,137,.10)",
+  accent:"#0a0a0a", accentBg:"rgba(10,10,10,.06)",
   fill:"rgba(10,10,10,.04)", fillStrong:"rgba(10,10,10,.07)",
-  shadowRaised:"0 8px 22px rgba(40,36,28,.10)", shadowBase:"0 1px 3px rgba(40,36,28,.05)",
+  shadowRaised:"0 8px 22px rgba(0,0,0,.08)", shadowBase:"0 1px 3px rgba(0,0,0,.05)",
   glowRGB:"10,10,10",
 };
 // The Briefing plays over an always-dark scrim for focus, so it reads its colors from DARK
@@ -1324,9 +1327,8 @@ function WelcomeScreen({ onGoogle, onEmail, onLogIn, googleLoading }) {
         <h1 style={{ fontSize:42, fontWeight:700, color:ink, letterSpacing:-1.4, margin:0 }}>Kroft</h1>
       </div>
       <div style={{ width:"100%", maxWidth:480, margin:"0 auto", boxSizing:"border-box", padding:"0 clamp(16px, 6vw, 28px) calc(18px + env(safe-area-inset-bottom))", display:"flex", flexDirection:"column", gap:12 }}>
-        {/* The one filled button is KROFT indigo, the brand accent, so the welcome screen carries the
-            brand colour rather than a generic black. White on #4f5389 is about 7:1 contrast. */}
-        <button onClick={onEmail} style={{ ...pill, background:LIGHT.accent, color:"#fff", border:"none", boxShadow:"0 10px 24px rgba(79,83,137,.28)" }}>
+        {/* The one filled button: black on the light grey page, like every main action in KROFT. */}
+        <button onClick={onEmail} style={{ ...pill, background:LIGHT.accent, color:"#fff", border:"none", boxShadow:"0 10px 24px rgba(0,0,0,.18)" }}>
           <svg viewBox="0 0 24 24" width={22} height={22} aria-hidden="true"><rect x="2" y="5" width="20" height="14" rx="2" fill="#fff" /><path d="M3.2 6.4 12 13l8.8-6.6" stroke={LIGHT.accent} strokeWidth="1.7" fill="none" strokeLinejoin="round" /></svg>
           Sign up with email
         </button>
@@ -1623,7 +1625,7 @@ function AuthButton({ pal = LIGHT, kind = "primary", loading, disabled, children
   const base = { width:"100%", minHeight:54, borderRadius:999, display:"flex", alignItems:"center", justifyContent:"center", gap:10, fontSize:16.5, fontWeight:600,
     fontFamily:APP_FONT, letterSpacing:-.1, padding:"0 20px", boxSizing:"border-box", cursor:disabled ? "not-allowed" : loading ? "wait" : "pointer" };
   const kinds = {
-    primary:{ background:pal.accent, color:onAccent, border:"none", opacity:disabled && !loading ? .45 : 1, boxShadow:disabled ? "none" : "0 10px 24px rgba(79,83,137,.22)" },
+    primary:{ background:pal.accent, color:onAccent, border:"none", opacity:disabled && !loading ? .45 : 1, boxShadow:disabled ? "none" : "0 10px 24px rgba(0,0,0,.16)" },
     secondary:{ background:pal.card, color:pal.text, border:`1.5px solid ${pal.cardB}`, opacity:disabled && !loading ? .5 : 1 },
     text:{ background:"none", color:pal.soft, border:"none", minHeight:44, fontSize:15, fontWeight:600 },
   };
@@ -9847,7 +9849,7 @@ ${voiceMode
               <div style={{ position:"relative", borderRadius:24, overflow:"hidden", background:"#000", aspectRatio:"1/1" }}>
                 <video ref={videoRef} autoPlay playsInline muted style={{ width:"100%", height:"100%", objectFit:"cover", display:"block", transform:"scaleX(-1)" }} />
                 <div style={{ position:"absolute", inset:"12%", borderRadius:"50%", boxShadow:"0 0 0 999px rgba(0,0,0,.35)", border:"2px solid rgba(255,255,255,.7)", pointerEvents:"none" }} />
-                {!cameraReady && <div style={{ position:"absolute", inset:0, display:"flex", flexDirection:"column", gap:12, alignItems:"center", justifyContent:"center", background:"rgba(0,0,0,.75)", color:"#dcd8d0", fontSize:15 }}><Spinner size={28} color="#ffffff" thickness={2} />Starting camera…</div>}
+                {!cameraReady && <div style={{ position:"absolute", inset:0, display:"flex", flexDirection:"column", gap:12, alignItems:"center", justifyContent:"center", background:"rgba(0,0,0,.75)", color:"#d4d4d8", fontSize:15 }}><Spinner size={28} color="#ffffff" thickness={2} />Starting camera…</div>}
               </div>
               <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginTop:22 }}>
                 <AuthLink style={{ color:LIGHT.soft, fontSize:16, minWidth:72, textAlign:"left" }} onClick={closeCamera}>Cancel</AuthLink>
