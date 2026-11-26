@@ -1,10 +1,10 @@
 :root {
-  --bg: #f4f2ee;
+  --bg: #f5f5f7;
   --card: #ffffff;
   --ink: #0a0a0a;
-  --muted: #6b6860;
-  --rule: #e6e2da;
-  --accent: #4f5389;
+  --muted: #71717a;
+  --rule: #e4e4e7;
+  --accent: #0a0a0a;
 }
 @media (prefers-color-scheme: dark) {
   :root {
