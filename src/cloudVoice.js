@@ -138,5 +138,6 @@ export function installCloudVoice(opts) {
   if (typeof window === "undefined" || !window.speechSynthesis || window.__kroftCloudVoice) return;
   const synth = createCloudSynth(window.speechSynthesis, opts);
   window.__kroftCloudVoice = true;
-  try { Object.defineProperty(window, "speechSynthesis", { value: synth, configurable: true }); } catch { window.speechSynthesis = synth; }
+  try { Object.defineProperty(window, "speechSynthesis", { value: synth, configurable: true }); }
+  catch { try { window.speechSynthesis = synth; } catch { return; } }
 }

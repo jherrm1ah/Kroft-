@@ -33,12 +33,16 @@ const mount = () => createRoot(document.getElementById("root")).render(
 // Kroft's real voice (ElevenLabs via api/tts.js) for personas that have one; everything else,
 // and any line it can't voice, uses the device's own speech (see cloudVoice.js). Installed after
 // the native shims so it wraps the app's speech too.
+// Never allowed to stop the app from opening: if anything about it fails on a device, Kroft
+// simply keeps the device's own voice.
 const cloudVoice = () => {
   if (!isSupabaseConfigured) return;
-  installCloudVoice({
-    getClient: getClientHeader,
-    getToken: async () => (await supabase.auth.getSession()).data?.session?.access_token || null,
-  });
+  try {
+    installCloudVoice({
+      getClient: getClientHeader,
+      getToken: async () => (await supabase.auth.getSession()).data?.session?.access_token || null,
+    });
+  } catch { /* device voice only */ }
 };
 
 if (isNativeApp) installNativeShims().catch(() => {}).finally(() => { cloudVoice(); mount(); });
