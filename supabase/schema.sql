@@ -329,7 +329,7 @@ create table if not exists public.ai_request_log (
   usage_type      text not null, -- the X-Kroft-Usage-Type pool: chat, voice, report, transcribe, ...
   model           text not null,
   streamed        boolean not null default false,
-  input_tokens    integer,       -- Gemini usageMetadata.promptTokenCount
+  input_tokens    integer,       -- OpenAI usage.prompt_tokens (Gemini promptTokenCount before Nov 2026)
   output_tokens   integer,       -- candidatesTokenCount (the visible reply)
   thinking_tokens integer,       -- thoughtsTokenCount (billed as output)
   cached_tokens   integer,       -- cachedContentTokenCount (billed at a discount)
@@ -368,7 +368,9 @@ alter table public.ai_model_prices enable row level security;
 insert into public.ai_model_prices (model, input_per_million, output_per_million, cached_per_million, note) values
   ('gemini-3.6-flash',      1.50, 7.50, 0.375, 'Conservative: sources disagree. Verify on Google''s pricing page.'),
   ('gemini-2.5-flash',      0.30, 2.50, 0.075, null),
-  ('gemini-2.5-flash-lite', 0.10, 0.40, 0.025, null)
+  ('gemini-2.5-flash-lite', 0.10, 0.40, 0.025, null),
+  ('gpt-4.1-mini',           0.40, 1.60, 0.10,  'Default chat model. Verify on OpenAI''s pricing page.'),
+  ('gpt-4o-mini-transcribe', 1.25, 5.00, null,  'Voice notes. Verify on OpenAI''s pricing page.')
 on conflict (model) do nothing;
 
 -- Daily totals by feature, model and plan, with estimated cost in dollars.
