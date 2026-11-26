@@ -661,7 +661,7 @@ function speak(raw, opts = {}) {
         if (!isCurrent() || i >= chunks.length) return;
         const isFirst = i === 0;
         const u = new SpeechSynthesisUtterance(chunks[i++]);
-        u.rate = rate; u.pitch = 1.0; applyVoice(u, voice);
+        u.rate = rate; u.pitch = 1.0; applyVoice(u, voice); u.kroftPersona = profile.id;
         u.onstart = () => { beganSpeaking = true; };
         u.onend = () => setTimeout(next, pauseMs);
         u.onerror = () => setTimeout(next, pauseMs);
@@ -713,9 +713,9 @@ function createSpeechQueue({ onStart, onDone, context } = {}) {
     if (!queue.length) { if (finished) onDone?.(); return; }
     speaking = true;
     if (!started) { started = true; onStart?.(); }
-    if (!delivery) { const { profile, voice } = pickVoiceForPersona(); delivery = { voice, ...computeDelivery(profile, context) }; }
+    if (!delivery) { const { profile, voice } = pickVoiceForPersona(); delivery = { voice, persona: profile.id, ...computeDelivery(profile, context) }; }
     const u = new SpeechSynthesisUtterance(queue.shift());
-    u.rate = delivery.rate; u.pitch = 1.0; applyVoice(u, delivery.voice);
+    u.rate = delivery.rate; u.pitch = 1.0; applyVoice(u, delivery.voice); u.kroftPersona = delivery.persona;
     const next = () => { speaking = false; setTimeout(drain, delivery.pauseMs); };
     u.onend = next; u.onerror = next;
     window.speechSynthesis.speak(u);
@@ -778,7 +778,7 @@ function speakSequence(lines, { onLine, onDone, context, voiceId } = {}) {
         if (!isCurrent()) return;
         if (ci >= chunks.length) { li++; speakLine(); return; }
         const u = new SpeechSynthesisUtterance(chunks[ci++]);
-        u.rate = rate; u.pitch = 1.0; applyVoice(u, voice);
+        u.rate = rate; u.pitch = 1.0; applyVoice(u, voice); u.kroftPersona = profile.id;
         u.onend = () => setTimeout(nextChunk, pauseMs);
         u.onerror = () => setTimeout(nextChunk, pauseMs);
         window.speechSynthesis.speak(u);

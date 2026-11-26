@@ -8,6 +8,7 @@ import { supabase, isSupabaseConfigured } from "./supabaseClient.js";
 import { createRecorderRecognition } from "./voiceRecorder.js";
 import { watchForNewVersion } from "./webUpdate.js";
 import { unlockSounds } from "./sounds/player.js";
+import { installCloudVoice } from "./cloudVoice.js";
 
 // Browsers only allow sound after a tap on the page. Unlocking on the first one means sounds that
 // happen on their own later (a reminder alarm, a notification while KROFT is open) can play.
@@ -29,8 +30,20 @@ const mount = () => createRoot(document.getElementById("root")).render(
 // In the Android app, native stand-ins for speech, notifications and sharing are installed first
 // (see native.js) so the app's feature checks see them from its very first render. In a browser
 // this is skipped and the app mounts straight away.
-if (isNativeApp) installNativeShims().catch(() => {}).finally(mount);
+// Kroft's real voice (ElevenLabs via api/tts.js) for personas that have one; everything else,
+// and any line it can't voice, uses the device's own speech (see cloudVoice.js). Installed after
+// the native shims so it wraps the app's speech too.
+const cloudVoice = () => {
+  if (!isSupabaseConfigured) return;
+  installCloudVoice({
+    getClient: getClientHeader,
+    getToken: async () => (await supabase.auth.getSession()).data?.session?.access_token || null,
+  });
+};
+
+if (isNativeApp) installNativeShims().catch(() => {}).finally(() => { cloudVoice(); mount(); });
 else {
+  cloudVoice();
   // Browsers with no speech recognizer of their own (Firefox) still get working mic buttons: the
   // clip is recorded and transcribed by KROFT's server (see voiceRecorder.js).
   if (!window.SpeechRecognition && !window.webkitSpeechRecognition && navigator.mediaDevices?.getUserMedia && (window.AudioContext || window.webkitAudioContext)) {
