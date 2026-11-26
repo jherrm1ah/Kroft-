@@ -62,7 +62,7 @@ try {
     check("Sounds switch in Appearance, on by default", await page.getByText("Tap to hear them.").isVisible());
     await clearNotes(page);
     await page.getByRole("button", { name: "Notification", exact: true }).click();
-    check("preview plays the KROFT signature (G5 → D6 → B5)", has(await notes(page), SIGNATURE), JSON.stringify(await notes(page)));
+    check("preview plays the Kroft signature (G5 → D6 → B5)", has(await notes(page), SIGNATURE), JSON.stringify(await notes(page)));
 
     await clearNotes(page);
     await recordPayment(page, "Ada");
@@ -70,7 +70,7 @@ try {
 
     await openSounds(page);
     await page.locator("[role=button]", { hasText: /^Sounds/ }).first().locator("button").click();
-    check("switching off is remembered", await page.evaluate(() => localStorage.getItem("kroft-sounds")) === "off" && await page.getByText("Turned off: KROFT stays silent.").isVisible());
+    check("switching off is remembered", await page.evaluate(() => localStorage.getItem("kroft-sounds")) === "off" && await page.getByText("Turned off: Kroft stays silent.").isVisible());
     await clearNotes(page);
     await recordPayment(page, "Bisi");
     check("with sounds off, nothing plays", (await notes(page)).length === 0, JSON.stringify(await notes(page)));
@@ -97,9 +97,9 @@ try {
     const sent = (await page.evaluate(() => window.__all || [])).filter(c => c.key === "LocalNotifications.schedule").map(c => c.options.notifications[0]).pop();
     if (label === "APK 1.2.0") {
       const alerts = channels.find(c => c.id === "kroft_alerts"), quiet = channels.find(c => c.id === "kroft_quiet");
-      check("KROFT alerts channel uses the signature sound file", alerts?.sound === "kroft_notify.wav" && alerts?.importance === 4, JSON.stringify(alerts));
-      check("a quiet channel for while KROFT is open", !!quiet && !quiet.sound && quiet.importance === 2, JSON.stringify(quiet));
-      check("open in the app: shown on the quiet channel and KROFT plays its signature", sent?.channelId === "kroft_quiet" && has(await notes(page), SIGNATURE), JSON.stringify({ ch: sent?.channelId, notes: await notes(page) }));
+      check("Kroft alerts channel uses the signature sound file", alerts?.sound === "kroft_notify.wav" && alerts?.importance === 4, JSON.stringify(alerts));
+      check("a quiet channel for while Kroft is open", !!quiet && !quiet.sound && quiet.importance === 2, JSON.stringify(quiet));
+      check("open in the app: shown on the quiet channel and Kroft plays its signature", sent?.channelId === "kroft_quiet" && has(await notes(page), SIGNATURE), JSON.stringify({ ch: sent?.channelId, notes: await notes(page) }));
     } else {
       check("older APK: no channels (the file isn't in it), phone's own sound", channels.length === 0 && !sent?.channelId && (await notes(page)).length === 0, JSON.stringify({ channels, ch: sent?.channelId, notes: await notes(page) }));
     }

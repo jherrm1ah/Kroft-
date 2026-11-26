@@ -42,5 +42,5 @@ export function rideHint(appId, address) {
 
 // The line under each ride app in Profile › Connected apps.
 export const rideDescription = appId => (RIDE_APPS[appId]?.fillsDestination
-  ? "No connection needed. KROFT opens Uber with your destination filled in, and you book there."
-  : `No connection needed. KROFT copies your destination and takes you to ${RIDE_APPS[appId]?.name}, where you paste it and book.`);
+  ? "No connection needed. Kroft opens Uber with your destination filled in, and you book there."
+  : `No connection needed. Kroft copies your destination and takes you to ${RIDE_APPS[appId]?.name}, where you paste it and book.`);

@@ -20,7 +20,7 @@ const MAX_ASSETS = 80;
 // Lookups ignore Vary: servers mark responses "Vary: Origin", and module scripts are requested
 // with an Origin header the install-time copies didn't have. Hashed files can't be stale anyway.
 const STATIC_FILES = [
-  "/manifest.webmanifest", "/favicon.svg", "/kroft-robot-badge.webp",
+  "/manifest.webmanifest", "/favicon.svg",
   "/icons/icon-192.png", "/icons/icon-512.png", "/icons/badge-96.png", "/icons/apple-touch-icon.png",
 ];
 

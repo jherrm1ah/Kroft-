@@ -48,7 +48,7 @@ export function buildPdf(pages, { title = "Invoice", author = "" } = {}) {
   const annots = pages.map(p => (p.links || []).map(l => ({ ...l, n: nextObj++ })));
   obj(1, () => push(enc("<< /Type /Catalog /Pages 2 0 R >>")));
   obj(2, () => push(enc(`<< /Type /Pages /Kids [${pageObjs.map(n => `${n} 0 R`).join(" ")}] /Count ${pages.length} >>`)));
-  obj(3, () => push(enc(`<< /Title ${pdfString(title)} /Author ${pdfString(author)} /Producer (KROFT) /Creator (KROFT) >>`)));
+  obj(3, () => push(enc(`<< /Title ${pdfString(title)} /Author ${pdfString(author)} /Producer (Kroft) /Creator (Kroft) >>`)));
   pages.forEach((p, i) => {
     const pageN = 4 + i * 3, contentN = pageN + 1, imageN = pageN + 2;
     const draw = `q ${PAGE_W} 0 0 ${PAGE_H} 0 0 cm /Im0 Do Q`;
@@ -323,7 +323,7 @@ function docHeader(page, settings, user, { title, number, meta = [], brand = {} 
 function footer(pages, brand = {}) {
   pages.forEach((p, i) => {
     p.text(pages.length > 1 ? `Page ${i + 1} of ${pages.length}` : "", M, PAGE_H - 32, { size: 8, color: MUTED });
-    if (brand.footer !== false) p.text("Created with KROFT", PAGE_W - M, PAGE_H - 32, { size: 8, color: MUTED, align: "right" });
+    if (brand.footer !== false) p.text("Created with Kroft", PAGE_W - M, PAGE_H - 32, { size: 8, color: MUTED, align: "right" });
   });
 }
 

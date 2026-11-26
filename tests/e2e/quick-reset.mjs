@@ -49,7 +49,7 @@ async function run(browser, label, shell) {
   const chime = notes.slice(lastTick + 1).filter(n => n.type === "sine").map(n => n.f);
   check("a tick every second", ticks.length === 59, `ticks=${ticks.length}`);
   check("the last three ticks are higher", JSON.stringify(ticks.slice(-3)) === "[1568,1568,1568]" && ticks.slice(0, -3).every(f => f === 1175), JSON.stringify(ticks.slice(-4)));
-  check("the KROFT chime when it's over", chime.includes(784) && chime.includes(1175) && chime.includes(988) && chime.includes(1568), JSON.stringify(chime));
+  check("the Kroft chime when it's over", chime.includes(784) && chime.includes(1175) && chime.includes(988) && chime.includes(1568), JSON.stringify(chime));
   check("countdown closes and is logged", !(await page.getByRole("button", { name: "End early" }).isVisible()) && await page.getByText(/1 session completed/).isVisible());
 
   if (shell) {

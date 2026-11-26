@@ -39,9 +39,9 @@ try {
   await page.locator('nav button[title="Profile"]').click();
   await page.getByText("Connected apps", { exact: true }).first().click();
   const text = await page.locator("body").innerText();
-  check("Connected apps: Uber as before", text.includes("No connection needed. KROFT opens Uber with your destination filled in, and you book there."));
-  check("Connected apps: Bolt, the same way", text.includes("No connection needed. KROFT copies your destination and takes you to Bolt, where you paste it and book."));
-  check("Connected apps: inDrive, the same way", text.includes("No connection needed. KROFT copies your destination and takes you to inDrive, where you paste it and book."));
+  check("Connected apps: Uber as before", text.includes("No connection needed. Kroft opens Uber with your destination filled in, and you book there."));
+  check("Connected apps: Bolt, the same way", text.includes("No connection needed. Kroft copies your destination and takes you to Bolt, where you paste it and book."));
+  check("Connected apps: inDrive, the same way", text.includes("No connection needed. Kroft copies your destination and takes you to inDrive, where you paste it and book."));
 
   // From an appointment.
   const ride = await rideFromAppointment(page);

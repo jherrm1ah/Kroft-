@@ -15,9 +15,9 @@ eq("an unknown app goes nowhere", rideLink("lyft", "x"), "");
 eq("Bolt and inDrive: told the destination was copied", [rideHint("bolt", "Ikeja"), rideHint("indrive", "Ikeja")], ["Destination copied. Paste it in Bolt to book.", "Destination copied. Paste it in inDrive to book."]);
 eq("Uber, or no destination: nothing to say", [rideHint("uber", "Ikeja"), rideHint("bolt", "")], ["", ""]);
 eq("descriptions say what really happens", [rideDescription("uber"), rideDescription("bolt"), rideDescription("indrive")], [
-  "No connection needed. KROFT opens Uber with your destination filled in, and you book there.",
-  "No connection needed. KROFT copies your destination and takes you to Bolt, where you paste it and book.",
-  "No connection needed. KROFT copies your destination and takes you to inDrive, where you paste it and book.",
+  "No connection needed. Kroft opens Uber with your destination filled in, and you book there.",
+  "No connection needed. Kroft copies your destination and takes you to Bolt, where you paste it and book.",
+  "No connection needed. Kroft copies your destination and takes you to inDrive, where you paste it and book.",
 ]);
 eq("every app has a badge colour and text colour", Object.values(RIDE_APPS).every(a => /^#[0-9a-f]{6}$/.test(a.bg) && /^#[0-9a-f]{6}$/.test(a.fg)), true);
 

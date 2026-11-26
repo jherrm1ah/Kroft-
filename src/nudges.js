@@ -20,14 +20,14 @@ export const NUDGES = [
   // Free → Plus
   {
     id: "plus-chat", for: "free", place: "chat", to: "plus",
-    title: "Get more from KROFT's AI",
+    title: "Get more from Kroft's AI",
     body: "Upgrade to Plus for unlimited voice, no daily AI limits and a memory three times longer.",
     cta: "Get Plus",
     when: f => f.chatTurns >= 6,
   },
   {
     id: "plus-invoices", for: "free", place: "invoices", to: "plus",
-    title: "Running a business on KROFT?",
+    title: "Running a business on Kroft?",
     body: "Upgrade to Plus for unlimited invoices and quotes, payment reminders and client statements.",
     cta: "Get Plus",
     when: f => f.invoicesThisMonth >= 2,
@@ -43,13 +43,13 @@ export const NUDGES = [
   {
     id: "pro-invoices", for: "plus", place: "invoices", to: "pro",
     title: "Put your brand on every invoice",
-    body: "Upgrade to Pro to add your logo to invoices, quotes, receipts and statements, without the KROFT line.",
+    body: "Upgrade to Pro to add your logo to invoices, quotes, receipts and statements, without the Kroft line.",
     cta: "Upgrade to Pro",
     when: f => f.sentInvoices >= 3,
   },
   {
     id: "pro-projects", for: "plus", place: "projects", to: "pro",
-    title: "Bring KROFT to your biggest clients",
+    title: "Bring Kroft to your biggest clients",
     body: "Upgrade to Pro for your logo on every document and priority support when you need help.",
     cta: "Upgrade to Pro",
     when: f => f.projects >= 2,

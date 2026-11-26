@@ -38,5 +38,5 @@ export function makeFeedback({ kind, message, screen = "", client = "" }) {
 export function feedbackMailto(f, to = "feedback@virttechnologies.com") {
   const label = FEEDBACK_KINDS.find(k => k.id === f.kind)?.label || "Feedback";
   const body = `${f.message}\n\n—\nScreen: ${f.screen || "unknown"}\nApp: ${f.client || "unknown"}`;
-  return `mailto:${to}?subject=${encodeURIComponent(`KROFT feedback: ${label}`)}&body=${encodeURIComponent(body)}`;
+  return `mailto:${to}?subject=${encodeURIComponent(`Kroft feedback: ${label}`)}&body=${encodeURIComponent(body)}`;
 }

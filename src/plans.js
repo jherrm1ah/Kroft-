@@ -22,7 +22,7 @@ export const PLANS = [
       "Finances, budgets, bills and receipts",
       "Contacts, notes, tasks and reminders",
       "Projects with milestones",
-      "Chat with KROFT's AI",
+      "Chat with Kroft's AI",
       "Receipt scans, photos and images (daily limits)",
       "3 invoices and 3 quotes a month",
       "30 voice turns a day",
@@ -47,7 +47,7 @@ export const PLANS = [
     features: [
       "Everything in Plus",
       "Your logo on invoices, quotes, receipts and statements",
-      "No \"Created with KROFT\" line on your documents",
+      "No \"Created with Kroft\" line on your documents",
       { t: "Recurring invoices", soon: true },
       { t: "Bank statement import", soon: true },
       "Priority support: your feedback is answered first",

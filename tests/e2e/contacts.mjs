@@ -59,7 +59,7 @@ try {
   const profile = page.getByRole("dialog", { name: "Tunde Bakare" });
   check("tapping a contact opens their profile", await profile.isVisible());
   const text = await profile.innerText();
-  check("what KROFT knows: owed, paid, open quote", /Owes you [^\n]*30,000\.00/.test(text) && /Has paid you [^\n]*20,000\.00 across 1 invoice/.test(text) && /1 open quote worth [^\n]*300,000\.00/.test(text), text.slice(0, 400));
+  check("what Kroft knows: owed, paid, open quote", /Owes you [^\n]*30,000\.00/.test(text) && /Has paid you [^\n]*20,000\.00 across 1 invoice/.test(text) && /1 open quote worth [^\n]*300,000\.00/.test(text), text.slice(0, 400));
   check("money section lists the invoice and the quote", text.includes("INV-0001") && text.includes("QUO-0001") && /PART PAID/.test(text));
   check("quick actions for the phone number", await profile.getByRole("button", { name: "Call" }).isVisible() && await profile.getByRole("button", { name: "WhatsApp" }).isVisible());
 
@@ -80,9 +80,9 @@ try {
   check("Back returns to the profile", await profile.isVisible() && !(await page.getByRole("heading", { name: "INV-0001" }).isVisible()));
 
   // Ask KROFT.
-  await profile.getByRole("button", { name: /Ask KROFT about Tunde/ }).click();
+  await profile.getByRole("button", { name: /Ask Kroft about Tunde/ }).click();
   const box = page.locator("textarea").last();
-  check("Ask KROFT starts a chat about them", await box.inputValue() === "What do you know about Tunde Bakare?");
+  check("Ask Kroft starts a chat about them", await box.inputValue() === "What do you know about Tunde Bakare?");
 
   check("no page errors", errors.length === 0, errors.join(" | "));
   await ctx.close();

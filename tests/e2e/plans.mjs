@@ -32,7 +32,7 @@ try {
   await sheet.getByRole("button", { name: "Choose Plus" }).click();
   const pay = page.getByRole("dialog", { name: "Upgrade" });
   text = await pay.innerText();
-  check("the payment step: plan, yearly price, and that Google payment is coming", text.includes("KROFT Plus") && /\$49\.99/.test(text) && text.includes("Billed yearly") && text.includes("Nothing has been charged"), text.slice(0, 300));
+  check("the payment step: plan, yearly price, and that Google payment is coming", text.includes("Kroft Plus") && /\$49\.99/.test(text) && text.includes("Billed yearly") && text.includes("Nothing has been charged"), text.slice(0, 300));
   check("…and there's no way to pay yet", await pay.getByRole("button", { name: "Google Pay · coming soon" }).isDisabled());
   await pay.getByRole("button", { name: "Back", exact: true }).click();
   check("Back returns to the plans", await sheet.isVisible());
@@ -71,10 +71,10 @@ try {
     const errs = []; p.on("pageerror", e => errs.push(e.message));
     await p.goto(URL); await signUp(p);
     await p.locator('nav button[title="Profile"]').click();
-    await p.getByText(`KROFT ${who}`, { exact: true }).first().click();
-    check(`${who}: Profile shows KROFT ${who}`, await p.getByText(`KROFT ${who}`, { exact: true }).first().isVisible());
-    const seePro = p.getByRole("button", { name: "See KROFT Pro" });
-    check(`${who}: ${who === "Plus" ? "can" : "isn't asked to"} see KROFT Pro`, (await seePro.count()) === (who === "Plus" ? 1 : 0));
+    await p.getByText(`Kroft ${who}`, { exact: true }).first().click();
+    check(`${who}: Profile shows Kroft ${who}`, await p.getByText(`Kroft ${who}`, { exact: true }).first().isVisible());
+    const seePro = p.getByRole("button", { name: "See Kroft Pro" });
+    check(`${who}: ${who === "Plus" ? "can" : "isn't asked to"} see Kroft Pro`, (await seePro.count()) === (who === "Plus" ? 1 : 0));
     if (who === "Plus") {
       await seePro.click();
       const s3 = p.getByRole("dialog", { name: "Choose your plan" });

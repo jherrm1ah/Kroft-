@@ -44,8 +44,8 @@ export function parseReceiptReply(text, { categories = [], currency = "USD", tod
 // What to tell the person when a scan doesn't work.
 export const SCAN_PROBLEM = {
   "not-receipt": "That doesn't look like a receipt. Try again with the whole receipt in the photo.",
-  "no-total": "KROFT couldn't read the total. Try a clearer photo, or add it by hand.",
-  unreadable: "KROFT couldn't read that receipt. Try a clearer photo, or add it by hand.",
+  "no-total": "Kroft couldn't read the total. Try a clearer photo, or add it by hand.",
+  unreadable: "Kroft couldn't read that receipt. Try a clearer photo, or add it by hand.",
 };
 
 // A phone photo is several MB; the AI only needs it big enough to read. Shrinks to at most

@@ -20,7 +20,7 @@ try {
 
   check("empty: says so, with one way to add", await page.getByText("No reminders yet").isVisible() && await page.getByRole("button", { name: /New reminder/ }).count() === 1);
   check("the screen's title isn't repeated", await page.getByRole("heading", { name: "Reminders" }).count() === 0);
-  check("AI suggest and Schedule a call sit side by side", await page.getByRole("button", { name: /AI suggest/ }).isVisible() && await page.getByRole("button", { name: "Schedule a call (KROFT Plus)" }).isVisible());
+  check("AI suggest and Schedule a call sit side by side", await page.getByRole("button", { name: /AI suggest/ }).isVisible() && await page.getByRole("button", { name: "Schedule a call (Kroft Plus)" }).isVisible());
 
   for (const [t, w] of [["Call Tunde about the logo invoice", "Tomorrow 9am"], ["Pay the landlord", "Friday"], ["Take a long walk", "Today"]]) {
     await page.getByRole("button", { name: /New reminder/ }).click();
@@ -48,7 +48,7 @@ try {
   await page.getByRole("button", { name: 'Mark "Call Tunde about the logo invoice" done' }).click();
   check("everything ticked off: All done", await page.getByText("All done").isVisible());
 
-  await page.getByRole("button", { name: "Schedule a call (KROFT Plus)" }).click();
+  await page.getByRole("button", { name: "Schedule a call (Kroft Plus)" }).click();
   check("Schedule a call on Free opens the plans", await page.getByRole("dialog", { name: "Choose your plan" }).isVisible());
   check("no page errors", errors.length === 0, errors.join(" | "));
   await ctx.close();

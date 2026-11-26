@@ -28,7 +28,7 @@ export function logoSize(width, height, box = LOGO_BOX) {
 
 // What to tell the person when a picture can't be used.
 export const LOGO_PROBLEM = {
-  "not-image": "That file isn't a picture KROFT can use. Try a PNG or JPG.",
+  "not-image": "That file isn't a picture Kroft can use. Try a PNG or JPG.",
   "too-big": "That logo is too detailed to store. Try a simpler or smaller picture.",
 };
 

@@ -80,7 +80,7 @@ export async function signUp(page, { skipGoal = true } = {}) {
   await page.getByLabel("Email").fill("ada@example.com");
   await page.getByLabel("Password", { exact: true }).fill("TestPass123!");
   await page.getByRole("button", { name: "Create account" }).click();
-  for (const n of ["Skip for now", "Continue", "Skip for now", "Start using KROFT"]) {
+  for (const n of ["Skip for now", "Continue", "Skip for now", "Start using Kroft"]) {
     await page.getByRole("button", { name: n, exact: true }).click();
     await page.waitForTimeout(350);
   }
