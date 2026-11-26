@@ -7196,14 +7196,20 @@ function KroftApp({ onFullReset } = {}) {
       analyser.fftSize = 512;
       ctx.createMediaStreamSource(stream).connect(analyser);
       const buf = new Uint8Array(analyser.frequencyBinCount);
+      // Each meter owns its own state. Starting a new one stops any older one, and a meter that
+      // has been stopped or replaced ends its own loop and mic, instead of erroring every frame
+      // (and keeping the microphone on) once the shared ref no longer points at it.
+      stopMeter();
+      const me = { ctx, stream, raf:null };
       const tick = () => {
+        if (voiceAudioRef.current !== me) { stream.getTracks().forEach(t => t.stop()); ctx.close?.(); return; }
         analyser.getByteTimeDomainData(buf);
         let sum = 0;
         for (let i = 0; i < buf.length; i++) { const v = (buf[i]-128)/128; sum += v*v; }
         voiceLevelRef.current = Math.min(1, Math.sqrt(sum/buf.length) * 4.5);
-        voiceAudioRef.current.raf = requestAnimationFrame(tick);
+        me.raf = requestAnimationFrame(tick);
       };
-      voiceAudioRef.current = { ctx, stream, raf:null };
+      voiceAudioRef.current = me;
       tick();
     } catch { /* meter is cosmetic — the loop still works without it */ }
   };
