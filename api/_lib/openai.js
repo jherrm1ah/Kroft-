@@ -17,6 +17,7 @@
 export const DEFAULT_MODEL = "gpt-4.1-mini";
 export const DEFAULT_TRANSCRIBE_MODEL = "gpt-4o-mini-transcribe";
 const API = "https://api.openai.com/v1";
+export const MAX_REPLY_TOKENS = 4096;
 
 // Reasoning models (gpt-5…, o1/o3/o4…) spend part of the token budget thinking before they
 // write, so a small budget (Kroft asks for as little as 60) could come back empty. They get
@@ -65,7 +66,9 @@ export function toOpenAIRequest(body, model) {
   for (const m of body.messages || []) {
     messages.push({ role: m.role === "assistant" ? "assistant" : "user", content: toOpenAIContent(m.content) });
   }
-  const asked = Number(body.max_tokens) || 1024;
+  // Kroft never asks for more than 2048; the cap stops a hand-crafted request from ordering a
+  // huge (and costly) reply.
+  const asked = Math.min(Math.max(Math.floor(Number(body.max_tokens)) || 1024, 1), MAX_REPLY_TOKENS);
   const req = { model, messages };
   if (isReasoningModel(model)) {
     req.max_completion_tokens = asked + 2048;

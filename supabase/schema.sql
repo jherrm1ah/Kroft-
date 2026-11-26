@@ -417,3 +417,17 @@ group by 1, 2;
 -- them from app users; revoking makes that explicit.
 revoke all on public.ai_cost_daily, public.ai_cost_per_user_monthly from anon, authenticated;
 revoke all on public.ai_request_log, public.ai_model_prices from anon, authenticated;
+
+-- Lock-down of server-only objects (see migrations/202611261400_lock_down_server_tables.sql).
+revoke all on table
+  public.ai_model_prices, public.ai_request_log, public.ai_usage, public.client_error_log,
+  public.oauth_tokens, public.payment_events, public.push_subscriptions,
+  public.scheduled_notifications, public.user_feedback
+from anon, authenticated;
+revoke all on public.client_errors_recent, public.ai_cost_daily, public.ai_cost_per_user_monthly from anon, authenticated;
+
+do $$ begin
+  if to_regprocedure('public.rls_auto_enable()') is not null then
+    revoke execute on function public.rls_auto_enable() from public, anon, authenticated;
+  end if;
+end $$;

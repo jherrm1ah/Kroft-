@@ -6514,7 +6514,13 @@ function KroftApp({ onFullReset } = {}) {
         model:"openai", max_tokens:300, system:receiptPrompt(opts),
         messages:[{ role:"user", content:[{ type:"image", source:{ type:"base64", media_type:"image/jpeg", data:photo.slice(photo.indexOf(",") + 1) } }, { type:"text", text:"Read this receipt." }] }],
       }) });
-      if (res.status === 429) { setScan(null); toast("You've used today's receipt scans on the free plan."); setShowPlans(""); return; }
+      if (res.status === 429) {
+        const body = await res.json().catch(() => null);
+        setScan(null);
+        if (body?.error === "quota_exceeded") { toast("You've used today's receipt scans on the free plan."); setShowPlans(""); }
+        else toast(body?.message || "Too many requests right now. Try again in a few minutes.");
+        return;
+      }
       if (!res.ok) throw new Error(String(res.status));
       const data = await res.json();
       const result = parseReceiptReply((data.content || []).map(b => b.text || "").join(""), opts);

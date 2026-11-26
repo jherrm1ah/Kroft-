@@ -62,7 +62,10 @@ try {
   next = { status: 403, headers: { "Content-Type": "application/json" }, body: "{}" };
   await scan();
   check("AI unavailable: suggests adding it by hand", await page.getByText(/Couldn't read the receipt right now/).first().waitFor({ timeout: 5000 }).then(() => true, () => false));
-  next = { status: 429, headers: { "Content-Type": "application/json" }, body: "{}" };
+  next = { status: 429, headers: { "Content-Type": "application/json" }, body: JSON.stringify({ error: "rate_limited", message: "You're sending a lot of requests. Take a short break and try again in a few minutes." }) };
+  await scan();
+  check("abuse guard: says to try later, no plans", await page.getByText(/sending a lot of requests/).first().waitFor({ timeout: 5000 }).then(() => true, () => false) && !(await page.getByRole("dialog", { name: "Choose your plan" }).isVisible()));
+  next = { status: 429, headers: { "Content-Type": "application/json" }, body: JSON.stringify({ error: "quota_exceeded", usageType: "vision", limit: 3, message: "limit" }) };
   await scan();
   check("daily limit reached: the plans open", await page.getByRole("dialog", { name: "Choose your plan" }).waitFor({ timeout: 5000 }).then(() => true, () => false));
   check("no page errors", errors.length === 0, errors.join(" | "));
