@@ -5487,7 +5487,11 @@ function KroftApp({ onFullReset } = {}) {
         const oauthError = hash.get("error_description") || query.get("error_description");
         if (oauthError) {
           window.history.replaceState({}, "", window.location.pathname);
-          toast(/denied|cancel/i.test(oauthError) ? "Google sign-in was cancelled." : "Google sign-in didn't work. Try again.");
+          // An email link (password reset, confirm email) that was expired or already used lands
+          // here too, marked otp_expired: say that rather than blaming Google.
+          const code = hash.get("error_code") || query.get("error_code");
+          toast(code === "otp_expired" ? "That email link has expired or was already used. Request a new one."
+            : /denied|cancel/i.test(oauthError) ? "Google sign-in was cancelled." : "Google sign-in didn't work. Try again.");
         } else if (hash.get("access_token") && hash.get("refresh_token") && hash.get("type") !== "recovery") {
           const { error } = await supabase.auth.setSession({ access_token: hash.get("access_token"), refresh_token: hash.get("refresh_token") });
           window.history.replaceState({}, "", window.location.pathname + window.location.search);
@@ -6514,7 +6518,13 @@ function KroftApp({ onFullReset } = {}) {
         model:"openai", max_tokens:300, system:receiptPrompt(opts),
         messages:[{ role:"user", content:[{ type:"image", source:{ type:"base64", media_type:"image/jpeg", data:photo.slice(photo.indexOf(",") + 1) } }, { type:"text", text:"Read this receipt." }] }],
       }) });
-      if (res.status === 429) { setScan(null); toast("You've used today's receipt scans on the free plan."); setShowPlans(""); return; }
+      if (res.status === 429) {
+        const body = await res.json().catch(() => null);
+        setScan(null);
+        if (body?.error === "quota_exceeded") { toast("You've used today's receipt scans on the free plan."); setShowPlans(""); }
+        else toast(body?.message || "Too many requests right now. Try again in a few minutes.");
+        return;
+      }
       if (!res.ok) throw new Error(String(res.status));
       const data = await res.json();
       const result = parseReceiptReply((data.content || []).map(b => b.text || "").join(""), opts);
@@ -6920,8 +6930,30 @@ function KroftApp({ onFullReset } = {}) {
   // detectSessionInUrl: false, Supabase won't auto-consume it, so this does that by hand: parse
   // the hash, establish the session it describes, then send the user to the set-new-password
   // screen. Runs once on mount, same as the query-param effects above.
+  //
+  // The email templates link to "/?token_hash=…&type=recovery|signup|email_change" instead of
+  // Supabase's own /verify URL: email scanners (Gmail opens every link to check it) would
+  // otherwise use up the one-time link before the person taps it. A scanner fetches the page but
+  // doesn't run this code, so the token is only spent here, by verifyOtp, in a real browser.
+  // A link that failed on Supabase's side lands with "#error=…&error_code=otp_expired", which
+  // the start-up check (with the Google sign-in return) explains.
   useEffect(() => {
     if (!isSupabaseConfigured) return;
+    const query = new URLSearchParams(window.location.search);
+    const tokenHash = query.get("token_hash");
+    const linkType = query.get("type");
+    if (tokenHash && ["recovery", "signup", "email", "email_change", "invite"].includes(linkType)) {
+      query.delete("token_hash"); query.delete("type");
+      window.history.replaceState({}, "", window.location.pathname + (query.toString() ? `?${query}` : ""));
+      (async () => {
+        const { error } = await supabase.auth.verifyOtp({ token_hash: tokenHash, type: linkType });
+        if (error) { toast("That email link has expired or was already used. Request a new one."); return; }
+        if (linkType === "recovery") setStep("reset-password");
+        else if (linkType === "email_change") toast("Your new email is confirmed.");
+        else toast("Your email is confirmed. Welcome to KROFT!");
+      })();
+      return;
+    }
     const hash = window.location.hash.startsWith("#") ? window.location.hash.slice(1) : window.location.hash;
     const hashParams = new URLSearchParams(hash);
     if (hashParams.get("type") !== "recovery") return;

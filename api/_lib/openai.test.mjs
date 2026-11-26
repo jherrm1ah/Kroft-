@@ -19,6 +19,7 @@ eq("reasoning models detected", [isReasoningModel("gpt-5-mini"), isReasoningMode
   eq("no streaming fields when not streaming", [req.stream, req.stream_options], [undefined, undefined]);
   const r5 = toOpenAIRequest({ max_tokens: 60, messages: [] }, "gpt-5-mini");
   eq("reasoning model gets room to think and low effort", [r5.max_completion_tokens, r5.reasoning_effort], [2108, "low"]);
+  eq("reply size capped", [toOpenAIRequest({ max_tokens: 999999, messages: [] }, "gpt-4.1-mini").max_completion_tokens, toOpenAIRequest({ max_tokens: -5, messages: [] }, "gpt-4.1-mini").max_completion_tokens], [4096, 1]);
   const rs = toOpenAIRequest({ stream: true, messages: [] }, "gpt-4.1-mini");
   eq("streaming asks for usage", [rs.stream, rs.stream_options], [true, { include_usage: true }]);
 }

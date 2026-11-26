@@ -23,6 +23,9 @@ export const config = { runtime: "edge" };
 import { callOpenAI } from "./_lib/openai.js";
 import { getAuthedUser, supabaseAdmin } from "./_lib/supabaseAdmin.js";
 
+const HOURLY_SAFETY_LIMIT = 300;
+const MAX_BODY_CHARS = 12_000_000;
+
 // Every AI usage limit is read from the plan_limits table (see supabase/schema.sql) instead of
 // being hardcoded here — that's what lets an allowance change, or a brand-new metered feature
 // turn on, without a code deploy. A usage_type with no row for the caller's plan is unlimited by
@@ -99,6 +102,17 @@ export default async function handler(req, ctx) {
     if (!user) return jsonError({ error: "Not authenticated" }, 401);
 
     const admin = supabaseAdmin();
+
+    // Abuse guard, not a product limit: no real person sends this many AI requests in an hour,
+    // but a script on a stolen or throwaway account could, at the cost of the OpenAI bill.
+    // Counted from ai_request_log (indexed on user_id, created_at). Fails open if the count
+    // can't be read, so a logging hiccup never blocks real users.
+    const hourAgo = new Date(Date.now() - 3600_000).toISOString();
+    const { count: lastHour } = await admin.from("ai_request_log").select("id", { count: "exact", head: true }).eq("user_id", user.id).gte("created_at", hourAgo);
+    if ((lastHour || 0) >= HOURLY_SAFETY_LIMIT) {
+      return jsonError({ error: "rate_limited", message: "You're sending a lot of requests. Take a short break and try again in a few minutes." }, 429);
+    }
+
     const { data: subscription } = await admin.from("subscriptions").select("status").eq("user_id", user.id).maybeSingle();
     const isSubscribed = subscription?.status === "active";
     logUsage = usageLogger({ admin, user, plan: isSubscribed ? "plus" : "free", usageType, client: req.headers.get("x-kroft-client"), ctx });
@@ -146,6 +160,8 @@ export default async function handler(req, ctx) {
   let rawBody;
   try {
     rawBody = await req.text();
+    // A photo or voice note is a few MB at most once encoded; anything far bigger isn't Kroft.
+    if (rawBody.length > MAX_BODY_CHARS) return jsonError({ error: "too_large", message: "That attachment is too large. Try a smaller photo or a shorter voice note." }, 413);
   } catch {
     return new Response(JSON.stringify({ error: "Invalid request body" }), {
       status: 400,
