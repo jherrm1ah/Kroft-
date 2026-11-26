@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo, Component, Fragment, lazy, Suspense } from "react";
 import { createPortal } from "react-dom";
 import { supabase, isSupabaseConfigured, supabaseUrl, supabaseAnonKey } from "./supabaseClient.js";
+import { startLiveSession } from "./realtime.js";
 import { fmtCur, APP_FONT } from "./charts/format.js";
 import { Markdown } from "./markdown/Markdown.jsx";
 import { toPlainText, toSpeechText } from "./markdown/parse.js";
@@ -1830,11 +1831,15 @@ function ReminderAlarmScreen({ reminder, onDismiss, onSnooze }) {
   );
 }
 
-function VoiceMode({ state, transcript, reply, error, onStart, onStop, onClose, onOpenSettings, subtitles, supported, levelRef, primed, subscribed, turnsLeft, live }) {
+function VoiceMode({ state, transcript, reply, error, onStart, onStop, onClose, onOpenSettings, subtitles, supported, levelRef, primed, subscribed, turnsLeft, live, connecting }) {
   // Keeps the tail of a long streaming reply in view without the person having to scroll.
   const replyEndRef = useRef(null);
   useEffect(() => { replyEndRef.current?.scrollIntoView?.({ block:"end" }); }, [reply]);
-  const label = { idle:"Tap to speak", listening:"Listening", thinking:"Thinking", speaking:"Speaking" }[state] || "";
+  // In a live conversation there's nothing to tap between turns: Kroft listens the whole time and
+  // stops talking the moment the person speaks, like a phone call.
+  const label = connecting ? "Connecting…"
+    : live ? ({ listening:"Listening", thinking:"Thinking", speaking:"Kroft is talking · just speak to interrupt" }[state] || "Listening")
+    : ({ idle:"Tap to speak", listening:"Listening", thinking:"Thinking", speaking:"Speaking" }[state] || "");
   // Sized down from the original 320px — the full-bleed orb read as an oversized, overly heavy
   // focal point on most phone screens.
   const size = Math.min(230, (typeof window !== "undefined" ? window.innerWidth : 360) - 100);
@@ -1858,9 +1863,10 @@ function VoiceMode({ state, transcript, reply, error, onStart, onStop, onClose, 
         <div
           role="button"
           tabIndex={0}
-          aria-label={state === "idle" ? "Start listening" : "Stop"}
-          onClick={() => (state === "idle" ? onStart() : onStop())}
-          onKeyDown={e => { if (e.key==="Enter"||e.key===" ") { e.preventDefault(); state==="idle" ? onStart() : onStop(); } }}
+          aria-label={live ? "Live conversation" : state === "idle" ? "Start listening" : "Stop"}
+          // During a live conversation the orb is just the orb: a stray tap shouldn't hang up.
+          onClick={() => { if (live || connecting) return; state === "idle" ? onStart() : onStop(); }}
+          onKeyDown={e => { if (live || connecting) return; if (e.key==="Enter"||e.key===" ") { e.preventDefault(); state==="idle" ? onStart() : onStop(); } }}
           style={{ cursor:"pointer", borderRadius:"50%" }}>
           <VoiceOrb state={state} levelRef={levelRef} size={size} />
         </div>
@@ -1871,7 +1877,10 @@ function VoiceMode({ state, transcript, reply, error, onStart, onStop, onClose, 
           {error && <div style={{ fontSize:14, color:C.negative, lineHeight:1.6 }}>{error}</div>}
           {!error && subtitles && transcript && <div style={{ fontSize:17, color:C.text, lineHeight:1.5, fontWeight:500 }}>{transcript}</div>}
           {!error && subtitles && !transcript && reply && <div ref={replyEndRef} style={{ fontSize:15, color:C.soft, lineHeight:1.7, textAlign:"left", whiteSpace:"pre-wrap" }}>{toPlainText(reply)}</div>}
-          {!error && !transcript && !reply && state === "idle" && (
+          {!error && live && !transcript && !reply && (
+            <div style={{ fontSize:14, color:C.muted, lineHeight:1.7 }}>Live conversation. Just talk, the way you would on a call. Cut in any time.</div>
+          )}
+          {!error && !live && !transcript && !reply && state === "idle" && (
             <div style={{ fontSize:14, color:C.muted, lineHeight:1.7 }}>
               {!supported
                 ? "This browser can't do live speech recognition. Chrome or Edge on Android and desktop work best."
@@ -1887,7 +1896,7 @@ function VoiceMode({ state, transcript, reply, error, onStart, onStop, onClose, 
       </div>
 
       <div style={{ width:"100%", maxWidth:460, display:"flex", gap:10 }}>
-        {state === "idle"
+        {state === "idle" && !live && !connecting
           ? <button onClick={onStart} disabled={!supported} style={{ flex:1, minHeight:52, borderRadius:16, border:"none", background:supported?C.text:C.surface, color:supported?C.card:C.muted, fontSize:15, fontWeight:700, fontFamily:APP_FONT, cursor:supported?"pointer":"not-allowed" }}>{primed ? "Start talking" : "Allow microphone"}</button>
           : <button onClick={onStop} style={{ flex:1, minHeight:52, borderRadius:16, border:`1px solid ${C.border}`, background:"transparent", color:C.text, fontSize:15, fontWeight:700, fontFamily:APP_FONT, cursor:"pointer" }}>{live ? "End conversation" : state==="speaking" ? "Interrupt" : state==="thinking" ? "Cancel" : "Stop"}</button>}
       </div>
@@ -4157,7 +4166,7 @@ function ProfileSection({ onFeedback, isAdmin, onAdmin, nav, onNav, connections,
     voice: (
       <ProfileRow label="Voice & Language" sub={`English (US) · ${VOICE_PROFILES[resolveVoiceId(voicePref)].name}`} expanded={openRow==="voice"} onToggle={()=>toggle("voice")}
         right={<ProfileSwitch value={voiceReplies} onChange={onSetVoiceReplies} />}>
-        <Mono style={{ display:"block", color:C.soft, lineHeight:1.7, marginBottom:14 }}>{voiceReplies ? "Kroft speaks replies and reminders aloud." : "Kroft will stay silent unless you tap Read Aloud — voice is never required to use Kroft."}</Mono>
+        <Mono style={{ display:"block", color:C.soft, lineHeight:1.7, marginBottom:14 }}>{voiceReplies ? "Kroft talks in voice mode and when you log a stressful mood. Typed chat is never read aloud, for your privacy; tap Read aloud on a message to hear it." : "Kroft will stay silent unless you tap Read aloud. Voice is never required to use Kroft."}</Mono>
         <VoiceStyleSpeedControls voicePref={voicePref} onSetVoicePref={onSetVoicePref} voiceSpeed={voiceSpeed} onSetVoiceSpeed={onSetVoiceSpeed} />
       </ProfileRow>
     ),
@@ -5967,7 +5976,7 @@ function KroftApp({ onFullReset } = {}) {
 
   const remind = appt => {
     const msg = `Hey ${firstNameOf(user.name)||"there"}, reminder: "${appt.title}" at ${appt.time}${appt.date?" on "+appt.date:""}${appt.location?" at "+appt.location:""}.`;
-    if (voiceReplies) speak(msg);
+    // Shown, not spoken: an appointment's details are private (see streamReply).
     toast(`Reminder sent: ${appt.title}`);
   };
 
@@ -7183,6 +7192,8 @@ function KroftApp({ onFullReset } = {}) {
   const liveStartingRef = useRef(false);
   const liveOffRef = useRef(false);
   const [liveOn, setLiveOn] = useState(false);
+  const [liveConnecting, setLiveConnecting] = useState(false);
+  const liveAutoStartedRef = useRef(false);
   const liveCapable = isSupabaseConfigured && typeof window !== "undefined" && !!window.RTCPeerConnection && !!navigator.mediaDevices?.getUserMedia;
   const SRSupported = typeof window !== "undefined" && !!(window.SpeechRecognition || window.webkitSpeechRecognition);
 
@@ -7458,7 +7469,7 @@ function KroftApp({ onFullReset } = {}) {
   // typed chat. Anything that stops it from starting (not set up, today's limit, no connection)
   // falls back to the standard voice mode for the rest of the visit.
   const startLiveVoice = async () => {
-    liveStartingRef.current = true;
+    liveStartingRef.current = true; setLiveConnecting(true);
     setVoiceError(""); setVoiceTranscript(""); setVoiceReply(""); setVoiceState("thinking");
     try {
       const session = await startLiveSession({
@@ -7469,7 +7480,7 @@ function KroftApp({ onFullReset } = {}) {
         },
         onState: st => { if (voiceOpenRef.current) setVoiceState(st); },
         onUserText: t => { setVoiceTranscript(t); setVoiceReply(""); setAiMessages(p => [...p, { role:"user", content:t }]); },
-        onAssistantText: t => setVoiceReply(t),
+        onAssistantText: t => { setVoiceTranscript(""); setVoiceReply(t); },
         onAssistantDone: t => { if (t.trim()) setAiMessages(p => [...p, { role:"assistant", content:t.trim() }]); },
         onToolCall: async (name, args) => {
           const action = name === "kroft_action" ? args?.action : null;
@@ -7488,12 +7499,15 @@ function KroftApp({ onFullReset } = {}) {
           else if (reason === "disconnected") setVoiceError("The live connection dropped. Tap to start again.");
         },
       });
-      liveStartingRef.current = false;
+      liveStartingRef.current = false; setLiveConnecting(false);
       if (!voiceOpenRef.current) { session.stop("closed"); return; }
       liveRef.current = session; setLiveOn(true); setMicPrimed(true);
       startMeter();
     } catch (err) {
-      liveStartingRef.current = false;
+      liveStartingRef.current = false; setLiveConnecting(false);
+      // Recorded so a live conversation that keeps falling back shows up in the error log with
+      // its reason, instead of failing silently.
+      reportError("error", { message:`Live voice didn't start: ${err?.code || err?.name || "error"}${err?.status ? ` (${err.status})` : ""}${err?.code ? "" : ` ${String(err?.message || "").slice(0, 80)}`}` }, { source:"live-voice" });
       if (!voiceOpenRef.current) return;
       setVoiceState("idle");
       if (err?.code === "mic_denied") { setVoiceError("Kroft needs the microphone to talk. Allow it in your browser or phone settings."); return; }
@@ -7502,6 +7516,16 @@ function KroftApp({ onFullReset } = {}) {
       voiceListen();
     }
   };
+
+  // Opening voice mode starts the live conversation straight away: one tap, then just talk. Only
+  // once per opening, so a conversation that ends (time limit, dropped line) waits for a tap
+  // rather than reconnecting by itself.
+  useEffect(() => {
+    if (!voiceOpen) { liveAutoStartedRef.current = false; return; }
+    if (liveAutoStartedRef.current || !liveCapable || liveOffRef.current || voiceState !== "idle") return;
+    liveAutoStartedRef.current = true;
+    voiceListen();
+  }, [voiceOpen]);
 
   const voiceStop = () => {
     // A live conversation ends outright (interrupting happens by just talking over Kroft).
@@ -8493,7 +8517,8 @@ ${voiceMode
       }
       setAiMessages(p => p.map(m => m.id === streamId ? { ...m, content:clean, streaming:false, contactAction, pendingAction:pending } : m));
       if (result) toast(result.label, result.undo);
-      if (voiceReplies && !voiceOpenRef.current) speak(clean);
+      // Typed chat is never read aloud by itself: replies can hold private figures and people
+      // nearby could hear them. "Read aloud" on a message is still there when someone wants it.
     } catch (err) {
       if (err.name === "AbortError") {
         // Keep whatever had already streamed in — a stopped reply is partial, not failed, and
@@ -10397,6 +10422,7 @@ ${voiceMode
           primed={micPrimed}
           supported={SRSupported || liveCapable}
           live={liveOn}
+          connecting={liveConnecting}
           onStart={voiceListen}
           onStop={voiceStop}
           onClose={closeVoice}
@@ -12746,7 +12772,7 @@ ${voiceMode
                   day one isn't true, and people stop trusting a number like that. */}
               <div style={{ fontSize:13, color:C.soft, marginBottom:16, textAlign:"center", lineHeight:1.5 }}>{!hasWellnessData ? "No score yet. Log how you feel, a break or some water, and Kroft starts your score." : wellness>80?"You are thriving today.":wellness>60?"Doing well — watch your stress.":"Take a break — your body needs it."}</div>
               <div style={{ display:"flex", gap:8, marginBottom:12 }}>
-                <Btn sm onClick={() => { const tip = rand(wellnessTips()).text; if (voiceReplies) speak(tip); toast(tip); }} style={{ flex:1 }}>Get tip</Btn>
+                <Btn sm onClick={() => { const tip = rand(wellnessTips()).text; toast(tip); }} style={{ flex:1 }}>Get tip</Btn>
                 {hasWellnessData && <Btn sm v="outline" onClick={() => { speak(`Wellness score: ${wellness} out of 100.`); toast("Reading score…"); }} style={{ flex:1 }}>Read score</Btn>}
               </div>
               {/* Icon tiles instead of plain outlined pills — matching the quick-access language
