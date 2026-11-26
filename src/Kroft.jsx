@@ -7493,6 +7493,7 @@ function KroftApp({ onFullReset } = {}) {
         onError: msg => { if (voiceOpenRef.current) setVoiceError(msg); },
         onEnd: reason => {
           liveRef.current = null; setLiveOn(false); stopMeter();
+          playSound("liveEnd");
           if (!voiceOpenRef.current) return;
           setVoiceState("idle");
           if (reason === "time_limit") setVoiceError("That's the time limit for one live conversation. Tap to start another.");
@@ -7502,6 +7503,7 @@ function KroftApp({ onFullReset } = {}) {
       liveStartingRef.current = false; setLiveConnecting(false);
       if (!voiceOpenRef.current) { session.stop("closed"); return; }
       liveRef.current = session; setLiveOn(true); setMicPrimed(true);
+      playSound("liveStart");
       startMeter();
     } catch (err) {
       liveStartingRef.current = false; setLiveConnecting(false);

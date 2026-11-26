@@ -43,6 +43,14 @@ const FAKE_OPENAI = `
   window.__spoken = [];
   const realSpeak = SpeechSynthesis.prototype.speak;
   SpeechSynthesis.prototype.speak = function (u) { window.__spoken.push(u.text); return realSpeak.call(this, u); };
+  // Notes played by Kroft's sounds (each note's main pitch, in order).
+  window.__notes = [];
+  const realOsc = AudioContext.prototype.createOscillator;
+  AudioContext.prototype.createOscillator = function () {
+    const o = realOsc.call(this); const ramp = o.frequency.exponentialRampToValueAtTime.bind(o.frequency); let first = true;
+    o.frequency.exponentialRampToValueAtTime = (v, t) => { if (first) { first = false; window.__notes.push(Math.round(v)); } return ramp(v, t); };
+    return o;
+  };
 `;
 
 const server = await startServer();
@@ -91,6 +99,8 @@ try {
   check("opening voice mode starts a live conversation by itself", calls.realtime.length === 1 && await page.evaluate(() => window.__oai.open));
   check("signed in, with Kroft's instructions, and the short-lived key goes to OpenAI", calls.realtime[0]?.auth === "Bearer x.y.z" && /Kroft/.test(calls.realtime[0]?.body?.instructions || "") && await page.evaluate(() => window.__oai.auth) === "Bearer ek_test");
   check("no Start or Interrupt buttons, just End conversation", await dialog.getByRole("button", { name: "End conversation" }).isVisible() && !(await dialog.getByRole("button", { name: /Start talking|Interrupt/ }).count()));
+  const opening = await page.evaluate(() => window.__notes.filter((_, i) => i % 2 === 0));
+  check("an opening sound plays when the conversation connects (rising notes)", opening.length === 3 && opening[0] < opening[1] && opening[1] < opening[2], JSON.stringify(opening));
   check("says it's a live conversation you can cut into", await dialog.getByText(/Just talk, the way you would on a call/).isVisible());
 
   await page.evaluate(() => {
@@ -113,8 +123,11 @@ try {
   check("Kroft saves the expense mid-conversation and tells OpenAI it's done", /Fuel/.test(sent.find(e => e.type === "conversation.item.create")?.item?.output || "") && sent.some(e => e.type === "response.create"));
   check("the expense is saved", await page.getByText(/Fuel/).first().isVisible());
 
+  await page.evaluate(() => { window.__notes.length = 0; });
   await dialog.getByRole("button", { name: "End conversation" }).click();
   await page.waitForTimeout(300);
+  const closing = await page.evaluate(() => window.__notes.filter((_, i) => i % 2 === 0));
+  check("a closing sound plays when it ends (falling notes)", closing.length === 3 && closing[0] > closing[1] && closing[1] > closing[2], JSON.stringify(closing));
   check("one tap ends it", await dialog.getByRole("button", { name: /Start talking/ }).isVisible());
   check("the conversation went into the chat history", (await page.evaluate(() => document.body.innerText)).includes("How much did I spend on fuel?"));
   check("standard voice wasn't used", calls.chat === 0);
