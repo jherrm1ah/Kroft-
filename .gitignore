@@ -7,3 +7,4 @@ dist
 !.env.example
 .vercel
 dist-e2e
+dist-e2e-live
