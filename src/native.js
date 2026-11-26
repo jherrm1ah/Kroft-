@@ -95,8 +95,8 @@ let alertChannel = null, quietChannel = null;
 async function installChannels(LocalNotifications) {
   if (!shellInfo || shellInfo.build < SOUND_BUILD) return;
   try {
-    await LocalNotifications.createChannel({ id: "kroft_alerts", name: "KROFT alerts", description: "Reminders, appointments and other KROFT notifications", importance: 4, sound: "kroft_notify.wav", visibility: 1, vibration: true });
-    await LocalNotifications.createChannel({ id: "kroft_quiet", name: "KROFT while open", description: "Shown while KROFT is open; KROFT plays its own sound", importance: 2, visibility: 1, vibration: false });
+    await LocalNotifications.createChannel({ id: "kroft_alerts", name: "Kroft alerts", description: "Reminders, appointments and other Kroft notifications", importance: 4, sound: "kroft_notify.wav", visibility: 1, vibration: true });
+    await LocalNotifications.createChannel({ id: "kroft_quiet", name: "Kroft while open", description: "Shown while Kroft is open; Kroft plays its own sound", importance: 2, visibility: 1, vibration: false });
     alertChannel = "kroft_alerts"; quietChannel = "kroft_quiet";
   } catch { /* default channel and sound */ }
 }
@@ -291,7 +291,7 @@ async function installNotifications(LocalNotifications) {
   class NativeNotification {
     constructor(title, opts = {}) {
       this.title = title; this.body = opts.body || ""; this.tag = opts.tag || ""; this.onclick = null;
-      const quiet = !!opts.silent; // KROFT is open and played its own sound
+      const quiet = !!opts.silent; // Kroft is open and played its own sound
       this._id = idFor(`${this.tag}|${title}|${Date.now()}`);
       // A reminder scheduled on the phone (scheduleDeviceReminders) and the app's own in-app check
       // can fire for the same thing while KROFT is open; show it once.
@@ -439,7 +439,7 @@ export async function biometricStatus() {
   }
 }
 
-export async function verifyBiometric(title = "Unlock KROFT") {
+export async function verifyBiometric(title = "Unlock Kroft") {
   if (!isNativeApp) return { ok: false, reason: "unsupported" };
   if (!hasPlugin("NativeBiometric")) return { ok: false, reason: "needs-update" };
   const status = await biometricStatus();

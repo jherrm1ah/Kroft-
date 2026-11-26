@@ -37,11 +37,11 @@ export const GOALS = [
     ],
   },
   {
-    id: "assistant", label: "Talk to KROFT", sub: "Ask anything, by text or voice",
+    id: "assistant", label: "Talk to Kroft", sub: "Ask anything, by text or voice",
     steps: [
-      { id: "ask", t: "Ask KROFT something", done: d => (d.aiMessages || []).some(m => m.role === "user") || (d.chatHistory || []).length > 0 },
-      { id: "remind", t: "Have KROFT remind you of something", done: d => (d.smartReminders || []).length > 0 },
-      { id: "voice", t: "Try talking to KROFT", done: d => Number(d.voiceTurnsCount) > 0 },
+      { id: "ask", t: "Ask Kroft something", done: d => (d.aiMessages || []).some(m => m.role === "user") || (d.chatHistory || []).length > 0 },
+      { id: "remind", t: "Have Kroft remind you of something", done: d => (d.smartReminders || []).length > 0 },
+      { id: "voice", t: "Try talking to Kroft", done: d => Number(d.voiceTurnsCount) > 0 },
     ],
   },
 ];

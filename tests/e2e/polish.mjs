@@ -26,7 +26,7 @@ try {
   check("Home: the money summary is as before", await page.getByText("Net profit this month").isVisible());
 
   // The welcome message mustn't cover the header's buttons or the tabs.
-  const toast = await page.getByText("Welcome to KROFT, Ada.").boundingBox();
+  const toast = await page.getByText("Welcome to Kroft, Ada.").boundingBox();
   const help = await page.getByRole("button", { name: /help|\?/i }).first().boundingBox().catch(() => null);
   const ask = await page.getByRole("button", { name: /Ask Kroft/ }).first().boundingBox().catch(() => null);
   const tabs = await page.getByRole("tab", { name: "Overview" }).boundingBox();

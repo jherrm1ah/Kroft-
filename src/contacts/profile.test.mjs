@@ -35,7 +35,7 @@ const m = P.contactMoney(r, today);
 eq("money: owed, paid, overdue, open quotes", [m.owed, m.paid, m.overdue, m.openQuotes, m.quoted], [{ NGN: 50000 }, { NGN: 20000 }, 1, 1, { NGN: 300000 }]);
 
 const lines = P.contactSummary(tunde, r, m, today, fmt);
-eq("what KROFT knows, in order", lines, [
+eq("what Kroft knows, in order", lines, [
   "Tunde is a Marketing manager at Ọlá Foods.",
   "Owes you NGN 50,000 (1 invoice overdue).",
   "Has paid you NGN 20,000 across 2 invoices.",

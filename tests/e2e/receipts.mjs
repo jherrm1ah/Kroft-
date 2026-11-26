@@ -65,7 +65,7 @@ async function website(browser) {
   await page.getByText("Tunde Bakare").first().click();
   // Free plan: statements are a Plus feature.
   await page.getByRole("button", { name: "Statement of account · Plus" }).click();
-  check("free plan: statements say they're part of Plus", await page.getByText("Client statements are a KROFT Plus feature.").isVisible());
+  check("free plan: statements say they're part of Plus", await page.getByText("Client statements are a Kroft Plus feature.").isVisible());
   check("…and the plans open", await page.getByRole("dialog", { name: "Choose your plan" }).isVisible());
   check("no page errors (free)", errors.length === 0, errors.join(" | "));
   await ctx.close();

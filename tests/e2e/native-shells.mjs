@@ -53,7 +53,7 @@ async function runShell(browser, label, shell) {
     await page.waitForTimeout(800);
     const body = await page.locator("body").innerText();
     if (shell.plugins.includes("NativeBiometric")) check("fingerprint unlock turns on", /Biometric unlock is on/.test(body));
-    else check("APK without the fingerprint plugin is told to update", /Update the KROFT app to use fingerprint/.test(body));
+    else check("APK without the fingerprint plugin is told to update", /Update the Kroft app to use fingerprint/.test(body));
   } else {
     check("website shows Face ID setting, no app-only rows", await page.locator("[role=button]", { hasText: /^Face ID/ }).count() === 1 && await page.locator("[role=button]", { hasText: /^App permissions/ }).count() === 0);
   }

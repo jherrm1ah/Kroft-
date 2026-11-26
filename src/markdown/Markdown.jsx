@@ -187,7 +187,7 @@ function MathWarning({ issue, theme, onRecheck }) {
         {onRecheck && (
           <button type="button" onClick={() => onRecheck(ask)}
             style={{ marginTop: 8, height: 32, padding: "0 14px", borderRadius: 999, border: `1px solid ${theme.cardB}`, background: theme.card, color: theme.text, fontSize: 13, fontWeight: 600, fontFamily: "inherit", cursor: "pointer" }}>
-            Ask KROFT to recheck
+            Ask Kroft to recheck
           </button>
         )}
       </div>

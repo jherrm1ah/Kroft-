@@ -16,10 +16,10 @@ try {
   const errors = []; page.on("pageerror", e => errors.push(e.message));
   await page.goto(URL); await signUp(page, { skipGoal: false });
 
-  const picker = page.getByRole("dialog", { name: "What do you want KROFT for" });
+  const picker = page.getByRole("dialog", { name: "What do you want Kroft for" });
   await picker.waitFor({ timeout: 10000 });
   const text = await picker.innerText();
-  check("after sign-up, KROFT asks what it's wanted for", text.includes("Ada, what do you want KROFT to help with first?") && ["Get paid", "Track my money", "Run projects", "Stay organised", "Talk to KROFT"].every(g => text.includes(g)), text.slice(0, 200));
+  check("after sign-up, Kroft asks what it's wanted for", text.includes("Ada, what do you want Kroft to help with first?") && ["Get paid", "Track my money", "Run projects", "Stay organised", "Talk to Kroft"].every(g => text.includes(g)), text.slice(0, 200));
   await picker.getByRole("button", { name: /^Get paid/ }).click();
   check("choosing Get paid opens Invoices", await page.getByRole("dialog", { name: "Invoices" }).isVisible());
   await page.getByRole("dialog", { name: "Invoices" }).getByRole("button", { name: "Back", exact: true }).click();
@@ -69,7 +69,7 @@ try {
   const p3 = await ctx3.newPage();
   await p3.goto(URL); await signUp(p3, { skipGoal: false });
   await p3.getByRole("button", { name: "I'll look around myself" }).click();
-  check("skipping goes straight to Home with no card", await p3.getByText(/^Hi, Ada/).isVisible() && !(await p3.getByText(/^Getting started/).isVisible()));
+  check("skipping goes straight to Home with no card", await p3.getByText(/^Good (morning|afternoon|evening), Ada$/).isVisible() && !(await p3.getByText(/^Getting started/).isVisible()));
   await ctx3.close();
 } catch (err) {
   check("test run finished", false, err.message);

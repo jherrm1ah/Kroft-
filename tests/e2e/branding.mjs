@@ -21,7 +21,7 @@ const sample = (page, alt, box) => page.evaluate(async ({ alt, box }) => {
   return { min, r: r / n, g: g / n, b: b / n };
 }, { alt, box });
 const LOGO_AREA = { x: 52, y: 40, w: 30, h: 20 };          // inside where a logo is drawn (top-left)
-const FOOTER = { x: 595.28 - 48 - 90, y: 841.89 - 42, w: 88, h: 14 };   // where "Created with KROFT" goes
+const FOOTER = { x: 595.28 - 48 - 90, y: 841.89 - 42, w: 88, h: 14 };   // where "Created with Kroft" goes
 
 async function openInvoices(page) {
   await page.locator('nav button[title="Home"]').click();
@@ -49,9 +49,9 @@ try {
     await page.goto(URL); await signUp(page);
     await openInvoices(page);
     await page.getByRole("button", { name: "Details" }).click();
-    check(`${who}: the logo is marked Pro`, await page.getByText("Your logo on documents, without the KROFT line, with KROFT Pro.").isVisible());
+    check(`${who}: the logo is marked Pro`, await page.getByText("Your logo on documents, without the Kroft line, with Kroft Pro.").isVisible());
     await page.getByRole("button", { name: "Add logo" }).click();
-    check(`${who}: Add logo says it's a Pro feature`, await page.getByText("Your logo on invoices is a KROFT Pro feature.").isVisible());
+    check(`${who}: Add logo says it's a Pro feature`, await page.getByText("Your logo on invoices is a Kroft Pro feature.").isVisible());
     const sheet = page.getByRole("dialog", { name: "Choose your plan" });
     check(`${who}: …and opens the plans`, await sheet.isVisible());
     check(`${who}: the plans show ${who} as current`, (await sheet.innerText()).includes("CURRENT"));
@@ -59,7 +59,7 @@ try {
     await page.getByRole("button", { name: "Back", exact: true }).click();
     await makeInvoice(page);
     const foot = await sample(page, "Preview of INV-0001", FOOTER);
-    check(`${who}: the invoice keeps "Created with KROFT"`, foot.min < 200, JSON.stringify(foot));
+    check(`${who}: the invoice keeps "Created with Kroft"`, foot.min < 200, JSON.stringify(foot));
     const top = await sample(page, "Preview of INV-0001", LOGO_AREA);
     check(`${who}: no logo printed (the business name sits there instead)`, top.r - top.g < 10, JSON.stringify(top));
     check(`${who}: no page errors`, errors.length === 0, errors.join(" | "));
@@ -79,7 +79,7 @@ try {
   // Not a picture: refused kindly.
   await page.getByLabel("Choose your logo").setInputFiles({ name: "notes.txt", mimeType: "text/plain", buffer: Buffer.from("hello") });
   // The message appears once the file has been checked, a moment after it's chosen.
-  check("Pro: a file that isn't a picture is refused", await page.getByText("That file isn't a picture KROFT can use. Try a PNG or JPG.").waitFor({ timeout: 5000 }).then(() => true, () => false));
+  check("Pro: a file that isn't a picture is refused", await page.getByText("That file isn't a picture Kroft can use. Try a PNG or JPG.").waitFor({ timeout: 5000 }).then(() => true, () => false));
 
   // A red 300×100 logo.
   const png = await page.evaluate(() => { const c = document.createElement("canvas"); c.width = 300; c.height = 100; const x = c.getContext("2d"); x.fillStyle = "#d01010"; x.fillRect(0, 0, 300, 100); return c.toDataURL("image/png").split(",")[1]; });
@@ -91,7 +91,7 @@ try {
   const top = await sample(page, "Preview of INV-0001", LOGO_AREA);
   check("Pro: the logo prints at the top of the invoice", top.r > 150 && top.g < 90 && top.b < 90, JSON.stringify(top));
   const foot = await sample(page, "Preview of INV-0001", FOOTER);
-  check('Pro: no "Created with KROFT" line', foot.min > 235, JSON.stringify(foot));
+  check('Pro: no "Created with Kroft" line', foot.min > 235, JSON.stringify(foot));
 
   // The PDF itself downloads as before.
   const [dl] = await Promise.all([page.waitForEvent("download"), page.getByRole("button", { name: /Share (or download )?PDF/ }).click()]);

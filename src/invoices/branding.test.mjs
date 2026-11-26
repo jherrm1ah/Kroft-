@@ -9,10 +9,10 @@ eq("a JPEG or PNG data URL is a logo", [isLogo(LOGO), isLogo("data:image/png;bas
 eq("anything else isn't", [isLogo(""), isLogo(null), isLogo("https://example.com/logo.png"), isLogo("data:image/svg+xml;base64,PHN2Zz4="), isLogo("data:image/jpeg;base64,<script>")], [false, false, false, false, false]);
 eq("a logo too big to sync isn't", isLogo(`data:image/jpeg;base64,${"A".repeat(LOGO_MAX_CHARS)}`), false);
 
-eq("Pro: the logo, no KROFT line", brandingFor("pro", { logo: LOGO }), { logo: LOGO, footer: false });
-eq("Pro without a logo: still no KROFT line", brandingFor("pro", {}), { logo: "", footer: false });
-eq("Plus: no logo, KROFT line stays", brandingFor("plus", { logo: LOGO }), { logo: "", footer: true });
-eq("Free: no logo, KROFT line stays", brandingFor("free", { logo: LOGO }), { logo: "", footer: true });
+eq("Pro: the logo, no Kroft line", brandingFor("pro", { logo: LOGO }), { logo: LOGO, footer: false });
+eq("Pro without a logo: still no Kroft line", brandingFor("pro", {}), { logo: "", footer: false });
+eq("Plus: no logo, Kroft line stays", brandingFor("plus", { logo: LOGO }), { logo: "", footer: true });
+eq("Free: no logo, Kroft line stays", brandingFor("free", { logo: LOGO }), { logo: "", footer: true });
 eq("no plan given: treated as Free", brandingFor(undefined, { logo: LOGO }), { logo: "", footer: true });
 eq("Pro with a broken logo: no logo", brandingFor("pro", { logo: "not a picture" }), { logo: "", footer: false });
 

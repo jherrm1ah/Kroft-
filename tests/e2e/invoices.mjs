@@ -58,8 +58,8 @@ async function website(browser) {
     { type: "add_invoice", client: "Tunde Bakare", items: [{ description: "Logo design", qty: 1, price: 50000 }], due: DUE });
   await askKroft(page, "Invoice Tunde Bakare 50,000 for the logo design");
   const drafted = await page.getByText(/Invoice INV-0001 drafted for Tunde Bakare/).waitFor({ timeout: 10000 }).then(() => true, () => false);
-  check("asking KROFT drafts INV-0001", drafted);
-  check("KROFT is told about invoices and the add_invoice action", prompts.length > 0 && prompts[0].includes('"type":"add_invoice"') && prompts[0].includes("Invoices: 0 invoices on record"), prompts[0]?.slice(0, 80));
+  check("asking Kroft drafts INV-0001", drafted);
+  check("Kroft is told about invoices and the add_invoice action", prompts.length > 0 && prompts[0].includes('"type":"add_invoice"') && prompts[0].includes("Invoices: 0 invoices on record"), prompts[0]?.slice(0, 80));
   check("the action block isn't shown in the reply", !(await page.locator("body").innerText()).includes("<action>"));
 
   // 2. It's in Finance › Invoices, with a preview.
@@ -155,8 +155,8 @@ async function website(browser) {
   await page.getByRole("button", { name: "Back", exact: true }).click();
   reply = sse("Here's a quote for Bisi, ready to review.", { type: "add_quote", client: "Bisi", items: [{ description: "Photo shoot", qty: 1, price: 75000 }] });
   await askKroft(page, "Quote Bisi 75k for the photo shoot");
-  check("asking KROFT drafts QUO-0002", await page.getByText(/Quote QUO-0002 drafted for Bisi/).waitFor({ timeout: 10000 }).then(() => true, () => false));
-  check("KROFT is told about quotes and who owes money", prompts.at(-1).includes('"type":"add_quote"') && prompts.at(-1).includes("Clients who owe money: Ọlá Stores"), prompts.at(-1).match(/Clients who owe money:[^\n]*/)?.[0]);
+  check("asking Kroft drafts QUO-0002", await page.getByText(/Quote QUO-0002 drafted for Bisi/).waitFor({ timeout: 10000 }).then(() => true, () => false));
+  check("Kroft is told about quotes and who owes money", prompts.at(-1).includes('"type":"add_quote"') && prompts.at(-1).includes("Clients who owe money: Ọlá Stores"), prompts.at(-1).match(/Clients who owe money:[^\n]*/)?.[0]);
 
   check("no page errors", errors.length === 0, errors.join(" | "));
   await ctx.close();
@@ -186,7 +186,7 @@ async function androidShare(browser, label, shell) {
     const sh = args["Share.share"] || {};
     check("then handed to the share sheet with a message", calls.includes("Share.share") && sh.files?.length === 1 && String(sh.text).includes("INV-0001"), JSON.stringify(sh).slice(0, 160));
   } else {
-    check("an APK without file saving is told to update", await page.getByText("Update the KROFT app to share PDFs.").isVisible());
+    check("an APK without file saving is told to update", await page.getByText("Update the Kroft app to share PDFs.").isVisible());
   }
   check("no page errors", errors.length === 0, errors.join(" | "));
   await ctx.close();

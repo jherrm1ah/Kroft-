@@ -29,7 +29,7 @@ try {
   await sheet.getByRole("radio", { name: "An idea" }).click();
   await sheet.getByLabel("Your feedback").fill("Let me split one expense across two categories.");
   await sheet.getByRole("button", { name: "Send" }).click();
-  await page.getByText("Thanks. Your feedback reached the KROFT team.").waitFor({ timeout: 5000 });
+  await page.getByText("Thanks. Your feedback reached the Kroft team.").waitFor({ timeout: 5000 });
   check("sent with its kind, the words, the screen and the app version", sent[0]?.body.kind === "idea" && sent[0].body.message === "Let me split one expense across two categories." && sent[0].body.screen === "Finance" && typeof sent[0].client === "string", JSON.stringify(sent[0]));
   check("the sheet closes after sending", !(await sheet.isVisible()));
 

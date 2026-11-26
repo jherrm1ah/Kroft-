@@ -95,7 +95,7 @@ async function website(browser) {
   await box.fill("I owe Ikeja Electric 45k, due in 10 days");
   await box.press("Enter");
   const saved = await page.getByText(/Bill from Ikeja Electric saved/).waitFor({ timeout: 10000 }).then(() => true, () => false);
-  check("asking KROFT saves a bill", saved);
+  check("asking Kroft saves a bill", saved);
   await openBills(page);
   check("it's in Bills", await page.getByText("Ikeja Electric", { exact: true }).first().isVisible());
   check("no page errors", errors.length === 0, errors.join(" | "));

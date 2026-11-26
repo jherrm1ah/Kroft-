@@ -43,7 +43,7 @@ try {
     await page.getByRole("button", { name: "Save invoice" }).click();
     await page.getByRole("button", { name: "Back", exact: true }).click();
   }
-  const card = page.getByRole("dialog", { name: "Running a business on KROFT?" });
+  const card = page.getByRole("dialog", { name: "Running a business on Kroft?" });
   await card.waitFor({ timeout: 15000 }).catch(() => {});
   check("Free, two invoices this month: Plus is suggested", await card.isVisible() && (await card.innerText()).includes("unlimited invoices and quotes"));
   await card.getByRole("button", { name: "Get Plus" }).click();
@@ -51,7 +51,7 @@ try {
   check("…and the nudge gets out of the way", !(await card.isVisible()));
   await page.getByRole("dialog", { name: "Choose your plan" }).getByRole("button", { name: "Close" }).click();
   await page.waitForTimeout(2000);
-  check("only one nudge a day", !(await page.getByRole("dialog", { name: /KROFT|Plus|Pro/ }).filter({ hasText: "Upgrade to" }).isVisible()));
+  check("only one nudge a day", !(await page.getByRole("dialog", { name: /Kroft|Plus|Pro/ }).filter({ hasText: "Upgrade to" }).isVisible()));
   check("no page errors (Free)", errors.length === 0, errors.join(" | "));
   await ctx.close();
 
@@ -59,7 +59,7 @@ try {
   console.log("\nPlus");
   ({ ctx, page, errors } = await context({ "kroft-e2e-plus": "1" }));
   await projects(page, 2);
-  const pro = page.getByRole("dialog", { name: "Bring KROFT to your biggest clients" });
+  const pro = page.getByRole("dialog", { name: "Bring Kroft to your biggest clients" });
   await pro.waitFor({ timeout: 15000 }).catch(() => {});
   check("Plus, two projects: Pro is suggested", await pro.isVisible() && await pro.getByRole("button", { name: "Upgrade to Pro" }).isVisible());
   await pro.getByRole("button", { name: "Close" }).click();

@@ -41,7 +41,7 @@ function writeNativeBio(v) { try { if (v) localStorage.setItem(NATIVE_BIO_KEY, v
 function micErrorText(code) {
   if (code === "aborted") return "";
   if (code === "no-speech") return "Didn't catch that. Tap the mic and try again.";
-  if (code === "not-allowed" || code === "service-not-allowed") return `KROFT can't use the microphone. ${MIC_PERMISSION_HINT}`;
+  if (code === "not-allowed" || code === "service-not-allowed") return `Kroft can't use the microphone. ${MIC_PERMISSION_HINT}`;
   if (code === "audio-capture") return "No working microphone found on this device.";
   if (code === "network") return "Couldn't turn your speech into text. Check your connection and try again.";
   return "The microphone stopped unexpectedly. Try again.";
@@ -193,7 +193,6 @@ const ANIM = `
 @keyframes breathe{0%,100%{transform:scale(1);opacity:.35}50%{transform:scale(1.18);opacity:.75}}
 /* Real blinks are infrequent (every few seconds) and brief — most of the cycle sits at
    scaleY(0) (eyelid hidden, eyes open), with a quick close-and-reopen near the end. */
-@keyframes robotBlink{0%,90%,100%{transform:scaleY(0)}93%,95%{transform:scaleY(1)}}
 `;
 
 // A curated, region-grouped starting list for the currency picker — not exhaustive, since any
@@ -354,12 +353,6 @@ const MOOD_META = {
 // MOOD_META.color, which every other mood consumer (the Wellness mood log's tags, moodToScore)
 // still uses. This card gets its own original, vivid identity without recoloring a mood's tag
 // anywhere else in the app to match.
-const MOOD_ORB_GLOW = {
-  calm:     "112,196,165",
-  happy:    "237,181,84",
-  stressed: "121,148,222",
-  angry:    "224,104,97",
-};
 
 // Turns written text into something that reads aloud cleanly. AI replies come back with
 // markdown, and a speech engine reads it literally — "star star Net profit star star",
@@ -821,13 +814,13 @@ const CARD_LEVELS = {
   // layout. 20/16/12 is the modest middle: every card in the app reads at the same softness as
   // the ones already tuned individually this way (Tasks/Projects/Calendar/Email), without going
   // back to the bubble-y original.
-  raised: { radius:20, pad:20, shadow:() => C.shadowRaised },
-  base:   { radius:16, pad:16, shadow:() => C.shadowBase },
+  raised: { radius:16, pad:20, shadow:() => C.shadowRaised },
+  base:   { radius:14, pad:16, shadow:() => C.shadowBase },
   // inset was left at the old 12 during that pass — almost every use of it is a single, centered
   // "nothing here yet" empty-state card (never stacked, so the bubble concern above doesn't
   // apply), which is exactly the kind of card that reads worst when it's the sharpest-cornered
   // thing on the whole screen. Raised to match `raised` above.
-  inset:  { radius:20, pad:12, shadow:() => "none" },
+  inset:  { radius:16, pad:12, shadow:() => "none" },
 };
 const Card = ({ children, style, onClick, hi, level="base", ...rest }) => {
   const L = CARD_LEVELS[level] || CARD_LEVELS.base;
@@ -1077,8 +1070,8 @@ const subscribeToPush = async authedFetch => {
 // shapes so each reads instantly at the orb's modest on-screen size, in the same friendly,
 // hand-drawn spirit as the reference the mood-orb design brief was built from, without copying
 // its exact geometry.
-function MoodFace({ mood, size = 28, style }) {
-  const stroke = "#20222b";
+function MoodFace({ mood, size = 28, style, color }) {
+  const stroke = color || C.text;
   const s = { stroke, strokeWidth:7, strokeLinecap:"round", strokeLinejoin:"round", fill:"none" };
   if (mood === "calm") return (
     <svg width={size} height={size} viewBox="0 0 100 100" aria-hidden="true" style={style}>
@@ -1114,15 +1107,6 @@ function MoodFace({ mood, size = 28, style }) {
     </svg>
   );
 }
-// One-shot animation played on the face itself when its mood is (re-)selected — see the
-// matching @keyframes above. Kept separate from MOOD_ORB_GLOW/MOOD_META since this is purely a
-// per-tap animation name, not a persistent color or score.
-const MOOD_FACE_ANIM = {
-  calm:     "moodCalmBreathe .6s ease-in-out",
-  happy:    "moodHappyBounce .5s ease-in-out",
-  stressed: "moodStressedShake .5s ease-in-out",
-  angry:    "moodAngryShake .5s ease-in-out",
-};
 
 // A soft, glowing 3D-style orb for one of KROFT's four moods — a radial gradient plus a matching
 // outer glow stands in for real depth/lighting without an actual 3D asset. Keyed on its own tap
@@ -1130,28 +1114,17 @@ const MOOD_FACE_ANIM = {
 // mood that was already active a moment ago — otherwise re-selecting the same mood twice in a row
 // would only animate the first time.
 function MoodOrb({ mood, label, active, onClick }) {
-  const [tap, setTap] = useState(0);
-  const glow = MOOD_ORB_GLOW[mood];
   return (
     // Each mood sits in its own small card, so the faces and their names never crowd each other.
-    <button onClick={() => { setTap(t => t+1); onClick(); }} aria-label={label} aria-pressed={active}
-      style={{ display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:6, width:"100%", height:"100%", boxSizing:"border-box", minWidth:0, padding:"12px 4px 10px", borderRadius:18,
-        background: active ? `rgba(${glow},.12)` : C.card, border:`1px solid ${active ? `rgba(${glow},.75)` : C.cardB}`, boxShadow:CARD_LEVELS.base.shadow(),
+    <button onClick={onClick} aria-label={label} aria-pressed={active}
+      style={{ display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:6, width:"100%", height:"100%", boxSizing:"border-box", minWidth:0, padding:"12px 4px 10px", borderRadius:CARD_LEVELS.base.radius,
+        background:C.card, border:`1px solid ${active ? C.text : C.cardB}`, boxShadow:CARD_LEVELS.base.shadow(),
         cursor:"pointer", transition:"background .18s ease, border-color .18s ease", WebkitTapHighlightColor:"transparent" }}>
-      <div key={`${mood}-${tap}`} style={{
-        // A fixed pixel size, not a percentage of the button — the button itself is a
-        // shrink-to-fit flex column with no declared width, so a percentage-width orb here
-        // resolved against that auto width, which is itself set by the button's OTHER child
-        // (the label). Since "Stressed"/"Angry" are wider text than "Calm"/"Happy", those two
-        // buttons ended up wider, and the orb followed suit — same mood, visibly different
-        // orb sizes. A fixed diameter makes every orb identical regardless of its label's width.
-        width:40, height:40, borderRadius:"50%", flexShrink:0,
-        background:`radial-gradient(circle at 32% 26%, rgba(${glow},1) 0%, rgba(${glow},.82) 55%, rgba(${glow},.6) 100%)`,
-        boxShadow: active ? `0 0 0 2.5px rgba(${glow},.85), 0 6px 14px rgba(${glow},.4)` : `0 3px 9px rgba(${glow},.22)`,
-        display:"flex", alignItems:"center", justifyContent:"center",
-        animation: active ? "bouncePop .4s cubic-bezier(.34,1.56,.64,1)" : "none",
-      }}>
-        <MoodFace mood={mood} size={18} style={{ transformOrigin:"center", animation: active ? MOOD_FACE_ANIM[mood] : "none" }} />
+      {/* A plain circle with a line face, in the app's black and white; the chosen mood is
+          filled black. No colours, glow or bounce: calm, like the rest of the dashboard. */}
+      <div style={{ width:40, height:40, borderRadius:"50%", flexShrink:0, display:"flex", alignItems:"center", justifyContent:"center",
+        background: active ? C.text : C.fill, border:`1px solid ${active ? C.text : C.cardB}`, transition:"background .18s ease, border-color .18s ease" }}>
+        <MoodFace mood={mood} size={20} color={active ? C.bg : C.soft} />
       </div>
       <span style={{ fontSize:11, fontWeight:700, lineHeight:1.2, color:C.text, fontFamily:APP_FONT, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis", maxWidth:"100%" }}>{label}</span>
     </button>
@@ -1246,6 +1219,10 @@ function SplashScreen({ fading }) {
 }
 
 // The KROFT mark: two stacked rounded bars.
+// "Good morning/afternoon/evening" by the person's own clock: a calm greeting for a business
+// dashboard, in place of the old "Hi 👋".
+const greetingFor = d => { const h = d.getHours(); return h < 12 ? "Good morning" : h < 17 ? "Good afternoon" : "Good evening"; };
+
 const KroftMark = ({ size = 50, color = "#14161a" }) => (
   <svg viewBox="0 0 50 40" width={size} height={size * 0.8} aria-hidden="true" style={{ display:"block" }}>
     <rect x="0" y="0" width="50" height="18.5" rx="9.25" fill={color} />
@@ -1340,7 +1317,7 @@ function WelcomeScreen({ onGoogle, onEmail, onLogIn, googleLoading }) {
           Already have an account? <span style={{ color:LIGHT.accent, fontWeight:700, textDecoration:"underline" }}>Log in</span>
         </button>
         <p style={{ margin:"2px 8px 0", textAlign:"center", fontSize:12.5, lineHeight:1.5, color:LIGHT.muted }}>
-          By continuing, you agree to KROFT's <a href="/terms.html" target="_blank" rel="noopener" style={{ color:LIGHT.soft, textDecoration:"underline" }}>Terms</a> and
+          By continuing, you agree to Kroft's <a href="/terms.html" target="_blank" rel="noopener" style={{ color:LIGHT.soft, textDecoration:"underline" }}>Terms</a> and
           {" "}<a href="/privacy.html" target="_blank" rel="noopener" style={{ color:LIGHT.soft, textDecoration:"underline" }}>Privacy Policy</a>.
         </p>
       </div>
@@ -1367,21 +1344,6 @@ const Dot = ({ color=C.white, size=6 }) => (
 // and others only a text swap.
 const Spinner = ({ size=14, color=C.white, thickness=2 }) => (
   <div style={{ width:size, height:size, border:`${thickness}px solid ${color}`, borderTopColor:"transparent", borderRadius:"50%", animation:"spin .7s linear infinite", flexShrink:0 }} />
-);
-
-// The robot mascot icon (kroft-robot-badge.webp, background removed) used on auth screens and
-// the Ask Kroft empty state. Two small overlay shapes sit exactly over the photo's own eye
-// arcs, colored to match its screen's exact near-black tone (#1c1b1a, sampled from the asset)
-// so at rest they're invisible against it — the robotBlink keyframe (see ANIM) briefly scales
-// them up to cover the eyes and back down, simulating a blink without needing separate eye
-// layers baked into the image itself. Positions are percentages of the image's own pixel
-// dimensions (measured directly from the 512×512 asset), so they stay aligned at any size.
-const RobotIcon = ({ size=48 }) => (
-  <div style={{ position:"relative", width:size, height:size, flexShrink:0 }}>
-    <img src="/kroft-robot-badge.webp" alt="" style={{ width:"100%", height:"100%", display:"block", objectFit:"contain" }} />
-    <div style={{ position:"absolute", left:"32.6%", top:"45%", width:"15%", height:"8%", background:"#1c1b1a", borderRadius:"40%", transformOrigin:"center", animation:"robotBlink 4.8s ease-in-out infinite" }} />
-    <div style={{ position:"absolute", left:"52.4%", top:"45%", width:"15%", height:"8%", background:"#1c1b1a", borderRadius:"40%", transformOrigin:"center", animation:"robotBlink 4.8s ease-in-out infinite" }} />
-  </div>
 );
 
 // Minimal location pin icon, drawn with SVG to match the monochrome aesthetic — no emoji
@@ -1754,8 +1716,8 @@ function ActionSheet({ title, subtitle, actions, onClose }) {
 function VoiceStyleSpeedControls({ voicePref, onSetVoicePref, voiceSpeed, onSetVoiceSpeed }) {
   return (
     <>
-      <Mono style={{ display:"block", color:C.white, marginBottom:2 }}>KROFT Voice</Mono>
-      <Mono style={{ display:"block", color:C.muted, marginBottom:10 }}>Choose how KROFT sounds.</Mono>
+      <Mono style={{ display:"block", color:C.white, marginBottom:2 }}>Kroft Voice</Mono>
+      <Mono style={{ display:"block", color:C.muted, marginBottom:10 }}>Choose how Kroft sounds.</Mono>
       {Object.values(VOICE_PROFILES).map(v => {
         const selected = resolveVoiceId(voicePref)===v.id;
         return (
@@ -1826,7 +1788,7 @@ function IncomingCallScreen({ call, onAnswer, onDecline }) {
       style={{ position:"fixed", inset:0, zIndex:1300, background:C.bg, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"space-between", padding:"14vh 24px calc(40px + env(safe-area-inset-bottom))" }}>
       <div style={{ textAlign:"center" }}>
         <Mono style={{ color:C.muted, display:"block", marginBottom:8 }}>Incoming call</Mono>
-        <div style={{ fontSize:22, fontWeight:700, color:C.text, letterSpacing:-.4 }}>KROFT</div>
+        <div style={{ fontSize:22, fontWeight:700, color:C.text, letterSpacing:-.4 }}>Kroft</div>
         <div style={{ fontSize:14, color:C.soft, marginTop:6 }}>{call.title}</div>
       </div>
 
@@ -1918,7 +1880,7 @@ function VoiceMode({ state, transcript, reply, error, onStart, onStop, onClose, 
                   // Said before the browser prompt appears, not after. An unexplained permission
                   // dialog is the single biggest reason people tap Deny — and once denied, the
                   // browser remembers it and the feature is dead until they dig through settings.
-                  : "KROFT needs your microphone to hear you. Your browser will ask next — audio is only used for the words you speak and isn't stored."}
+                  : "Kroft needs your microphone to hear you. Your browser will ask next — audio is only used for the words you speak and isn't stored."}
             </div>
           )}
         </div>
@@ -1953,7 +1915,7 @@ function VoiceSettingsScreen({ voicePref, onSetVoicePref, voiceSpeed, onSetVoice
           <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"14px 0", borderBottom:`1px solid ${C.cardB}`, gap:12 }}>
             <div style={{ minWidth:0 }}>
               <div style={{ fontSize:13, fontWeight:600, color:C.text }}>Background voice mode</div>
-              <Mono style={{ color:C.muted, display:"block", marginTop:2 }}>Keep talking to KROFT while you use the rest of the app.</Mono>
+              <Mono style={{ color:C.muted, display:"block", marginTop:2 }}>Keep talking to Kroft while you use the rest of the app.</Mono>
             </div>
             <ProfileSwitch value={backgroundMode} onChange={onSetBackgroundMode} />
           </div>
@@ -2101,7 +2063,7 @@ function RideModal({ dest, currency, onClose, toast }) {
             </button>
           ))}
         </div>
-        <Mono style={{ display:"block", color:C.muted, lineHeight:1.6, marginBottom:14 }}>Prices, drivers and booking happen in the ride app. KROFT doesn't book or price rides itself.</Mono>
+        <Mono style={{ display:"block", color:C.muted, lineHeight:1.6, marginBottom:14 }}>Prices, drivers and booking happen in the ride app. Kroft doesn't book or price rides itself.</Mono>
         <Btn v="outline" full onClick={onClose}>Cancel</Btn>
       </div>
     </div>
@@ -2364,7 +2326,7 @@ function ContactProfile({ contact, data, fmt, onBack, onSave, onDelete, onCall, 
         {/* What KROFT knows */}
         <Card level="raised" style={{ display:"flex", flexDirection:"column", gap:8 }}>
           <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:8 }}>
-            <span style={{ fontSize:13, fontWeight:700, color:C.white }}>What KROFT knows</span>
+            <span style={{ fontSize:13, fontWeight:700, color:C.white }}>What Kroft knows</span>
             <NavIcon id="nova" size={14} color={C.accent} />
           </div>
           {summary.length ? summary.map((l, i) => (
@@ -2375,7 +2337,7 @@ function ContactProfile({ contact, data, fmt, onBack, onSave, onDelete, onCall, 
           )) : (
             <Mono style={{ color:C.soft, lineHeight:1.6 }}>Nothing yet. As you send {first} invoices, book meetings, add tasks or notes about them, it builds up here.</Mono>
           )}
-          <Btn sm v="outline" onClick={() => onAskKroft(`What do you know about ${contact.name}?`)} style={{ marginTop:4 }}>Ask KROFT about {first}</Btn>
+          <Btn sm v="outline" onClick={() => onAskKroft(`What do you know about ${contact.name}?`)} style={{ marginTop:4 }}>Ask Kroft about {first}</Btn>
         </Card>
 
         {hasMoney && (
@@ -2486,7 +2448,7 @@ function ContactProfile({ contact, data, fmt, onBack, onSave, onDelete, onCall, 
           <Section title="Contact history" count={records.log.length}>
             {records.log.slice(0, 8).map(l => (
               <Row key={l.id}>
-                <span style={{ fontSize:13, color:C.text }}>{l.type === "call" ? "Called from KROFT" : "Emailed from KROFT"}</span>
+                <span style={{ fontSize:13, color:C.text }}>{l.type === "call" ? "Called from Kroft" : "Emailed from Kroft"}</span>
                 <Mono style={{ color:C.muted }}>{new Date(l.at).toLocaleString("en-GB", { day:"numeric", month:"short", hour:"2-digit", minute:"2-digit" })}</Mono>
               </Row>
             ))}
@@ -2626,23 +2588,23 @@ function ConnectedApps({ google, microsoft }) {
     { name:"Google", logo:<GoogleG size={24} />, ...google,
       services:[["Gmail", google.status.gmail], ["Google Calendar", google.status.calendar]],
       // [what it allows, whether that part was granted — null for parts of every grant]
-      permissions:[["Read your Gmail inbox", google.status.gmail], ["Send emails you write or confirm in KROFT", google.status.gmail],
-        ["See your Google Calendar", google.status.calendar], ["Add events you create in KROFT to that calendar", google.status.calendar]],
-      disconnectNote:"Disconnecting removes KROFT's access and revokes it with Google." },
+      permissions:[["Read your Gmail inbox", google.status.gmail], ["Send emails you write or confirm in Kroft", google.status.gmail],
+        ["See your Google Calendar", google.status.calendar], ["Add events you create in Kroft to that calendar", google.status.calendar]],
+      disconnectNote:"Disconnecting removes Kroft's access and revokes it with Google." },
     { name:"Microsoft", logo:<MicrosoftLogo size={22} />, ...microsoft,
       services:[["Outlook Mail", microsoft.status.mail], ["Outlook Calendar", microsoft.status.calendar]],
-      permissions:[["Read your Outlook inbox", microsoft.status.mail], ["Send emails you write or confirm in KROFT", microsoft.status.mail],
-        ["See your Outlook calendar and add events you create in KROFT", microsoft.status.calendar], ["Your name and email address", null], ["Stay connected without signing in again", null]],
-      disconnectNote:"Disconnecting deletes KROFT's access. To also remove KROFT from your Microsoft account, visit myaccount.microsoft.com/consent." },
+      permissions:[["Read your Outlook inbox", microsoft.status.mail], ["Send emails you write or confirm in Kroft", microsoft.status.mail],
+        ["See your Outlook calendar and add events you create in Kroft", microsoft.status.calendar], ["Your name and email address", null], ["Stay connected without signing in again", null]],
+      disconnectNote:"Disconnecting deletes Kroft's access. To also remove Kroft from your Microsoft account, visit myaccount.microsoft.com/consent." },
   ];
   return (
     <div>
       <p style={{ fontSize:14.5, lineHeight:1.55, color:C.soft, margin:"0 4px 18px" }}>
-        Link an account so KROFT can work with your real email and calendar. You approve access on Google's or Microsoft's own sign-in page, and you can disconnect any time.
+        Link an account so Kroft can work with your real email and calendar. You approve access on Google's or Microsoft's own sign-in page, and you can disconnect any time.
       </p>
       {!isSupabaseConfigured && (
         <div style={{ background:C.fill, border:`1px solid ${C.border}`, borderRadius:14, padding:"11px 14px", marginBottom:14, fontSize:13.5, color:C.soft, lineHeight:1.5 }}>
-          Connecting accounts needs a signed-in KROFT account. This copy is running in local-only mode.
+          Connecting accounts needs a signed-in Kroft account. This copy is running in local-only mode.
         </div>
       )}
       {providers.map(p => {
@@ -2667,7 +2629,7 @@ function ConnectedApps({ google, microsoft }) {
               </div>
             )}
             <div style={{ borderTop:`1px solid ${C.div}`, marginTop:14, paddingTop:12 }}>
-              <div style={{ fontSize:13, fontWeight:600, color:C.muted, marginBottom:8 }}>{connected ? "KROFT can" : "Connecting lets KROFT"}</div>
+              <div style={{ fontSize:13, fontWeight:600, color:C.muted, marginBottom:8 }}>{connected ? "Kroft can" : "Connecting lets Kroft"}</div>
               {p.permissions.map(([t, granted]) => {
                 // Once connected, a part the person didn't allow is shown as not allowed rather
                 // than ticked — the list says what KROFT can actually do right now.
@@ -2726,7 +2688,7 @@ function MessageEditor({ initial, replacesLater, disabled, onCancel, onSend }) {
           if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && changed && !disabled) { e.preventDefault(); onSend(text); }
         }}
         style={{ width:"100%", boxSizing:"border-box", border:"none", outline:"none", resize:"none", background:"transparent", color:C.text, fontSize:15, lineHeight:1.55, fontFamily:APP_FONT, padding:"2px 2px", maxHeight:260, overflowY:"auto" }} />
-      {replacesLater && <div style={{ fontSize:12.5, color:C.muted, margin:"4px 2px 0", lineHeight:1.4 }}>Sending replaces KROFT's replies after this message.</div>}
+      {replacesLater && <div style={{ fontSize:12.5, color:C.muted, margin:"4px 2px 0", lineHeight:1.4 }}>Sending replaces Kroft's replies after this message.</div>}
       <div style={{ display:"flex", justifyContent:"flex-end", gap:8, marginTop:10 }}>
         <button type="button" onClick={onCancel}
           style={{ height:36, padding:"0 16px", borderRadius:999, border:`1px solid ${C.cardB}`, background:"transparent", color:C.text, fontSize:14, fontWeight:600, fontFamily:APP_FONT, cursor:"pointer" }}>Cancel</button>
@@ -2747,7 +2709,7 @@ function LogoutDialog({ onConfirm, onCancel }) {
       <div ref={ref} role="alertdialog" aria-modal="true" aria-labelledby="logout-title" aria-describedby="logout-desc" onClick={e => e.stopPropagation()}
         style={{ width:"100%", maxWidth:400, background:C.card, borderRadius:32, padding:"30px 22px 12px", boxShadow:"0 24px 60px rgba(0,0,0,.3)", animation:"pop .22s ease" }}>
         <h2 id="logout-title" style={{ fontSize:24, fontWeight:600, color:C.text, margin:"0 8px 10px", letterSpacing:-.4 }}>Log out?</h2>
-        <p id="logout-desc" style={{ fontSize:16, lineHeight:1.5, color:C.muted, margin:"0 8px 24px" }}>You'll need to sign back in to keep using KROFT.</p>
+        <p id="logout-desc" style={{ fontSize:16, lineHeight:1.5, color:C.muted, margin:"0 8px 24px" }}>You'll need to sign back in to keep using Kroft.</p>
         <button disabled={busy} onClick={async () => { setBusy(true); if ((await onConfirm()) === false) setBusy(false); }}
           style={{ width:"100%", height:52, borderRadius:999, border:"none", background:C.white, color:C.black, fontSize:16, fontWeight:700, fontFamily:APP_FONT, cursor:busy?"wait":"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
           {busy ? <Spinner size={18} color={C.black} thickness={2} /> : "Log out"}
@@ -2782,10 +2744,10 @@ function DeleteAccountDialog({ onConfirm, onCancel, synced, subscribed, plan }) 
         <div id="delete-desc" style={{ fontSize:15.5, lineHeight:1.5, color:C.muted, margin:"0 8px 18px" }}>
           <p style={{ margin:"0 0 10px" }}>
             {synced
-              ? "This permanently deletes your KROFT account and everything in it: chats, finances, contacts, notes, wellness entries and files. Linked Google or Microsoft accounts are disconnected."
-              : "This permanently erases everything KROFT has stored on this device: chats, finances, contacts, notes, wellness entries and files."}
+              ? "This permanently deletes your Kroft account and everything in it: chats, finances, contacts, notes, wellness entries and files. Linked Google or Microsoft accounts are disconnected."
+              : "This permanently erases everything Kroft has stored on this device: chats, finances, contacts, notes, wellness entries and files."}
           </p>
-          {subscribed && <p style={{ margin:"0 0 10px" }}>Your {plan === "pro" ? "KROFT Pro" : "KROFT Plus"} subscription will be cancelled.</p>}
+          {subscribed && <p style={{ margin:"0 0 10px" }}>Your {plan === "pro" ? "Kroft Pro" : "Kroft Plus"} subscription will be cancelled.</p>}
           <p style={{ margin:0 }}>This can't be undone. Download a backup first if you want to keep a copy.</p>
         </div>
         <label htmlFor="delete-confirm" style={{ display:"block", fontSize:14, color:C.text, margin:"0 8px 8px" }}>Type <b>DELETE</b> to confirm</label>
@@ -2950,8 +2912,8 @@ function InvoicesScreen({ invoices, setInvoices, quotes, setQuotes, settings, se
   };
 
   const blockedMsg = kind => kind === "quote"
-    ? `You've used this month's ${FREE_QUOTES_PER_MONTH} free quotes. KROFT Plus gives you unlimited quotes.`
-    : `You've used this month's ${FREE_INVOICES_PER_MONTH} free invoices. KROFT Plus gives you unlimited invoices.`;
+    ? `You've used this month's ${FREE_QUOTES_PER_MONTH} free quotes. Kroft Plus gives you unlimited quotes.`
+    : `You've used this month's ${FREE_INVOICES_PER_MONTH} free invoices. Kroft Plus gives you unlimited invoices.`;
 
   const startNew = (kind, client = null) => {
     if (!(kind === "quote" ? qAllowance : invAllowance).allowed) { toast(blockedMsg(kind)); onUpgrade?.(); return; }
@@ -3005,7 +2967,7 @@ function InvoicesScreen({ invoices, setInvoices, quotes, setQuotes, settings, se
       if (result !== "cancelled") { markSent(doc); playSound("sent"); }
       if (result === "downloaded") toast("PDF downloaded. Attach it to your email or WhatsApp.");
     } catch (err) {
-      toast(err?.code === "needs-update" ? "Update the KROFT app to share PDFs." : "Couldn't create the PDF. Try again.");
+      toast(err?.code === "needs-update" ? "Update the Kroft app to share PDFs." : "Couldn't create the PDF. Try again.");
     } finally { setBusy(""); }
   };
 
@@ -3018,7 +2980,7 @@ function InvoicesScreen({ invoices, setInvoices, quotes, setQuotes, settings, se
       if (result !== "cancelled") playSound("sent");
       if (result === "downloaded") toast("Receipt downloaded. Attach it to your email or WhatsApp.");
     } catch (err) {
-      toast(err?.code === "needs-update" ? "Update the KROFT app to share PDFs." : "Couldn't create the receipt. Try again.");
+      toast(err?.code === "needs-update" ? "Update the Kroft app to share PDFs." : "Couldn't create the receipt. Try again.");
     } finally { setBusy(""); }
   };
   const shareStatement = async () => {
@@ -3029,7 +2991,7 @@ function InvoicesScreen({ invoices, setInvoices, quotes, setQuotes, settings, se
       if (result !== "cancelled") playSound("sent");
       if (result === "downloaded") toast("Statement downloaded. Attach it to your email or WhatsApp.");
     } catch (err) {
-      toast(err?.code === "needs-update" ? "Update the KROFT app to share PDFs." : "Couldn't create the statement. Try again.");
+      toast(err?.code === "needs-update" ? "Update the Kroft app to share PDFs." : "Couldn't create the statement. Try again.");
     } finally { setBusy(""); }
   };
 
@@ -3047,7 +3009,7 @@ function InvoicesScreen({ invoices, setInvoices, quotes, setQuotes, settings, se
     if (!reminder) markSent(doc);
   };
   const remind = (doc, via) => {
-    if (!subscribed) { toast("Payment reminders are a KROFT Plus feature."); onUpgrade?.(); return; }
+    if (!subscribed) { toast("Payment reminders are a Kroft Plus feature."); onUpgrade?.(); return; }
     if (via === "whatsapp") sendWhatsApp(doc, true); else sendEmail(doc, true);
   };
 
@@ -3155,12 +3117,12 @@ function InvoicesScreen({ invoices, setInvoices, quotes, setQuotes, settings, se
               <div style={{ display:"flex", alignItems:"center", gap:6, fontSize:13, fontWeight:600, color:C.white }}>Your logo {plan !== "pro" && <Tag tone="accent">PRO</Tag>}</div>
               <Mono style={{ display:"block", color:C.muted, marginTop:2, lineHeight:1.5 }}>
                 {plan === "pro" ? (isLogo(d.logo) ? "On every invoice, quote, receipt and statement." : "Add it to every invoice, quote, receipt and statement.")
-                  : isLogo(d.logo) ? "Prints again when you're on KROFT Pro." : "Your logo on documents, without the KROFT line, with KROFT Pro."}
+                  : isLogo(d.logo) ? "Prints again when you're on Kroft Pro." : "Your logo on documents, without the Kroft line, with Kroft Pro."}
               </Mono>
             </div>
             <div style={{ display:"flex", flexDirection:"column", gap:6, flexShrink:0 }}>
               <Btn sm v="outline" onClick={() => {
-                if (plan !== "pro") { toast("Your logo on invoices is a KROFT Pro feature."); onUpgrade?.(); return; }
+                if (plan !== "pro") { toast("Your logo on invoices is a Kroft Pro feature."); onUpgrade?.(); return; }
                 logoInput.current?.click();
               }}>{isLogo(d.logo) ? "Change" : "Add logo"}</Btn>
               {isLogo(d.logo) && <Btn sm v="ghost" style={{ color:C.negative }} onClick={() => set({ logo:"" })}>Remove</Btn>}
@@ -3185,7 +3147,7 @@ function InvoicesScreen({ invoices, setInvoices, quotes, setQuotes, settings, se
           </InvoiceField>
           {d.payLink && !payLink(d)
             ? <Mono style={{ display:"block", color:C.negative, lineHeight:1.6, marginTop:-4 }}>That doesn't look like a web address. Copy the full link from Paystack, Flutterwave or your bank.</Mono>
-            : <Mono style={{ display:"block", color:C.muted, lineHeight:1.6, marginTop:-4 }}>Your own link from Paystack, Flutterwave, Selar, PayPal or Stripe. Your invoices get a Pay now button that opens it, and the money goes straight to you. Record the payment in KROFT when it arrives.</Mono>}
+            : <Mono style={{ display:"block", color:C.muted, lineHeight:1.6, marginTop:-4 }}>Your own link from Paystack, Flutterwave, Selar, PayPal or Stripe. Your invoices get a Pay now button that opens it, and the money goes straight to you. Record the payment in Kroft when it arrives.</Mono>}
           <InvoiceField label="Bank"><Inp placeholder="e.g. GTBank, Barclays, Chase" value={d.bankName} onChange={e => set({ bankName:e.target.value })} /></InvoiceField>
           <InvoiceField label="Account name"><Inp value={d.accountName} onChange={e => set({ accountName:e.target.value })} /></InvoiceField>
           <InvoiceField label="Account number or IBAN"><Inp autoCapitalize="characters" value={d.accountNumber} onChange={e => set({ accountNumber:e.target.value.replace(/[^A-Za-z\d -]/g, "").toUpperCase() })} /></InvoiceField>
@@ -3366,7 +3328,7 @@ function InvoicesScreen({ invoices, setInvoices, quotes, setQuotes, settings, se
                 </Card>
               </>
             )}
-            {st === "draft" && <Mono style={{ color:C.muted, lineHeight:1.6 }}>{isQuote ? "Sharing it marks it as sent." : "Sharing it marks it as sent, so KROFT can tell you when it's overdue."}</Mono>}
+            {st === "draft" && <Mono style={{ color:C.muted, lineHeight:1.6 }}>{isQuote ? "Sharing it marks it as sent." : "Sharing it marks it as sent, so Kroft can tell you when it's overdue."}</Mono>}
             {!isQuote && paymentsOf(current).length > 0 && (
               <Card level="inset" style={{ padding:12 }}>
                 <div style={{ fontSize:13, fontWeight:600, color:C.white, marginBottom:6 }}>Payments</div>
@@ -3457,7 +3419,7 @@ function InvoicesScreen({ invoices, setInvoices, quotes, setQuotes, settings, se
                 <Btn sm v="outline" style={{ flex:1 }} onClick={() => startNew("quote", c)}>New quote</Btn>
               </div>
               {c.invoiceCount > 0 && <Btn sm v="outline" full onClick={() => {
-                if (!subscribed) { toast("Client statements are a KROFT Plus feature."); onUpgrade?.(); return; }
+                if (!subscribed) { toast("Client statements are a Kroft Plus feature."); onUpgrade?.(); return; }
                 setStmt({ period: "all", currency: null }); setView("statement");
               }}>{subscribed ? "Statement of account" : "Statement of account · Plus"}</Btn>}
               <div style={{ fontSize:12, fontWeight:600, color:C.muted, marginTop:6 }}>History</div>
@@ -3506,7 +3468,7 @@ function InvoicesScreen({ invoices, setInvoices, quotes, setQuotes, settings, se
         <>
           <Btn full onClick={() => startNew("quote")}>New quote</Btn>
           <Mono style={{ display:"block", color:C.muted, margin:"8px 0 16px", textAlign:"center" }}>
-            {subscribed ? "Unlimited quotes with KROFT Plus." : `${qAllowance.used} of ${qAllowance.limit} free quotes used this month.`}
+            {subscribed ? "Unlimited quotes with Kroft Plus." : `${qAllowance.used} of ${qAllowance.limit} free quotes used this month.`}
           </Mono>
           {quotes.length > 0 && chips([["all","All"],["open",`Open${(counts.draft||0)+(counts.sent||0)+(counts.accepted||0) ? ` ${(counts.draft||0)+(counts.sent||0)+(counts.accepted||0)}` : ""}`],["accepted","Accepted"],["invoiced","Invoiced"],["declined","Declined"]], filter, setFilter, "Filter quotes")}
           {quotes.length === 0 ? (
@@ -3526,7 +3488,7 @@ function InvoicesScreen({ invoices, setInvoices, quotes, setQuotes, settings, se
         <>
           <Btn full onClick={() => startNew("invoice")}>New invoice</Btn>
           <Mono style={{ display:"block", color:C.muted, margin:"8px 0 16px", textAlign:"center" }}>
-            {subscribed ? "Unlimited invoices with KROFT Plus." : `${invAllowance.used} of ${invAllowance.limit} free invoices used this month.`}
+            {subscribed ? "Unlimited invoices with Kroft Plus." : `${invAllowance.used} of ${invAllowance.limit} free invoices used this month.`}
           </Mono>
           {unpaid.length > 0 && (
             <Card level="raised" style={{ marginBottom:14 }}>
@@ -3539,7 +3501,7 @@ function InvoicesScreen({ invoices, setInvoices, quotes, setQuotes, settings, se
           {invoices.length === 0 ? (
             <Card level="inset" style={{ textAlign:"center", padding:26, borderStyle:"dashed" }}>
               <div style={{ fontSize:15, fontWeight:600, color:C.white, marginBottom:6 }}>No invoices yet</div>
-              <Mono style={{ display:"block", color:C.soft, lineHeight:1.6 }}>Create one here, or just ask KROFT: "Invoice Tunde ₦50,000 for the logo design, due Friday."</Mono>
+              <Mono style={{ display:"block", color:C.soft, lineHeight:1.6 }}>Create one here, or just ask Kroft: "Invoice Tunde ₦50,000 for the logo design, due Friday."</Mono>
             </Card>
           ) : shown.length === 0 ? (
             <Card level="inset" style={{ textAlign:"center", padding:22, borderStyle:"dashed" }}><Mono style={{ color:C.soft }}>Nothing here.</Mono></Card>
@@ -3676,9 +3638,9 @@ function AdminScreen({ fetcher, onClose, toast }) {
 // the app and puts three matching steps on Home (src/gettingStarted.js).
 function GoalPicker({ name, onPick, onSkip }) {
   return (
-    <div role="dialog" aria-modal="true" aria-label="What do you want KROFT for" style={{ position:"fixed", inset:0, zIndex:350, background:C.bg, display:"flex", flexDirection:"column", overflowY:"auto" }}>
+    <div role="dialog" aria-modal="true" aria-label="What do you want Kroft for" style={{ position:"fixed", inset:0, zIndex:350, background:C.bg, display:"flex", flexDirection:"column", overflowY:"auto" }}>
       <div style={{ maxWidth:520, width:"100%", margin:"0 auto", padding:"calc(28px + env(safe-area-inset-top)) 20px 24px", display:"flex", flexDirection:"column", gap:12 }}>
-        <div style={{ fontSize:24, fontWeight:700, color:C.white, letterSpacing:-.8, lineHeight:1.2 }}>{name ? `${name}, what` : "What"} do you want KROFT to help with first?</div>
+        <div style={{ fontSize:24, fontWeight:700, color:C.white, letterSpacing:-.8, lineHeight:1.2 }}>{name ? `${name}, what` : "What"} do you want Kroft to help with first?</div>
         <Mono style={{ color:C.soft, fontSize:13, lineHeight:1.6, marginBottom:6 }}>Pick one to start. Everything else is still there whenever you need it.</Mono>
         {GOALS.map(g => (
           <button key={g.id} onClick={() => onPick(g.id)} style={{ textAlign:"left", background:C.card, border:`1px solid ${C.cardB}`, borderRadius:16, padding:"14px 16px", cursor:"pointer", fontFamily:APP_FONT, display:"flex", alignItems:"center", justifyContent:"space-between", gap:10 }}>
@@ -3717,9 +3679,9 @@ function FeedbackSheet({ screen, onClose, onSend }) {
           ))}
         </div>
         <textarea aria-label="Your feedback" autoFocus rows={4} value={message} onChange={e => setMessage(e.target.value)}
-          placeholder={kind === "problem" ? "What happened, and what did you expect?" : kind === "idea" ? "What would make KROFT better for you?" : "What do you like?"}
+          placeholder={kind === "problem" ? "What happened, and what did you expect?" : kind === "idea" ? "What would make Kroft better for you?" : "What do you like?"}
           style={{ width:"100%", boxSizing:"border-box", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, color:C.text, padding:"11px 14px", fontSize:14, fontFamily:APP_FONT, outline:"none", resize:"vertical" }} />
-        <Mono style={{ color:C.muted, lineHeight:1.6 }}>Sent from {screen || "KROFT"}, with your app version, so we can find it. Nothing else from your account is shared.</Mono>
+        <Mono style={{ color:C.muted, lineHeight:1.6 }}>Sent from {screen || "Kroft"}, with your app version, so we can find it. Nothing else from your account is shared.</Mono>
         <Btn full disabled={sending || message.trim().length < 2} onClick={send}>{sending ? "Sending…" : "Send"}</Btn>
       </div>
     </div>
@@ -3741,7 +3703,7 @@ function PlansSheet({ user, current, onClose, toast }) {
       <div role="dialog" aria-modal="true" aria-label="Upgrade" style={{ position:"fixed", inset:0, zIndex:340, background:C.bg, display:"flex", flexDirection:"column" }}>
         <div style={{ display:"flex", alignItems:"center", gap:10, padding:"calc(12px + env(safe-area-inset-top)) 16px 12px", borderBottom:`1px solid ${C.cardB}` }}>
           <button onClick={() => setChosen(null)} aria-label="Back" style={{ background:"none", border:"none", color:C.white, cursor:"pointer", fontSize:20, padding:"2px 4px", lineHeight:1 }}>←</button>
-          <h2 style={{ fontSize:17, fontWeight:700, color:C.white, letterSpacing:-.5 }}>KROFT {plan(chosen).name}</h2>
+          <h2 style={{ fontSize:17, fontWeight:700, color:C.white, letterSpacing:-.5 }}>Kroft {plan(chosen).name}</h2>
         </div>
         <div style={{ flex:1, overflowY:"auto", padding:16, display:"flex", flexDirection:"column", gap:14 }}>
           <Card level="raised">
@@ -3944,7 +3906,7 @@ function BillsScreen({ bills, setBills, user, contacts, categories, toast, onClo
           </div>
           <InvoiceField label="Notes (optional)"><Inp value={draft.notes} onChange={e => set({ notes:e.target.value })} /></InvoiceField>
           <Btn full onClick={saveDraft}>Save bill</Btn>
-          <Mono style={{ color:C.muted, lineHeight:1.6, textAlign:"center" }}>KROFT reminds you the day before it's due and on the day.</Mono>
+          <Mono style={{ color:C.muted, lineHeight:1.6, textAlign:"center" }}>Kroft reminds you the day before it's due and on the day.</Mono>
         </div>
       </>
     );
@@ -4047,7 +4009,7 @@ function BillsScreen({ bills, setBills, user, contacts, categories, toast, onClo
           {bills.length === 0 ? (
             <Card level="inset" style={{ textAlign:"center", padding:26, borderStyle:"dashed" }}>
               <div style={{ fontSize:15, fontWeight:600, color:C.white, marginBottom:6 }}>No bills yet</div>
-              <Mono style={{ display:"block", color:C.soft, lineHeight:1.6 }}>Add what you owe suppliers, rent or utilities, and KROFT reminds you before each one is due. Or just tell KROFT: "I owe Dangote ₦250,000 for cement, due Friday."</Mono>
+              <Mono style={{ display:"block", color:C.soft, lineHeight:1.6 }}>Add what you owe suppliers, rent or utilities, and Kroft reminds you before each one is due. Or just tell Kroft: "I owe Dangote ₦250,000 for cement, due Friday."</Mono>
             </Card>
           ) : shown.length === 0 ? (
             <Card level="inset" style={{ textAlign:"center", padding:22, borderStyle:"dashed" }}><Mono style={{ color:C.soft }}>{filter === "open" ? "Nothing to pay. You're all caught up." : "Nothing here."}</Mono></Card>
@@ -4095,8 +4057,8 @@ function AppPermissions({ toast }) {
     if (key === "exact") { setAsking(""); refresh(); return; }
     setAsking("");
     refresh();
-    if (result === "needs-update") toast("Update the KROFT app to turn this on from here.");
-    else if (result !== "granted") toast("Android didn't allow it. Open your phone's Settings → Apps → KROFT → Permissions to turn it on.");
+    if (result === "needs-update") toast("Update the Kroft app to turn this on from here.");
+    else if (result !== "granted") toast("Android didn't allow it. Open your phone's Settings → Apps → Kroft → Permissions to turn it on.");
   };
   if (!state) return <Mono style={{ display:"block", color:C.muted }}>Checking…</Mono>;
   return (
@@ -4115,7 +4077,7 @@ function AppPermissions({ toast }) {
           </div>
         );
       })}
-      <Mono style={{ display:"block", color:C.muted, lineHeight:1.7 }}>If Allow doesn't bring up a prompt, Android has stopped asking: turn it on in your phone's Settings → Apps → KROFT → Permissions.</Mono>
+      <Mono style={{ display:"block", color:C.muted, lineHeight:1.7 }}>If Allow doesn't bring up a prompt, Android has stopped asking: turn it on in your phone's Settings → Apps → Kroft → Permissions.</Mono>
     </div>
   );
 }
@@ -4128,7 +4090,7 @@ function SoundsRow({ expanded, onToggle }) {
   return (
     <ProfileRow label="Sounds" sub={on ? "On" : "Off"} expanded={expanded} onToggle={onToggle} right={<ProfileSwitch value={on} onChange={change} />}>
       <Mono style={{ display:"block", color:C.soft, lineHeight:1.7, marginBottom:12 }}>
-        KROFT's own sounds: its signature for notifications, a chime when money comes in, a soft swoosh when you send an invoice, a pop when you tick something off, and the alarm for reminders.{on ? " Tap to hear them." : " Turned off: KROFT stays silent."}
+        Kroft's own sounds: its signature for notifications, a chime when money comes in, a soft swoosh when you send an invoice, a pop when you tick something off, and the alarm for reminders.{on ? " Tap to hear them." : " Turned off: Kroft stays silent."}
       </Mono>
       {on && (
         <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
@@ -4152,7 +4114,7 @@ function ProfileSection({ onFeedback, isAdmin, onAdmin, nav, onNav, connections,
   // profileNav there) so it survives the remount a theme change triggers.
   const { screen, openRow } = nav;
   const setOpenRow = row => onNav(n => ({ ...n, openRow:row }));
-  const planName = plan === "pro" ? "KROFT Pro" : "KROFT Plus";
+  const planName = plan === "pro" ? "Kroft Pro" : "Kroft Plus";
   const fileInputRef = useRef(null);
   const [confirmLogout, setConfirmLogout] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -4174,7 +4136,7 @@ function ProfileSection({ onFeedback, isAdmin, onAdmin, nav, onNav, connections,
     if (!trimmed) return;
     onUpdateName(trimmed);
     setEditingName(false);
-    toast(`Got it — KROFT will call you ${trimmed}.`);
+    toast(`Got it — Kroft will call you ${trimmed}.`);
   };
   const cancelEditName = () => { setNameDraft(user.name || ""); setEditingName(false); };
 
@@ -4188,14 +4150,14 @@ function ProfileSection({ onFeedback, isAdmin, onAdmin, nav, onNav, connections,
   // always was; only which screen it lives on changed.
   const rows = {
     memory: (
-      <ProfileRow label="AI Memory" sub="What KROFT remembers about you" expanded={openRow==="memory"} onToggle={()=>toggle("memory")}>
-        <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>{isSupabaseConfigured ? "KROFT remembers your recent conversation (the last 60 messages) across visits, plus your finances, appointments, and mood, to answer with real context. It's kept in your own account and never shared with other KROFT users." : "KROFT remembers your recent conversation (the last 60 messages) on this device, plus your finances, appointments, and mood, to answer with real context. Nothing leaves this device in local-only mode."}</Mono>
+      <ProfileRow label="AI Memory" sub="What Kroft remembers about you" expanded={openRow==="memory"} onToggle={()=>toggle("memory")}>
+        <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>{isSupabaseConfigured ? "Kroft remembers your recent conversation (the last 60 messages) across visits, plus your finances, appointments, and mood, to answer with real context. It's kept in your own account and never shared with other Kroft users." : "Kroft remembers your recent conversation (the last 60 messages) on this device, plus your finances, appointments, and mood, to answer with real context. Nothing leaves this device in local-only mode."}</Mono>
       </ProfileRow>
     ),
     voice: (
       <ProfileRow label="Voice & Language" sub={`English (US) · ${VOICE_PROFILES[resolveVoiceId(voicePref)].name}`} expanded={openRow==="voice"} onToggle={()=>toggle("voice")}
         right={<ProfileSwitch value={voiceReplies} onChange={onSetVoiceReplies} />}>
-        <Mono style={{ display:"block", color:C.soft, lineHeight:1.7, marginBottom:14 }}>{voiceReplies ? "KROFT speaks replies and reminders aloud." : "KROFT will stay silent unless you tap Read Aloud — voice is never required to use KROFT."}</Mono>
+        <Mono style={{ display:"block", color:C.soft, lineHeight:1.7, marginBottom:14 }}>{voiceReplies ? "Kroft speaks replies and reminders aloud." : "Kroft will stay silent unless you tap Read Aloud — voice is never required to use Kroft."}</Mono>
         <VoiceStyleSpeedControls voicePref={voicePref} onSetVoicePref={onSetVoicePref} voiceSpeed={voiceSpeed} onSetVoiceSpeed={onSetVoiceSpeed} />
       </ProfileRow>
     ),
@@ -4276,7 +4238,7 @@ function ProfileSection({ onFeedback, isAdmin, onAdmin, nav, onNav, connections,
             <Btn sm v="outline" onClick={onTestNotification} style={{ marginTop:4 }}>Send a test</Btn>
             {/* Stated plainly rather than letting people assume background delivery works. */}
             <Mono style={{ display:"block", color:C.muted, lineHeight:1.7, marginTop:11 }}>
-              These arrive while KROFT is open in a tab, including in the background. They won't
+              These arrive while Kroft is open in a tab, including in the background. They won't
               arrive once the browser is fully closed.
             </Mono>
           </>
@@ -4286,14 +4248,14 @@ function ProfileSection({ onFeedback, isAdmin, onAdmin, nav, onNav, connections,
     auto: (
       <ProfileRow label="Smart Automations" sub="Reminders, briefings, insights" expanded={openRow==="auto"} onToggle={()=>toggle("auto")}
         right={<ProfileSwitch value={proactiveInsights} onChange={onSetProactiveInsights} />}>
-        <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>{proactiveInsights ? "KROFT proactively surfaces reminders and daily insights." : "KROFT will only respond when asked."}</Mono>
+        <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>{proactiveInsights ? "Kroft proactively surfaces reminders and daily insights." : "Kroft will only respond when asked."}</Mono>
       </ProfileRow>
     ),
     faceid: (
       <ProfileRow label={isNativeApp ? "Fingerprint or face unlock" : "Face ID"} sub={biometricOn ? "Enabled for this device" : "Not set up"} expanded={openRow==="faceid"} onToggle={()=>toggle("faceid")}
         right={<ProfileSwitch value={!!biometricOn} onChange={v => v ? onSetupBiometric() : onRemoveBiometric()} />}>
         <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>{isNativeApp
-          ? "Locks KROFT with your phone's own fingerprint or face unlock. It's asked for when you open the app, and when you come back after more than 5 minutes away."
+          ? "Locks Kroft with your phone's own fingerprint or face unlock. It's asked for when you open the app, and when you come back after more than 5 minutes away."
           : "Biometric sign-in uses your device's real WebAuthn platform authenticator (Face ID, Touch ID, or Windows Hello) — turning this on will prompt an actual biometric check on this device, not just a toggle."}</Mono>
       </ProfileRow>
     ),
@@ -4304,15 +4266,15 @@ function ProfileSection({ onFeedback, isAdmin, onAdmin, nav, onNav, connections,
     ),
     privacy: (
       <ProfileRow label="Privacy Controls" sub="Data sharing, visibility" expanded={openRow==="privacy"} onToggle={()=>toggle("privacy")}>
-        <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>Your data stays scoped to your own account and is never shared with other KROFT users.</Mono>
+        <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>Your data stays scoped to your own account and is never shared with other Kroft users.</Mono>
       </ProfileRow>
     ),
     wellnessai: (
-      <ProfileRow label="Wellness Data in KROFT Chat" sub={wellnessAiContext ? "KROFT can reference your wellness data" : "Off"} expanded={openRow==="wellnessai"} onToggle={()=>toggle("wellnessai")}
+      <ProfileRow label="Wellness Data in Kroft Chat" sub={wellnessAiContext ? "Kroft can reference your wellness data" : "Off"} expanded={openRow==="wellnessai"} onToggle={()=>toggle("wellnessai")}
         right={<ProfileSwitch value={wellnessAiContext} onChange={onSetWellnessAiContext} />}>
         <Mono style={{ display:"block", color:C.soft, lineHeight:1.7 }}>{wellnessAiContext
-          ? "KROFT Chat can reference your mood, sleep, journal and pattern data to answer wellness questions — always as observations from your own data, never as a diagnosis. Your Wellness tab keeps working the same either way."
-          : "KROFT Chat will not see or reference any wellness data — mood, sleep, journal entries or Your Patterns stay out of its context entirely. The Wellness tab itself is unaffected."}</Mono>
+          ? "Kroft Chat can reference your mood, sleep, journal and pattern data to answer wellness questions — always as observations from your own data, never as a diagnosis. Your Wellness tab keeps working the same either way."
+          : "Kroft Chat will not see or reference any wellness data — mood, sleep, journal entries or Your Patterns stay out of its context entirely. The Wellness tab itself is unaffected."}</Mono>
       </ProfileRow>
     ),
     data: (
@@ -4320,7 +4282,7 @@ function ProfileSection({ onFeedback, isAdmin, onAdmin, nav, onNav, connections,
         <Mono style={{ display:"block", color:C.soft, lineHeight:1.7, marginBottom:12 }}>
           {isSupabaseConfigured
             ? "Signed in with a real account, your data already syncs to your own account in the cloud — this backup is just an extra copy, useful for switching devices or keeping an offline copy. Your password is never included in the file."
-            : "KROFT keeps your data on this device only — nothing is uploaded. That also means clearing your browser data erases it permanently, so download a backup you can keep somewhere safe. Your password is never included in the file."}
+            : "Kroft keeps your data on this device only — nothing is uploaded. That also means clearing your browser data erases it permanently, so download a backup you can keep somewhere safe. Your password is never included in the file."}
         </Mono>
         <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
           <Btn sm onClick={onExportData}>Download backup</Btn>
@@ -4356,14 +4318,14 @@ function ProfileSection({ onFeedback, isAdmin, onAdmin, nav, onNav, connections,
             </div>
           ))}
         </div>
-        <div style={{ fontSize:11, fontWeight:700, color:C.muted, letterSpacing:.6, marginBottom:8 }}>MORE FROM KROFT'S AI</div>
+        <div style={{ fontSize:11, fontWeight:700, color:C.muted, letterSpacing:.6, marginBottom:8 }}>MORE FROM Kroft'S AI</div>
         <div style={{ display:"flex", flexDirection:"column", gap:10, marginBottom:12 }}>
           {[
-            { t:"Unlimited voice", d:`Talk to KROFT hands-free as much as you like. The free plan includes ${voiceLimit} voice turns a day.` },
+            { t:"Unlimited voice", d:`Talk to Kroft hands-free as much as you like. The free plan includes ${voiceLimit} voice turns a day.` },
             { t:"No daily AI limits", d:"Photos, files, images, web research and Around Me without the free plan's daily limits." },
             { t:"Morning summary", d:"An AI summary of your day around 8am, without asking." },
-            { t:"Scheduled reminder calls", d:"KROFT rings you in the app at the time you set, speaks the reminder, and can talk it through." },
-            { t:"Longer memory and budget rollover", d:"KROFT remembers 60 messages of a conversation instead of 20, and unused budget carries into next month." },
+            { t:"Scheduled reminder calls", d:"Kroft rings you in the app at the time you set, speaks the reminder, and can talk it through." },
+            { t:"Longer memory and budget rollover", d:"Kroft remembers 60 messages of a conversation instead of 20, and unused budget carries into next month." },
           ].map(b => (
             <div key={b.t} style={{ display:"flex", gap:9, alignItems:"flex-start" }}>
               <Dot color={C.positive} />
@@ -4386,8 +4348,8 @@ function ProfileSection({ onFeedback, isAdmin, onAdmin, nav, onNav, connections,
           {subscriptionStatus === "past_due"
             ? "Your last renewal charge failed, so Plus access has paused. Resubscribe below to restore it."
             : subscribed
-            ? "Your subscription and card are held by our secure payment partner, not KROFT. There's no self-serve billing portal — cancel here any time, or contact support for a receipt."
-            : "Upgrading opens a secure checkout — KROFT never sees or stores your card details directly."}
+            ? "Your subscription and card are held by our secure payment partner, not Kroft. There's no self-serve billing portal — cancel here any time, or contact support for a receipt."
+            : "Upgrading opens a secure checkout — Kroft never sees or stores your card details directly."}
         </Mono>
         {subscribed && !autoRenews && (
           <Mono style={{ display:"block", color:C.muted, lineHeight:1.7, marginBottom:10 }}>
@@ -4396,7 +4358,7 @@ function ProfileSection({ onFeedback, isAdmin, onAdmin, nav, onNav, connections,
         )}
         {!subscribed && (
           <Mono style={{ display:"block", color:C.muted, lineHeight:1.7, marginBottom:10 }}>
-            KROFT Plus renews automatically only with a card. Bank transfer, USSD, and mobile money are also accepted at checkout, but those don't auto-renew — you'd need to manually resubscribe each cycle.
+            Kroft Plus renews automatically only with a card. Bank transfer, USSD, and mobile money are also accepted at checkout, but those don't auto-renew — you'd need to manually resubscribe each cycle.
           </Mono>
         )}
         {subscribed && <Btn sm v="outline" disabled={billingLoading} onClick={onManageBilling}>{billingLoading ? <Spinner size={14} color={C.soft} thickness={2} /> : "Cancel plan"}</Btn>}
@@ -4409,8 +4371,8 @@ function ProfileSection({ onFeedback, isAdmin, onAdmin, nav, onNav, connections,
       <ProfileRow label="Payment Methods" sub={subscribed ? "On file with our payment partner" : "None on file"} expanded={openRow==="paymethods"} onToggle={()=>toggle("paymethods")}>
         <Mono style={{ display:"block", color:C.soft, lineHeight:1.7, marginBottom:subscribed?10:0 }}>
           {subscribed
-            ? "Card details live with our payment partner, not KROFT. There's no self-serve way to swap the card on an active plan — cancel here, then re-subscribe with the new card."
-            : "Card entry happens through our secure payment partner once you upgrade to KROFT Plus."}
+            ? "Card details live with our payment partner, not Kroft. There's no self-serve way to swap the card on an active plan — cancel here, then re-subscribe with the new card."
+            : "Card entry happens through our secure payment partner once you upgrade to Kroft Plus."}
         </Mono>
         {subscribed && <Btn sm v="outline" disabled={billingLoading} onClick={onManageBilling}>{billingLoading ? <Spinner size={14} color={C.soft} thickness={2} /> : "Cancel plan"}</Btn>}
       </ProfileRow>
@@ -4462,7 +4424,7 @@ function ProfileSection({ onFeedback, isAdmin, onAdmin, nav, onNav, connections,
           sm
           disabled={!supportMsg.trim()}
           onClick={() => {
-            window.location.href = `mailto:support@virttechnologies.com?subject=${encodeURIComponent("KROFT support request")}&body=${encodeURIComponent(supportMsg)}`;
+            window.location.href = `mailto:support@virttechnologies.com?subject=${encodeURIComponent("Kroft support request")}&body=${encodeURIComponent(supportMsg)}`;
             setSupportSent(true);
           }}
         >
@@ -4508,7 +4470,7 @@ function ProfileSection({ onFeedback, isAdmin, onAdmin, nav, onNav, connections,
       )}
       {subscribed
         ? <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
-            {plan === "plus" && <Btn sm onClick={onUpgrade}>See KROFT Pro</Btn>}
+            {plan === "plus" && <Btn sm onClick={onUpgrade}>See Kroft Pro</Btn>}
             <Btn sm v="outline" disabled={billingLoading} onClick={onManageBilling}>{billingLoading ? <Spinner size={14} color={C.soft} thickness={2} /> : "Cancel plan"}</Btn>
           </div>
         : <Btn sm disabled={billingLoading} onClick={onUpgrade}>{billingLoading ? <Spinner size={14} color={C.black} thickness={2} /> : "See plans"}</Btn>}
@@ -4599,7 +4561,7 @@ function ProfileSection({ onFeedback, isAdmin, onAdmin, nav, onNav, connections,
           <div style={{ width:"100%", maxWidth:260 }}>
             <Inp autoFocus value={nameDraft} onChange={e=>setNameDraft(e.target.value)}
               onKeyDown={e => { if (e.key==="Enter") saveName(); if (e.key==="Escape") cancelEditName(); }}
-              placeholder="What should KROFT call you?" style={{ textAlign:"center", marginBottom:8 }} />
+              placeholder="What should Kroft call you?" style={{ textAlign:"center", marginBottom:8 }} />
             <div style={{ display:"flex", gap:7 }}>
               <Btn sm v="outline" onClick={cancelEditName} style={{ flex:1 }}>Cancel</Btn>
               <Btn sm disabled={!nameDraft.trim()} onClick={saveName} style={{ flex:1 }}>Save</Btn>
@@ -4628,7 +4590,7 @@ function ProfileSection({ onFeedback, isAdmin, onAdmin, nav, onNav, connections,
       <SettingsGroup>
         <SettingsRow icon="logout" label="Log out" tone="danger" onClick={() => setConfirmLogout(true)} isLast />
       </SettingsGroup>
-      <Mono style={{ display:"block", textAlign:"center", color:C.muted, marginTop:-8 }}>KROFT by Orynthra</Mono>
+      <Mono style={{ display:"block", textAlign:"center", color:C.muted, marginTop:-8 }}>Kroft by Orynthra</Mono>
       <div style={{ display:"flex", justifyContent:"center", gap:18, marginTop:10 }}>
         <a href="/terms.html" target="_blank" rel="noopener" style={{ fontSize:13, color:C.muted, textDecoration:"underline" }}>Terms</a>
         <a href="/privacy.html" target="_blank" rel="noopener" style={{ fontSize:13, color:C.muted, textDecoration:"underline" }}>Privacy</a>
@@ -4645,7 +4607,7 @@ function ProfileSection({ onFeedback, isAdmin, onAdmin, nav, onNav, connections,
 class ErrorBoundary extends Component {
   constructor(props) { super(props); this.state = { error: null }; }
   static getDerivedStateFromError(error) { return { error }; }
-  componentDidCatch(error, info) { console.error("KROFT crashed:", error, info); reportError("crash", error, { stack: `${error?.stack || ""}\n${info?.componentStack || ""}` }); }
+  componentDidCatch(error, info) { console.error("Kroft crashed:", error, info); reportError("crash", error, { stack: `${error?.stack || ""}\n${info?.componentStack || ""}` }); }
   render() {
     if (this.state.error) {
       return (
@@ -4654,7 +4616,7 @@ class ErrorBoundary extends Component {
             <div style={{ fontSize:34, marginBottom:14 }}>⚠️</div>
             <div style={{ fontSize:18, fontWeight:700, marginBottom:8 }}>Something went wrong</div>
             <div style={{ fontSize:13, color:C.soft, marginBottom:22, lineHeight:1.5 }}>
-              KROFT hit an unexpected error. Your saved data is safe — it's stored separately and wasn't affected.
+              Kroft hit an unexpected error. Your saved data is safe — it's stored separately and wasn't affected.
             </div>
             {/* Two ways out. "Try again" re-renders the same tree, which lands straight back on
                 the error if the cause hasn't changed — so a reload is offered alongside it.
@@ -4970,7 +4932,7 @@ function KroftApp({ onFullReset } = {}) {
   const [feedbackFrom, setFeedbackFrom] = useState(null); // the feedback sheet: null closed, else the screen it was opened from
   const [showGoalPick, setShowGoalPick] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);           // the owner: sees Profile › Admin (api/admin.js decides)
-  const [showAdmin, setShowAdmin] = useState(false); // "what do you want KROFT for?", once, right after sign-up
+  const [showAdmin, setShowAdmin] = useState(false); // "what do you want Kroft for?", once, right after sign-up
   const [invoicesOpenDoc, setInvoicesOpenDoc] = useState(null); // { id, kind } to open straight to one (from a contact's profile)
   const [expenseCats, setExpenseCats] = useState(["Operations","Tech","Marketing","Travel","Rent","Other"]);
   // Monthly spending limits per category, as { [category]: amount }. Tracking spend without ever
@@ -5952,7 +5914,7 @@ function KroftApp({ onFullReset } = {}) {
       // Only seed the welcome message for a genuinely empty conversation — otherwise this
       // fires on every login (and every prefs round-trip) and silently discards whatever
       // history was just restored from persistent storage.
-      setAiMessages(p => p.length > 0 ? p : [{ role:"assistant", content:`Hey ${firstNameOf(user.name)||"there"} — I'm KROFT, your personal AI assistant by Orynthra. Ask me anything — finances, schedule, general knowledge, advice, or just chat. I'm here for all of it.` }]);
+      setAiMessages(p => p.length > 0 ? p : [{ role:"assistant", content:`Hey ${firstNameOf(user.name)||"there"} — I'm Kroft, your personal AI assistant by Orynthra. Ask me anything — finances, schedule, general knowledge, advice, or just chat. I'm here for all of it.` }]);
     }
   }, [step]);
 
@@ -6032,7 +5994,7 @@ function KroftApp({ onFullReset } = {}) {
         return { date:today, slots:[...slots, due] };
       });
       if (dueSlot !== null) {
-        toast(`${firstNameOf(user.name)||"Hey"} — you haven't logged an income or expense entry today. Add one so KROFT can track your month.`);
+        toast(`${firstNameOf(user.name)||"Hey"} — you haven't logged an income or expense entry today. Add one so Kroft can track your month.`);
       }
     };
     checkReminders();
@@ -6284,7 +6246,7 @@ function KroftApp({ onFullReset } = {}) {
     try {
       if (isNativeApp) {
         // Android's own fingerprint / face prompt (WebAuthn doesn't exist in the app's WebView).
-        const r = await verifyBiometric("Log in to KROFT");
+        const r = await verifyBiometric("Log in to Kroft");
         if (!r.ok) throw new Error(r.reason);
       } else {
       const challenge = crypto.getRandomValues(new Uint8Array(32));
@@ -6365,7 +6327,7 @@ function KroftApp({ onFullReset } = {}) {
   const unlockApp = async () => {
     if (unlocking) return;
     setUnlocking(true);
-    const r = await verifyBiometric("Unlock KROFT");
+    const r = await verifyBiometric("Unlock Kroft");
     setUnlocking(false);
     if (r.ok) { setAppLocked(false); return; }
     // An older copy of the app without the fingerprint plugin can't check it; the account's
@@ -6387,7 +6349,7 @@ function KroftApp({ onFullReset } = {}) {
     window.location.reload();
   };
   const appLockOverlay = appLocked && (
-    <div role="dialog" aria-modal="true" aria-label="KROFT is locked" style={{ position:"fixed", inset:0, zIndex:2000, background:LIGHT.bg, color:LIGHT.text, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:14, padding:"24px 24px calc(24px + env(safe-area-inset-bottom))", fontFamily:APP_FONT, textAlign:"center" }}>
+    <div role="dialog" aria-modal="true" aria-label="Kroft is locked" style={{ position:"fixed", inset:0, zIndex:2000, background:LIGHT.bg, color:LIGHT.text, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:14, padding:"24px 24px calc(24px + env(safe-area-inset-bottom))", fontFamily:APP_FONT, textAlign:"center" }}>
       <div style={{ fontSize:34, fontWeight:600, letterSpacing:"-0.5px" }}>Kroft</div>
       <div style={{ fontSize:15.5, color:LIGHT.soft, maxWidth:280, lineHeight:1.5 }}>Locked. Use your fingerprint or face to continue.</div>
       <AuthButton style={{ marginTop:12, maxWidth:320, width:"100%" }} loading={unlocking} onClick={unlockApp}>{unlocking ? "Waiting…" : "Unlock"}</AuthButton>
@@ -6401,10 +6363,10 @@ function KroftApp({ onFullReset } = {}) {
         const { data: { session } = {} } = isSupabaseConfigured ? await supabase.auth.getSession() : { data:{} };
         writeNativeBio(session?.user?.id || "local");
         setNativeBioOn(true);
-        toast("Biometric unlock is on. KROFT will ask for it when you open the app.");
+        toast("Biometric unlock is on. Kroft will ask for it when you open the app.");
       } else if (r.reason === "not-enrolled") toast("Add a fingerprint or face in your phone's Settings → Security first.");
-      else if (r.reason === "unsupported") toast("This phone doesn't have a fingerprint or face sensor KROFT can use.");
-      else if (r.reason === "needs-update") toast("Update the KROFT app to use fingerprint or face unlock.");
+      else if (r.reason === "unsupported") toast("This phone doesn't have a fingerprint or face sensor Kroft can use.");
+      else if (r.reason === "needs-update") toast("Update the Kroft app to use fingerprint or face unlock.");
       else if (r.reason === "locked-out") toast("Too many tries. Wait a moment and try again.");
       return;
     }
@@ -6415,8 +6377,8 @@ function KroftApp({ onFullReset } = {}) {
       const credential = await navigator.credentials.create({
         publicKey: {
           challenge,
-          rp: { name: "KROFT" },
-          user: { id: userIdBytes, name: user.email || "kroft-user", displayName: user.name || "KROFT User" },
+          rp: { name: "Kroft" },
+          user: { id: userIdBytes, name: user.email || "kroft-user", displayName: user.name || "Kroft User" },
           pubKeyCredParams: [{ type:"public-key", alg:-7 }, { type:"public-key", alg:-257 }],
           authenticatorSelection: { authenticatorAttachment:"platform", userVerification:"required" },
           timeout: 60000,
@@ -6498,7 +6460,7 @@ function KroftApp({ onFullReset } = {}) {
     e.target.value = "";
     if (!file) return;
     let photo;
-    try { photo = await shrinkPhoto(file); } catch { toast("That file isn't a photo KROFT can read."); return; }
+    try { photo = await shrinkPhoto(file); } catch { toast("That file isn't a photo Kroft can read."); return; }
     setScan({ photo, busy:true });
     const today = todayISO();
     const opts = { categories:expenseCats, currency:user.currency, today };
@@ -6533,7 +6495,7 @@ function KroftApp({ onFullReset } = {}) {
       const res = await aiFetch("/api/feedback", { method:"POST", body:JSON.stringify(f) });
       if (!res.ok) throw new Error(String(res.status));
       playSound("done");
-      toast("Thanks. Your feedback reached the KROFT team.");
+      toast("Thanks. Your feedback reached the Kroft team.");
       return true;
     } catch {
       window.location.href = feedbackMailto(f);
@@ -6568,7 +6530,7 @@ function KroftApp({ onFullReset } = {}) {
       "organised.note": () => to("workspace", "notes"),
       "assistant.ask": () => setTab("nova"),
       "assistant.remind": () => { setTab("nova"); setAiInput(v => v || "Remind me to "); },
-      "assistant.voice": () => { setTab("nova"); toast("Tap the microphone to talk to KROFT."); },
+      "assistant.voice": () => { setTab("nova"); toast("Tap the microphone to talk to Kroft."); },
     };
     actions[`${goalId}.${stepId}`]?.();
   };
@@ -6818,7 +6780,7 @@ function KroftApp({ onFullReset } = {}) {
         // 409 means the server already sees an active subscription (e.g. a stale second tab) —
         // "try again" would be actively wrong advice there, since starting another checkout is
         // exactly what api/billing/checkout.js just refused to prevent a duplicate charge.
-        toast(res.status === 409 ? "You're already on KROFT Plus." : "Couldn't start checkout. Try again.");
+        toast(res.status === 409 ? "You're already on Kroft Plus." : "Couldn't start checkout. Try again.");
         setBillingLoading(false);
         if (res.status === 409) refreshSubscriptionStatus();
         return;
@@ -6839,7 +6801,7 @@ function KroftApp({ onFullReset } = {}) {
   // api/billing/cancel.js), confirmed here first since there's no separate confirmation screen
   // on Flutterwave's side the way a portal would provide.
   const cancelKroftPlus = async () => {
-    if (!window.confirm("Cancel KROFT Plus? You'll lose unlimited access once this takes effect.")) return;
+    if (!window.confirm("Cancel Kroft Plus? You'll lose unlimited access once this takes effect.")) return;
     setBillingLoading(true);
     try {
       const res = await authedFetch("/api/billing/cancel", { method: "POST" });
@@ -6849,7 +6811,7 @@ function KroftApp({ onFullReset } = {}) {
         return;
       }
       setSubscribed(false);
-      toast("KROFT Plus cancelled.");
+      toast("Kroft Plus cancelled.");
     } catch {
       setBillingLoading(false);
       toast("Couldn't cancel. Try again.");
@@ -6865,7 +6827,7 @@ function KroftApp({ onFullReset } = {}) {
     const billingResult = params.get("billing");
     if (!billingResult) return;
     if (billingResult === "success") {
-      toast("Payment received — welcome to KROFT Plus.");
+      toast("Payment received — welcome to Kroft Plus.");
       celebrate();
       refreshSubscriptionStatus();
     } else if (billingResult === "cancelled") {
@@ -6939,7 +6901,7 @@ function KroftApp({ onFullReset } = {}) {
         if (error) { toast("That email link has expired or was already used. Request a new one."); return; }
         if (linkType === "recovery") setStep("reset-password");
         else if (linkType === "email_change") toast("Your new email is confirmed.");
-        else toast("Your email is confirmed. Welcome to KROFT!");
+        else toast("Your email is confirmed. Welcome to Kroft!");
       })();
       return;
     }
@@ -7023,7 +6985,7 @@ function KroftApp({ onFullReset } = {}) {
   };
 
   const finishPhoneName = () => {
-    if (!user.name?.trim()) { setPhoneError("Tell KROFT what to call you."); return; }
+    if (!user.name?.trim()) { setPhoneError("Tell Kroft what to call you."); return; }
     setUser(u => ({ ...u, name: u.name.trim() }));
     setPhoneError(""); setStep("photo");
   };
@@ -7356,7 +7318,7 @@ function KroftApp({ onFullReset } = {}) {
     // Voice mode has its own daily allowance, separate from typed chat, so a busy voice
     // conversation and a busy typing session never compete for the same quota.
     if (!spendVoiceTurn()) {
-      const msg = `That's today's ${voiceLimit} free voice turns. They reset in about ${resetsIn()}, or KROFT Plus removes the limit — typed chat still works.`;
+      const msg = `That's today's ${voiceLimit} free voice turns. They reset in about ${resetsIn()}, or Kroft Plus removes the limit — typed chat still works.`;
       setVoiceTranscript(""); setVoiceReply(msg); setVoiceState("speaking");
       voiceStopRef.current = speakSequence([msg], { onDone: () => { voiceStopRef.current = null; setVoiceState("idle"); } });
       return;
@@ -7739,7 +7701,7 @@ function KroftApp({ onFullReset } = {}) {
     // entirely by wellnessAiContext (see its own state comment and the Privacy Controls toggle
     // it powers) — off means the model gets a single line saying so and nothing else from here.
     const wellnessSection = !wellnessAiContext
-      ? "Wellness data sharing with KROFT Chat is turned off in this user's Privacy settings. Do not reference mood, sleep, journal, or wellness pattern data even if asked — say wellness data sharing is off and suggest they check Wellness > Privacy Controls."
+      ? "Wellness data sharing with Kroft Chat is turned off in this user's Privacy settings. Do not reference mood, sleep, journal, or wellness pattern data even if asked — say wellness data sharing is off and suggest they check Wellness > Privacy Controls."
       : (() => {
           const lines = [`Current wellness score: ${wellness}/100.`];
           if (mood) lines.push(`Current mood: ${mood}.`);
@@ -7751,7 +7713,7 @@ function KroftApp({ onFullReset } = {}) {
           return lines.join("\n");
         })();
 
-    return `You are KROFT, a personal AI assistant by Orynthra. You can answer any question on any topic, and you also have live access to this user's own data (below). Use it whenever the question touches their money, schedule, work or people — quote real figures and real titles rather than speaking generally. If the data below doesn't cover something, say so plainly instead of guessing. Always reply in the same language the user just wrote or spoke in, not English by default — this app's voice input already recognizes speech in the device's own configured language, not only English.
+    return `You are Kroft, a personal AI assistant by Orynthra. You can answer any question on any topic, and you also have live access to this user's own data (below). Use it whenever the question touches their money, schedule, work or people — quote real figures and real titles rather than speaking generally. If the data below doesn't cover something, say so plainly instead of guessing. Always reply in the same language the user just wrote or spoke in, not English by default — this app's voice input already recognizes speech in the device's own configured language, not only English.
 
 CURRENT MOMENT
 Date: ${now.toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric",year:"numeric"})} (${today})
@@ -7804,7 +7766,7 @@ Talk like a sharp, genuinely warm human assistant who knows this person well —
 
 ${voiceMode ? `FORMAT (voice)
 This reply will be spoken aloud. Use plain spoken sentences only: no Markdown, no symbols, no tables, no lists, no code blocks. Say figures the way a person would. Keep it to a few sentences.` : `FORMAT
-Your reply is rendered as Markdown in the KROFT app, so formatting shows up as real headings, bold, lists and tables, never as symbols. Choose the presentation that fits the question, and use the least formatting that does the job:
+Your reply is rendered as Markdown in the Kroft app, so formatting shows up as real headings, bold, lists and tables, never as symbols. Choose the presentation that fits the question, and use the least formatting that does the job:
 - Casual chat or a simple question: one to three natural sentences. No headings, lists or bold.
 - An explanation with several parts: short paragraphs, with a few "##" headings only if it's long enough to need them.
 - Step-by-step instructions: a numbered list, one action per step.
@@ -7956,7 +7918,7 @@ ${voiceMode
           .filter(it => it.description && it.price > 0);
         if (!items.length) return { label:`I couldn't tell what to put on the ${isQuote ? "quote" : "invoice"} for ${client}. Try "${isQuote ? "quote" : "invoice"} ${client} ₦50,000 for the logo design".` };
         const allowance = isQuote ? quoteAllowance({ subscribed, quotes, today:todayISO() }) : invoiceAllowance({ subscribed, invoices, today:todayISO() });
-        if (!allowance.allowed) return { label: isQuote ? `You've used this month's ${FREE_QUOTES_PER_MONTH} free quotes. KROFT Plus gives you unlimited quotes.` : `You've used this month's ${FREE_INVOICES_PER_MONTH} free invoices. KROFT Plus gives you unlimited invoices.` };
+        if (!allowance.allowed) return { label: isQuote ? `You've used this month's ${FREE_QUOTES_PER_MONTH} free quotes. Kroft Plus gives you unlimited quotes.` : `You've used this month's ${FREE_INVOICES_PER_MONTH} free invoices. Kroft Plus gives you unlimited invoices.` };
         const c = contacts.find(x => (x.name || "").toLowerCase() === client.toLowerCase());
         if (isQuote) {
           const { quote } = createQuote({ settings:invoiceSettings, client:{ name:client, email:c?.email || "", phone:c?.phone || "" }, clientId:c?.id ?? null, items, validUntil: validDate(action.valid_until) ? action.valid_until : undefined, notes: str(action.notes) || undefined, currency:user.currency, today:todayISO(), id:String(uid()) });
@@ -8179,7 +8141,7 @@ ${voiceMode
   // broken, and because the first sentence can start being read aloud while the rest arrives.
   const runKroftCompletion = async (messages, { onDelta, signal, usageType = "chat", voiceMode = false } = {}) => {
     if (typeof navigator !== "undefined" && navigator.onLine === false) {
-      throw new KroftError("You're offline. KROFT needs an internet connection to answer, so try again once you're back online.");
+      throw new KroftError("You're offline. Kroft needs an internet connection to answer, so try again once you're back online.");
     }
     const recent = messages.slice(-historyLimit());
     const body = {
@@ -8262,7 +8224,7 @@ ${voiceMode
         cleanup();
         if (timedOut) throw new KroftError("That took too long to respond. Try again.");
         if (e.name === "AbortError") throw e;
-        throw new KroftError("Lost connection while KROFT was replying. Try again.");
+        throw new KroftError("Lost connection while Kroft was replying. Try again.");
       }
       if (done) break;
       // Real progress — a chunk actually arrived — so the idle clock resets. A genuinely long
@@ -8357,9 +8319,9 @@ ${voiceMode
       }
       const payload = { app:"KROFT", formatVersion:1, exportedAt:new Date().toISOString(), data:groups };
       // Share sheet on phones and in the app, a download on computers (see saveFile.js).
-      const result = await saveFile({ name:`kroft-backup-${todayISO()}.json`, data:JSON.stringify(payload, null, 2), type:"application/json", title:"KROFT backup" });
+      const result = await saveFile({ name:`kroft-backup-${todayISO()}.json`, data:JSON.stringify(payload, null, 2), type:"application/json", title:"Kroft backup" });
       if (result === "downloaded") toast("Backup downloaded. Check your Downloads folder.");
-    } catch (err) { toast(err?.code === "needs-update" ? "Update the KROFT app to save files." : "Couldn't create the backup. Try again."); }
+    } catch (err) { toast(err?.code === "needs-update" ? "Update the Kroft app to save files." : "Couldn't create the backup. Try again."); }
   };
 
   // Permanently deletes the account (see api/account/delete.js), or, without Supabase, everything
@@ -8371,7 +8333,7 @@ ${voiceMode
         if (!res.ok) {
           const body = await res.json().catch(() => ({}));
           toast(body.error === "subscription_cancel_failed"
-            ? "Couldn't cancel your KROFT Plus subscription, so your account wasn't deleted. Try again."
+            ? "Couldn't cancel your Kroft Plus subscription, so your account wasn't deleted. Try again."
             : "Couldn't delete your account. Try again.");
           return false;
         }
@@ -8404,7 +8366,7 @@ ${voiceMode
   const importData = async file => {
     try {
       const parsed = JSON.parse(await file.text());
-      if (parsed?.app !== "KROFT" || !parsed.data) { toast("That doesn't look like a KROFT backup."); return; }
+      if (parsed?.app !== "KROFT" || !parsed.data) { toast("That doesn't look like a Kroft backup."); return; }
       await Promise.all(Object.entries(parsed.data).map(async ([group, value]) => {
         const key = STORAGE_KEYS[group];
         // Unknown groups are skipped rather than written, so a tampered file can't put
@@ -8703,12 +8665,12 @@ ${voiceMode
         // ringing stale, minutes late.
         if (lateMins > 10) {
           setScheduledCalls(p => p.map(x => x.id===c.id ? { ...x, status:"missed" } : x));
-          sendNotification("Missed call — KROFT", `${c.title}${c.note ? `: ${c.note}` : ""}`, `call:${c.id}`);
+          sendNotification("Missed call — Kroft", `${c.title}${c.note ? `: ${c.note}` : ""}`, `call:${c.id}`);
           return;
         }
         if (!callNotifiedRef.current[c.id]) {
           callNotifiedRef.current[c.id] = true;
-          sendNotification("Incoming call — KROFT", c.title, `call:${c.id}`);
+          sendNotification("Incoming call — Kroft", c.title, `call:${c.id}`);
         }
         setIncomingCall(prev => prev ? prev : c);
       });
@@ -9186,7 +9148,7 @@ ${voiceMode
 
   const setMsgFeedback = (i, val) => {
     setAiMessages(p => p.map((m,idx) => idx===i ? { ...m, feedback: m.feedback===val ? null : val } : m));
-    toast(val==="up" ? "Thanks for the feedback." : "Thanks — KROFT will keep improving.");
+    toast(val==="up" ? "Thanks for the feedback." : "Thanks — Kroft will keep improving.");
   };
 
   // KROFT's replies are Markdown: copy them as clean text (and rich text for apps that accept it)
@@ -9203,7 +9165,7 @@ ${voiceMode
   };
 
   const aiDraftReply = async email => {
-    toast("KROFT is drafting a reply…");
+    toast("Kroft is drafting a reply…");
     try {
       const res = await aiFetch("/api/chat", { method:"POST", headers:{"Content-Type":"application/json","X-Kroft-Usage-Type":"extra"}, body:JSON.stringify({ model:"openai", max_tokens:400, messages:[{ role:"user", content:`Draft a concise professional reply (under 5 sentences). From: ${email.from}, Subject: ${email.subject}, Body: "${email.body}"` }] }) });
       const data = await res.json();
@@ -9226,7 +9188,7 @@ ${voiceMode
       const data = await res.json();
       const suggestion = data.content?.map(b=>b.text||"").join("").trim();
       if (!res.ok || !suggestion) { toast("Couldn't get a suggestion — try again."); }
-      else setSmartReminders(p => [{ id:uid(), text:suggestion, when:"Suggested by KROFT", aiSuggested:true, done:false }, ...p]);
+      else setSmartReminders(p => [{ id:uid(), text:suggestion, when:"Suggested by Kroft", aiSuggested:true, done:false }, ...p]);
     } catch { toast("Couldn't get a suggestion — try again."); }
     setSuggestingReminder(false);
   };
@@ -9247,7 +9209,7 @@ ${voiceMode
     setGeneratingReport(true);
     const context = `Month: ${monthLabel(today)}. Income entries: ${monthInc.length} totaling ${fmtCur(incTotal,user.currency)}. Expense entries: ${monthExp.length} totaling ${fmtCur(expTotal,user.currency)}. Net: ${fmtCur(net,user.currency)}. Top expense categories: ${topCats.length>0?topCats.map(([c,v])=>`${c} (${fmtCur(v,user.currency)})`).join(", "):"none"}. Business: ${user.businessName||"not set"} (${user.businessType||""}).`;
     try {
-      const res = await aiFetch("/api/chat", { method:"POST", headers:{"Content-Type":"application/json","X-Kroft-Usage-Type":"report"}, body:JSON.stringify({ model:"openai", max_tokens:400, system:"You are KROFT, a bookkeeping assistant. Given a user's monthly income/expense summary, write a short end-of-month summary: 2-3 sentences on what the numbers show, then 2-3 practical observations about their own spending patterns. Describe what happened in their data — do not recommend financial products, investments, tax positions, borrowing, or anything requiring a licensed advisor. Frame observations as prompts to consider, not instructions. No preamble, no headers, plain text only.", messages:[{ role:"user", content:context }] }) });
+      const res = await aiFetch("/api/chat", { method:"POST", headers:{"Content-Type":"application/json","X-Kroft-Usage-Type":"report"}, body:JSON.stringify({ model:"openai", max_tokens:400, system:"You are Kroft, a bookkeeping assistant. Given a user's monthly income/expense summary, write a short end-of-month summary: 2-3 sentences on what the numbers show, then 2-3 practical observations about their own spending patterns. Describe what happened in their data — do not recommend financial products, investments, tax positions, borrowing, or anything requiring a licensed advisor. Frame observations as prompts to consider, not instructions. No preamble, no headers, plain text only.", messages:[{ role:"user", content:context }] }) });
       const data = await res.json();
       const advice = (res.ok && data.content?.map(b=>b.text||"").join("").trim()) || "Couldn't generate advice right now — try again shortly.";
       setMonthlyReport({ month:monthLabel(today), incTotal, expTotal, net, topCats, advice, generatedAt:Date.now() });
@@ -9282,7 +9244,7 @@ ${voiceMode
     setGeneratingRecap(true);
     const context = `This week (${weekAgoISO} to ${today}): ${weekInc.length} income entries totaling ${fmtCur(incTotal,user.currency)}, ${weekExp.length} expense entries totaling ${fmtCur(expTotal,user.currency)}, net ${fmtCur(incTotal-expTotal,user.currency)}. ${weekAppts.length} appointments this week. Mood entries this week: ${weekMoods.length ? weekMoods.map(m=>m.mood).join(", ") : "none logged"}. Currently ${openTasks} open task${openTasks!==1?"s":""} (a snapshot, not scoped to this week).`;
     try {
-      const res = await aiFetch("/api/chat", { method:"POST", headers:{"Content-Type":"application/json","X-Kroft-Usage-Type":"report"}, body:JSON.stringify({ model:"openai", max_tokens:180, system:"You are KROFT, a personal assistant writing someone a recap of their own week. Given real numbers across their finances, appointments and mood, write 2-3 warm, specific sentences on what genuinely happened — real progress if the data shows it, a plain observation if it doesn't. Never invent a number you weren't given, and never imply a number for something not mentioned (like tasks) unless it was explicitly given as this week's. No guilt, no urgency, no sales language, no headers or bullets — plain sentences someone would actually want to read.", messages:[{ role:"user", content:context }] }) });
+      const res = await aiFetch("/api/chat", { method:"POST", headers:{"Content-Type":"application/json","X-Kroft-Usage-Type":"report"}, body:JSON.stringify({ model:"openai", max_tokens:180, system:"You are Kroft, a personal assistant writing someone a recap of their own week. Given real numbers across their finances, appointments and mood, write 2-3 warm, specific sentences on what genuinely happened — real progress if the data shows it, a plain observation if it doesn't. Never invent a number you weren't given, and never imply a number for something not mentioned (like tasks) unless it was explicitly given as this week's. No guilt, no urgency, no sales language, no headers or bullets — plain sentences someone would actually want to read.", messages:[{ role:"user", content:context }] }) });
       const data = await res.json();
       const summary = (res.ok && data.content?.map(b=>b.text||"").join("").trim()) || "Couldn't put your recap together right now — try again shortly.";
       setWeeklyRecap({ weekStart:weekAgoISO, weekEnd:today, incTotal, expTotal, apptsCount:weekAppts.length, moodCount:weekMoods.length, openTasks, summary, generatedAt:Date.now() });
@@ -9351,7 +9313,7 @@ ${voiceMode
       const result = await saveFile({ name:filename, data:content, type });
       if (result === "downloaded" && doneMsg) toast(`${doneMsg} Check your Downloads folder.`);
     } catch (err) {
-      toast(err?.code === "needs-update" ? "Update the KROFT app to save files." : "Couldn't save that file. Try again.");
+      toast(err?.code === "needs-update" ? "Update the Kroft app to save files." : "Couldn't save that file. Try again.");
     }
   };
 
@@ -9454,8 +9416,8 @@ ${voiceMode
         if (err.code === err.PERMISSION_DENIED) {
           setLocationStatus("denied");
           setAroundError(isNativeApp
-            ? "KROFT needs location access to find places near you. Allow it in Profile → Security and login → App permissions."
-            : "Location access was denied. KROFT needs this to find places near you — you can enable it later in your device Settings.");
+            ? "Kroft needs location access to find places near you. Allow it in Profile → Security and login → App permissions."
+            : "Location access was denied. Kroft needs this to find places near you — you can enable it later in your device Settings.");
           return;
         }
         if (precise) { attempt(false); return; }
@@ -9736,7 +9698,7 @@ ${voiceMode
 
       {/* After Google sign-in, a new account without a name is asked for one here. */}
       {step === "phone" && (
-        <AuthScreen title="What should KROFT call you?" subtitle="Your first name is fine. You can change it later in Profile."
+        <AuthScreen title="What should Kroft call you?" subtitle="Your first name is fine. You can change it later in Profile."
           footer={<AuthButton onClick={finishPhoneName}>Continue</AuthButton>}>
           <AuthInput label="Your name" autoComplete="given-name" autoFocus placeholder="Your name" value={user.name || ""} invalid={!!phoneError}
             onChange={e => { setUser(u => ({ ...u, name:e.target.value })); setPhoneError(""); }} onKeyDown={e => e.key === "Enter" && finishPhoneName()} />
@@ -9759,10 +9721,10 @@ ${voiceMode
             {forgotError && <AuthAlert>{forgotError}</AuthAlert>}
           </AuthScreen>
         ) : (
-          <AuthScreen onBack={() => { setLoginError(""); setStep("welcome"); }} title="Welcome back" subtitle="Log in to your KROFT account."
+          <AuthScreen onBack={() => { setLoginError(""); setStep("welcome"); }} title="Welcome back" subtitle="Log in to your Kroft account."
             footer={<>
               <AuthButton loading={authLoading} disabled={locked} onClick={doLogin}>{locked ? `Try again in ${lockTimer}s` : authLoading ? "Logging in…" : "Log in"}</AuthButton>
-              <AuthButton kind="text" onClick={() => { setLoginError(""); setStep("welcome"); }}>New to KROFT? <span style={{ color:LIGHT.accent, marginLeft:4 }}>Create an account</span></AuthButton>
+              <AuthButton kind="text" onClick={() => { setLoginError(""); setStep("welcome"); }}>New to Kroft? <span style={{ color:LIGHT.accent, marginLeft:4 }}>Create an account</span></AuthButton>
             </>}>
             {locked && <AuthAlert title="Too many attempts" style={{ marginTop:0, marginBottom:18 }}>For your security, log in is paused. Try again in {lockTimer} seconds.</AuthAlert>}
             <div style={{ display:"flex", flexDirection:"column", gap:18, opacity:locked ? .5 : 1, pointerEvents:locked ? "none" : "auto" }}>
@@ -9788,7 +9750,7 @@ ${voiceMode
       )}
 
       {step === "reset-password" && (
-        <AuthScreen title="Set a new password" subtitle="Choose a password you haven't used for KROFT before."
+        <AuthScreen title="Set a new password" subtitle="Choose a password you haven't used for Kroft before."
           footer={<AuthButton loading={resetPwLoading} onClick={doResetPassword}>{resetPwLoading ? "Updating…" : "Update password"}</AuthButton>}>
           <div style={{ display:"flex", flexDirection:"column", gap:18 }}>
             <AuthInput label="New password" type="password" autoComplete="new-password" autoFocus placeholder="At least 8 characters" value={newPw}
@@ -9839,7 +9801,7 @@ ${voiceMode
       )}
 
       {step === "photo" && (
-        <AuthScreen step="photo" title="Add a profile photo" subtitle="Help KROFT feel like yours. You can change it any time."
+        <AuthScreen step="photo" title="Add a profile photo" subtitle="Help Kroft feel like yours. You can change it any time."
           footer={!cameraMode && <AuthButton onClick={() => setStep("business")}>{user.photo ? "Continue" : "Skip for now"}</AuthButton>}>
           <canvas ref={canvasRef} style={{ display:"none" }} />
           <input ref={galleryRef} type="file" accept="image/*" onChange={handleGalleryPick} style={{ display:"none" }} />
@@ -9877,7 +9839,7 @@ ${voiceMode
                 {user.photo && <AuthButton kind="text" style={{ color:LIGHT.negative }} onClick={() => { setUser(u => ({ ...u, photo:null })); }}>Remove photo</AuthButton>}
               </div>
               {cameraError && <AuthAlert>{cameraError}</AuthAlert>}
-              {!user.photo && !cameraError && <p style={{ textAlign:"center", fontSize:14, color:LIGHT.muted, lineHeight:1.5, margin:"20px 0 0" }}>No photo? KROFT will use your initials instead.</p>}
+              {!user.photo && !cameraError && <p style={{ textAlign:"center", fontSize:14, color:LIGHT.muted, lineHeight:1.5, margin:"20px 0 0" }}>No photo? Kroft will use your initials instead.</p>}
             </>
           )}
         </AuthScreen>
@@ -9887,7 +9849,7 @@ ${voiceMode
         <AuthScreen pal={obc} step={editingFromProfile ? null : "business"}
           onBack={editingFromProfile ? () => setStep("dashboard") : () => setStep("photo")} backLabel={editingFromProfile ? "Cancel" : "Back"}
           title={editingFromProfile ? "Business details" : "Tell us about your work"}
-          subtitle={editingFromProfile ? "Used for your finance dashboard and reports." : "KROFT uses this to set up your money tools. Not a business? Just pick your currency."}
+          subtitle={editingFromProfile ? "Used for your finance dashboard and reports." : "Kroft uses this to set up your money tools. Not a business? Just pick your currency."}
           footer={editingFromProfile
             ? <AuthButton pal={obc} onClick={() => { saveProfileNow().catch(() => {}); setStep("dashboard"); toast("Business details saved."); }}>Save</AuthButton>
             : <AuthButton onClick={() => setStep("prefs")}>Continue</AuthButton>}>
@@ -9943,7 +9905,7 @@ ${voiceMode
         const anyLinked = providers.some(p => p.linked);
         return (
           <AuthScreen step="prefs" onBack={() => setStep("business")} title="Connect your email and calendar"
-            subtitle="KROFT can read and draft email and keep your schedule in sync. Nothing is sent without you confirming."
+            subtitle="Kroft can read and draft email and keep your schedule in sync. Nothing is sent without you confirming."
             footer={<AuthButton onClick={() => setStep("done")}>{anyLinked ? "Continue" : "Skip for now"}</AuthButton>}>
             <div style={{ background:LIGHT.card, border:`1px solid ${LIGHT.cardB}`, borderRadius:20, overflow:"hidden" }}>
               {providers.map((a, i) => (
@@ -9972,7 +9934,7 @@ ${voiceMode
       })()}
 
       {step === "done" && (
-        <AuthScreen footer={<AuthButton onClick={() => { setStep("dashboard"); setShowGoalPick(true); }}>Start using KROFT</AuthButton>}>
+        <AuthScreen footer={<AuthButton onClick={() => { setStep("dashboard"); setShowGoalPick(true); }}>Start using Kroft</AuthButton>}>
           <div style={{ textAlign:"center", paddingTop:"4vh" }}>
             <div style={{ position:"relative", width:112, height:112, margin:"0 auto 26px", animation:"pop .5s ease" }}>
               <div style={{ width:"100%", height:"100%", borderRadius:"50%", overflow:"hidden", background:user.photo ? `url(${user.photo}) center/cover no-repeat` : LIGHT.card, border:`1px solid ${LIGHT.cardB}`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:38, fontWeight:700, color:LIGHT.text, letterSpacing:-1 }}>
@@ -9983,7 +9945,7 @@ ${voiceMode
               </span>
             </div>
             <h1 style={{ fontSize:"clamp(27px, 7.6vw, 32px)", fontWeight:700, color:LIGHT.text, letterSpacing:-.9, lineHeight:1.15, margin:0 }}>You're all set, {firstNameOf(user.name) || "friend"}</h1>
-            <p style={{ fontSize:16, lineHeight:1.5, color:LIGHT.muted, margin:"10px auto 30px", maxWidth:340 }}>Your KROFT account is ready. Ask it anything about your money, schedule or day.</p>
+            <p style={{ fontSize:16, lineHeight:1.5, color:LIGHT.muted, margin:"10px auto 30px", maxWidth:340 }}>Your Kroft account is ready. Ask it anything about your money, schedule or day.</p>
           </div>
           <div style={{ background:LIGHT.card, border:`1px solid ${LIGHT.cardB}`, borderRadius:20, overflow:"hidden" }}>
             {[
@@ -10097,7 +10059,7 @@ ${voiceMode
                         </div>
                         {c.hit?.snippet ? (
                           <div style={{ fontSize:13.5, color:C.soft, lineHeight:1.45, marginTop:4, display:"-webkit-box", WebkitLineClamp:2, WebkitBoxOrient:"vertical", overflow:"hidden" }}>
-                            <span style={{ color:C.muted }}>{c.hit.role === "user" ? "You: " : "KROFT: "}</span>
+                            <span style={{ color:C.muted }}>{c.hit.role === "user" ? "You: " : "Kroft: "}</span>
                             <Highlight text={c.hit.snippet} terms={terms} />
                           </div>
                         ) : (
@@ -10155,7 +10117,7 @@ ${voiceMode
             </div>
             {!scan.busy && (
               <>
-                <Mono style={{ color:C.muted, lineHeight:1.6 }}>Read by KROFT's AI. Check it before you save; you can change anything.</Mono>
+                <Mono style={{ color:C.muted, lineHeight:1.6 }}>Read by Kroft's AI. Check it before you save; you can change anything.</Mono>
                 {(() => {
                   const r = scan.result;
                   const asExpense = () => { setNewExp({ label:r.merchant, amount:String(r.total), cat:r.category || (expenseCats.includes("Operations") ? "Operations" : expenseCats[0]), date:r.date, repeat:"none", cur:r.currency }); setShowAddInc(false); setShowAddExp(true); setScan(null); };
@@ -10177,7 +10139,7 @@ ${voiceMode
           </div>
         </div>
       )}
-      {showGoalPick && step === "dashboard" && <GoalPicker name={firstNameOf(user.name)} onPick={pickGoal} onSkip={() => { setShowGoalPick(false); toast(`Welcome to KROFT, ${firstNameOf(user.name) || "there"}.`); }} />}
+      {showGoalPick && step === "dashboard" && <GoalPicker name={firstNameOf(user.name)} onPick={pickGoal} onSkip={() => { setShowGoalPick(false); toast(`Welcome to Kroft, ${firstNameOf(user.name) || "there"}.`); }} />}
       {showAdmin && <AdminScreen fetcher={aiFetch} onClose={() => setShowAdmin(false)} toast={toast} />}
       {feedbackFrom !== null && <FeedbackSheet screen={feedbackFrom} onClose={() => setFeedbackFrom(null)} onSend={sendFeedback} />}
       {showPlans !== null && (
@@ -10443,7 +10405,7 @@ ${voiceMode
                 const bytes = new Uint8Array(await (await fetch(f.url)).arrayBuffer());
                 const result = await saveFile({ name:f.name, data:bytes, type:f.type || "application/octet-stream" });
                 if (result === "downloaded") toast("File downloaded. Check your Downloads folder.");
-              } catch (err) { toast(err?.code === "needs-update" ? "Update the KROFT app to save files." : "Couldn't open that file."); }
+              } catch (err) { toast(err?.code === "needs-update" ? "Update the Kroft app to save files." : "Couldn't open that file."); }
             }}
           />
         );
@@ -10458,9 +10420,9 @@ ${voiceMode
       {tab!=="workspace" && (
       <header style={{ borderBottom:`1px solid ${C.cardB}`, padding:"11px 16px", display:"flex", alignItems:"center", justifyContent:"space-between", background:C.bg, position:"sticky", top:0, zIndex:200, backdropFilter:"blur(14px)", gap:10 }}>
         <div style={{ display:"flex", alignItems:"center", gap:9, minWidth:0, flexShrink:1 }}>
-          <div style={{ width:30, height:30, borderRadius:8, background:C.white, display:"flex", alignItems:"center", justifyContent:"center", fontSize:13, fontWeight:900, color:C.black, flexShrink:0, boxShadow:`0 0 14px ${C.accent}40` }}>K</div>
+          <div style={{ flexShrink:0, width:28 }}><KroftMark size={28} color={C.text} /></div>
           <div style={{ minWidth:0, overflow:"hidden" }}>
-            <div style={{ fontSize:13, fontWeight:700, color:C.white, letterSpacing:-.4, whiteSpace:"nowrap" }}>KROFT</div>
+            <div style={{ fontSize:15, fontWeight:700, color:C.white, letterSpacing:-.4, whiteSpace:"nowrap" }}>Kroft</div>
             <Mono style={{ fontSize:8, color:C.muted, letterSpacing:.8, whiteSpace:"nowrap", display:"block", overflow:"hidden", textOverflow:"ellipsis" }}>by Orynthra</Mono>
           </div>
         </div>
@@ -10506,7 +10468,7 @@ ${voiceMode
         {tab==="home" && homeSection==="overview" && (
           <div style={{ animation:"fadeUp .4s ease" }}>
             <div style={{ marginBottom:16 }}>
-              <h1 style={{ fontSize:21, fontWeight:700, color:C.white, letterSpacing:-.8, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>Hi, {firstNameOf(user.name)||"there"} 👋</h1>
+              <h1 style={{ fontSize:21, fontWeight:700, color:C.white, letterSpacing:-.8, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{greetingFor(new Date())}{firstNameOf(user.name) ? `, ${firstNameOf(user.name)}` : ""}</h1>
             </div>
             <Mono style={{ display:"block", color:C.muted, marginBottom:16 }}>{dateStr()}</Mono>
             {user.startGoal && !user.startDismissed && (() => {
@@ -10517,7 +10479,7 @@ ${voiceMode
                   <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:10, marginBottom:8 }}>
                     <div>
                       <div style={{ fontSize:15, fontWeight:700, color:C.white }}>{pr.complete ? "You're all set" : `Getting started: ${pr.goal.label}`}</div>
-                      <Mono style={{ color:C.soft }}>{pr.complete ? "That's the basics done. KROFT is ready for you." : `${pr.doneCount} of ${pr.total} done`}</Mono>
+                      <Mono style={{ color:C.soft }}>{pr.complete ? "That's the basics done. Kroft is ready for you." : `${pr.doneCount} of ${pr.total} done`}</Mono>
                     </div>
                     <button onClick={() => setUser(u => ({ ...u, startDismissed:true }))} aria-label="Hide getting started" style={{ background:"none", border:"none", color:C.muted, cursor:"pointer", fontSize:16, padding:"2px 4px" }}>✕</button>
                   </div>
@@ -10819,7 +10781,7 @@ ${voiceMode
 
                   {status.length === 0 && (
                     <Mono style={{ display:"block", color:C.muted, lineHeight:1.6 }}>
-                      No budgets set. Add one and KROFT will warn you before a category runs over, not after.
+                      No budgets set. Add one and Kroft will warn you before a category runs over, not after.
                     </Mono>
                   )}
 
@@ -10864,7 +10826,7 @@ ${voiceMode
                             they may never open. */}
                         {!subscribed && !over && b.left > 0 && (
                           <Mono style={{ display:"block", color:C.muted, marginTop:4 }}>
-                            KROFT Plus carries this {fmtCur(b.left, user.currency)} into next month instead of resetting it.
+                            Kroft Plus carries this {fmtCur(b.left, user.currency)} into next month instead of resetting it.
                           </Mono>
                         )}
                         {b.committed > 0 && !over && (
@@ -11092,7 +11054,7 @@ ${voiceMode
                         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-end", gap:10, marginTop:12, paddingTop:10, borderTop:`1px solid ${C.div}` }}>
                           {/* Generated from the user's own figures by a language model, which can be
                               wrong and isn't qualified to advise. Saying so beside the output is the
-                              minimum — labelling it "KROFT'S ADVICE" implied an authority it doesn't
+                              minimum — labelling it "Kroft'S ADVICE" implied an authority it doesn't
                               have, on exactly the kind of decision where that matters. */}
                           <Mono style={{ color:C.muted, lineHeight:1.6 }}>
                             An automated summary of your own entries, not financial advice. Check anything important with a qualified accountant or advisor.
@@ -11391,7 +11353,7 @@ ${voiceMode
             {emails.length===0 && (
               <Card level="inset" style={{ textAlign:"center", padding:26, borderStyle:"dashed" }}>
                 <div style={{ fontSize:15, fontWeight:600, color:C.white, marginBottom:6 }}>{(googleStatus.gmail || microsoftStatus.mail) ? "Inbox is empty" : "No email connected"}</div>
-                <Mono style={{ display:"block", color:C.soft, lineHeight:1.6, marginBottom:(googleStatus.gmail || microsoftStatus.mail) ? 0 : 16 }}>{(googleStatus.gmail || microsoftStatus.mail) ? "Nothing here right now." : "Connect Gmail or Outlook to let KROFT organize your inbox."}</Mono>
+                <Mono style={{ display:"block", color:C.soft, lineHeight:1.6, marginBottom:(googleStatus.gmail || microsoftStatus.mail) ? 0 : 16 }}>{(googleStatus.gmail || microsoftStatus.mail) ? "Nothing here right now." : "Connect Gmail or Outlook to let Kroft organize your inbox."}</Mono>
                 {!(googleStatus.gmail || microsoftStatus.mail) && <Btn sm v="outline" onClick={() => { setTab("profile"); setProfileNav({ screen:"connected", openRow:null }); }}>Connect email</Btn>}
               </Card>
             )}
@@ -11580,7 +11542,7 @@ ${voiceMode
             {dataLoaded && tasks.length===0 && !showAddTask && (
               <Card level="inset" style={{ textAlign:"center", padding:26, borderStyle:"dashed" }}>
                 <div style={{ fontSize:15, fontWeight:600, color:C.white, marginBottom:6 }}>Nothing to do</div>
-                <Mono style={{ display:"block", color:C.soft, lineHeight:1.6 }}>Create your first task and let KROFT remind you.</Mono>
+                <Mono style={{ display:"block", color:C.soft, lineHeight:1.6 }}>Create your first task and let Kroft remind you.</Mono>
               </Card>
             )}
             {/* Done tasks sink to the bottom regardless of anything else. Among undone tasks: an
@@ -12107,7 +12069,7 @@ ${voiceMode
             {voiceMemos.length===0 && !recordingMemo && (
               <Card level="inset" style={{ textAlign:"center", padding:26, borderStyle:"dashed" }}>
                 <div style={{ fontSize:15, fontWeight:600, color:C.white, marginBottom:6 }}>No voice memos yet</div>
-                <Mono style={{ display:"block", color:C.soft, lineHeight:1.6 }}>Record a memo and KROFT will transcribe it automatically.</Mono>
+                <Mono style={{ display:"block", color:C.soft, lineHeight:1.6 }}>Record a memo and Kroft will transcribe it automatically.</Mono>
               </Card>
             )}
             {voiceMemos.map((m,i) => (
@@ -12115,7 +12077,7 @@ ${voiceMode
                 <Card key={m.id} style={{ marginBottom:10, border:`1px solid ${C.soft}` }}>
                   <Mono style={{ display:"block", color:C.white, marginBottom:11, letterSpacing:.8 }}>Edit memo</Mono>
                   <Inp placeholder={`Voice Memo ${voiceMemos.length-i}`} value={editingMemo.title} onChange={e=>setEditingMemo(v=>({...v,title:e.target.value}))} style={{ marginBottom:9 }} />
-                  <Mono style={{ display:"block", color:C.soft, marginBottom:6, fontSize:9, letterSpacing:.8 }}>TRANSCRIPTION (edit if KROFT misheard something)</Mono>
+                  <Mono style={{ display:"block", color:C.soft, marginBottom:6, fontSize:9, letterSpacing:.8 }}>TRANSCRIPTION (edit if Kroft misheard something)</Mono>
                   <textarea value={editingMemo.transcript} onChange={e=>setEditingMemo(v=>({...v,transcript:e.target.value}))} rows={4} style={{ width:"100%", background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 14px", color:C.text, fontSize:12, fontFamily:APP_FONT, outline:"none", resize:"vertical", boxSizing:"border-box", marginBottom:10, lineHeight:1.6 }} />
                   <div style={{ display:"flex", gap:8 }}>
                     <Btn sm v="outline" onClick={() => setEditingMemo(null)} style={{ flex:1 }}>Cancel</Btn>
@@ -12164,7 +12126,7 @@ ${voiceMode
                     <Btn sm v="outline" style={{ flex:1, whiteSpace:"nowrap" }} onClick={suggestSmartReminder} disabled={suggestingReminder}>
                       {suggestingReminder ? <><Spinner size={11} color={C.soft} thickness={2} />Thinking…</> : <><NavIcon id="wand" size={15} />AI suggest</>}
                     </Btn>
-                    <Btn sm v="outline" style={{ flex:1, position:"relative", whiteSpace:"nowrap" }} aria-label={subscribed ? "Schedule a call" : "Schedule a call (KROFT Plus)"} onClick={() => { if (!subscribed) { toast("Scheduled calls are a KROFT Plus feature."); setShowPlans(""); return; } setShowScheduleCall(v=>!v); }}>
+                    <Btn sm v="outline" style={{ flex:1, position:"relative", whiteSpace:"nowrap" }} aria-label={subscribed ? "Schedule a call" : "Schedule a call (Kroft Plus)"} onClick={() => { if (!subscribed) { toast("Scheduled calls are a Kroft Plus feature."); setShowPlans(""); return; } setShowScheduleCall(v=>!v); }}>
                       <NavIcon id="phone" size={15} />Schedule a call
                       {!subscribed && <Tag tone="accent" style={{ position:"absolute", top:-8, right:8, background:C.bg, fontSize:9, padding:"1px 6px" }}>PLUS</Tag>}
                     </Btn>
@@ -12194,12 +12156,12 @@ ${voiceMode
                   <input type="date" min={todayISO()} value={newCall.date} onChange={e=>setNewCall(v=>({...v,date:e.target.value}))} style={{ flex:1, minWidth:130, background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 12px", color:C.text, fontSize:13, fontFamily:APP_FONT, outline:"none", colorScheme:theme }} />
                   <input type="time" value={newCall.time} onChange={e=>setNewCall(v=>({...v,time:e.target.value}))} style={{ flex:1, minWidth:110, background:C.surface, border:`1px solid ${C.cardB}`, borderRadius:12, padding:"11px 12px", color:C.text, fontSize:13, fontFamily:APP_FONT, outline:"none", colorScheme:theme }} />
                 </div>
-                <Inp placeholder="Anything KROFT should say (optional)" value={newCall.note} onChange={e=>setNewCall(v=>({...v,note:e.target.value}))} style={{ width:"100%", boxSizing:"border-box", marginBottom:10 }} />
+                <Inp placeholder="Anything Kroft should say (optional)" value={newCall.note} onChange={e=>setNewCall(v=>({...v,note:e.target.value}))} style={{ width:"100%", boxSizing:"border-box", marginBottom:10 }} />
                 {/* Same honesty as every other notification here — this isn't a real phone call,
                     and it can't reach a fully closed browser. Said plainly before scheduling
                     rather than discovered when a call never comes. */}
                 <Mono style={{ display:"block", color:C.muted, lineHeight:1.6, marginBottom:10 }}>
-                  KROFT rings inside the app, not your phone's dialler — this only works while KROFT is open in a tab, including in the background.
+                  Kroft rings inside the app, not your phone's dialler — this only works while Kroft is open in a tab, including in the background.
                 </Mono>
                 <Btn sm onClick={() => {
                   if (!newCall.title.trim() || !newCall.date || !newCall.time) { toast("Add what it's about, plus a date and time."); return; }
@@ -12234,7 +12196,7 @@ ${voiceMode
               <Card level="inset" style={{ textAlign:"center", padding:26, borderStyle:"dashed" }}>
                 <NavIcon id="reminders" size={26} color={C.muted} />
                 <div style={{ fontSize:15, fontWeight:600, color:C.white, margin:"10px 0 6px" }}>No reminders yet</div>
-                <Mono style={{ display:"block", color:C.soft, lineHeight:1.6 }}>Add one above, or tap AI suggest and KROFT will find something worth remembering.</Mono>
+                <Mono style={{ display:"block", color:C.soft, lineHeight:1.6 }}>Add one above, or tap AI suggest and Kroft will find something worth remembering.</Mono>
               </Card>
             )}
             {(() => {
@@ -12507,7 +12469,7 @@ ${voiceMode
                 <Mono style={{ display:"block", color:C.white, marginBottom:5, letterSpacing:.8 }}>NEARBY PICK</Mono>
                 {/* Grounded in the same real Nominatim search "Nearby places" uses below — no
                     fabricated name, rating, cuisine, or "suggested dish", since none of that is
-                    data KROFT actually has. */}
+                    data Kroft actually has. */}
                 {aroundLoading ? (
                   <div style={{ display:"flex", alignItems:"center", gap:10 }}>
                     <Spinner size={16} color={C.white} thickness={2} />
@@ -12542,7 +12504,7 @@ ${voiceMode
                   <>
                     <div style={{ fontWeight:700, fontSize:14, color:C.white, marginBottom:6 }}>Turn on location</div>
                     <Mono style={{ display:"block", color:C.muted, lineHeight:1.7, marginBottom:14 }}>
-                      KROFT uses your device's GPS to find restaurants, pharmacies, ATMs and other useful places nearby. Your location is only used to power this search.
+                      Kroft uses your device's GPS to find restaurants, pharmacies, ATMs and other useful places nearby. Your location is only used to power this search.
                     </Mono>
                     <Btn onClick={requestLocation}>Enable location</Btn>
                   </>
@@ -12557,7 +12519,7 @@ ${voiceMode
                   <>
                     <div style={{ fontWeight:700, fontSize:14, color:C.white, marginBottom:6 }}>Location access denied</div>
                     <Mono style={{ display:"block", color:C.muted, lineHeight:1.7, marginBottom:14 }}>
-                      {aroundError || "KROFT can't find nearby places without location access."} You can enable it any time from your device's Settings for this browser or app, then try again here.
+                      {aroundError || "Kroft can't find nearby places without location access."} You can enable it any time from your device's Settings for this browser or app, then try again here.
                     </Mono>
                     <Btn v="outline" onClick={requestLocation}>Try again</Btn>
                   </>
@@ -12639,7 +12601,7 @@ ${voiceMode
             {/* Empty state — no search performed yet */}
             {!aroundLoading && !aroundSearched && locationStatus==="granted" && (
               <Card style={{ textAlign:"center", padding:24, marginBottom:16 }}>
-                <div style={{ fontSize:14, fontWeight:600, color:C.white, marginBottom:6 }}>Pick a category or ask KROFT</div>
+                <div style={{ fontSize:14, fontWeight:600, color:C.white, marginBottom:6 }}>Pick a category or ask Kroft</div>
                 <Mono style={{ display:"block", color:C.muted }}>Results will appear here once you search.</Mono>
               </Card>
             )}
@@ -12711,7 +12673,7 @@ ${voiceMode
               </div>
               {/* No score is shown until something's been logged: a made-up "75, doing well" on
                   day one isn't true, and people stop trusting a number like that. */}
-              <div style={{ fontSize:13, color:C.soft, marginBottom:16, textAlign:"center", lineHeight:1.5 }}>{!hasWellnessData ? "No score yet. Log how you feel, a break or some water, and KROFT starts your score." : wellness>80?"You are thriving today.":wellness>60?"Doing well — watch your stress.":"Take a break — your body needs it."}</div>
+              <div style={{ fontSize:13, color:C.soft, marginBottom:16, textAlign:"center", lineHeight:1.5 }}>{!hasWellnessData ? "No score yet. Log how you feel, a break or some water, and Kroft starts your score." : wellness>80?"You are thriving today.":wellness>60?"Doing well — watch your stress.":"Take a break — your body needs it."}</div>
               <div style={{ display:"flex", gap:8, marginBottom:12 }}>
                 <Btn sm onClick={() => { const tip = rand(wellnessTips()).text; if (voiceReplies) speak(tip); toast(tip); }} style={{ flex:1 }}>Get tip</Btn>
                 {hasWellnessData && <Btn sm v="outline" onClick={() => { speak(`Wellness score: ${wellness} out of 100.`); toast("Reading score…"); }} style={{ flex:1 }}>Read score</Btn>}
@@ -12784,7 +12746,7 @@ ${voiceMode
                 </div>
                 {wellnessPatterns.length === 0 ? (
                   <Mono style={{ color:C.soft, display:"block", padding:"0 0 6px", lineHeight:1.6 }}>
-                    We're still learning your patterns. Keep using KROFT and we'll start showing connections in your wellness data.
+                    We're still learning your patterns. Keep using Kroft and we'll start showing connections in your wellness data.
                   </Mono>
                 ) : (
                   <div style={{ display:"flex", flexDirection:"column", gap:8, paddingBottom:4 }}>
@@ -13012,7 +12974,7 @@ ${voiceMode
                     as a bubble while it's the only thing there. */}
                 {aiMessages.length <= 1 ? (
                   <div style={{ textAlign:"center", animation:"fadeUp .4s ease" }}>
-                    <div style={{ margin:"0 auto 16px" }}><RobotIcon size={52} /></div>
+                    <div style={{ margin:"0 auto 18px", width:44 }}><KroftMark size={44} color={C.text} /></div>
                     <div style={{ fontSize:22, fontWeight:800, color:C.text, letterSpacing:-.5 }}>What can I help with, {firstNameOf(user.name)||"there"}?</div>
                   </div>
                 ) : aiMessages.map((m,i) => {
@@ -13036,7 +12998,7 @@ ${voiceMode
                       style={m.role==="user"
                         ? { background:C.white, border:`1px solid ${C.soft}`, borderRadius:"14px 14px 3px 14px", padding:"10px 14px", maxWidth:"80%", cursor:"pointer", WebkitTouchCallout:"none", WebkitUserSelect:"none", userSelect:"none" }
                         : { padding:"2px 2px", width:"100%", boxSizing:"border-box" }}>
-                      {m.role==="assistant" && <Mono style={{ display:"block", color:C.muted, fontSize:9, letterSpacing:.8, marginBottom:5 }}>KROFT</Mono>}
+                      {m.role==="assistant" && <Mono style={{ display:"block", color:C.muted, fontSize:9, letterSpacing:.8, marginBottom:5 }}>Kroft</Mono>}
                       {m.attachments?.length > 0 && (
                         <div style={{ display:"flex", flexWrap:"wrap", gap:6, marginBottom:m.content?8:0 }}>
                           {m.attachments.map(a => a.kind==="image" ? (
@@ -13130,7 +13092,7 @@ ${voiceMode
                 })}
                 {aiLoading && !aiMessages.some(m => m.streaming && m.content) && (
                   <div style={{ display:"flex", alignItems:"center", gap:9 }}>
-                    <Mono style={{ color:C.muted }}>KROFT</Mono>
+                    <Mono style={{ color:C.muted }}>Kroft</Mono>
                     <div style={{ display:"flex", gap:4 }}>{[0,1,2].map(i => <div key={i} style={{ width:6, height:6, borderRadius:"50%", background:C.white, animation:`pulse 1.2s ease-in-out ${i*.2}s infinite` }} />)}</div>
                   </div>
                 )}
@@ -13167,7 +13129,7 @@ ${voiceMode
                   ))}
                 </div>
                 <Mono style={{ display:"block", color:C.muted, marginTop:10, lineHeight:1.6 }}>
-                  KROFT can see your finances, schedule, tasks and contacts, and can add things for you. It can't delete or edit — that stays with you.
+                  Kroft can see your finances, schedule, tasks and contacts, and can add things for you. It can't delete or edit — that stays with you.
                 </Mono>
               </div>
             )}
@@ -13234,7 +13196,7 @@ ${voiceMode
                     el.style.height = Math.min(el.scrollHeight, 120) + "px";
                   }}
                   onKeyDown={e => { if (e.key==="Enter" && !e.shiftKey) { e.preventDefault(); askKroft(); } }}
-                  placeholder={listening ? "Listening…" : "Message KROFT…"}
+                  placeholder={listening ? "Listening…" : "Message Kroft…"}
                   rows={1}
                   style={{ width:"100%", fontSize:13, fontFamily:APP_FONT, background:"transparent", border:"none", padding:"4px 6px", color:C.text, outline:"none", resize:"none", maxHeight:120, overflowY:"auto", lineHeight:1.4, boxSizing:"border-box" }}
                   onFocus={() => setAiInputFocused(true)}
@@ -13363,7 +13325,7 @@ ${voiceMode
                 const result = await requestNotifyPermission();
                 setNotifPermission(result);
                 if (result === "granted") {
-                  sendNotification("Notifications on", "KROFT will let you know when something's due.", "kroft:welcome");
+                  sendNotification("Notifications on", "Kroft will let you know when something's due.", "kroft:welcome");
                   toast("Notifications enabled.");
                   subscribeToPush(authedFetch);
                 }
@@ -13371,7 +13333,7 @@ ${voiceMode
               }}
               onSetNotifPref={(k, v) => setNotifPrefs(p => ({ ...p, [k]: v }))}
               onTestNotification={() => {
-                const ok = sendNotification("Test from KROFT", "If you can see this, notifications are working.", "kroft:test");
+                const ok = sendNotification("Test from Kroft", "If you can see this, notifications are working.", "kroft:test");
                 toast(ok ? "Test sent." : "Couldn't send — check your browser settings.");
               }}
               voiceTurnsCount={voiceTurnsCount}
