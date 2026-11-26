@@ -9102,7 +9102,7 @@ ${voiceMode
       const hadQueued = hasUnsyncedChanges();
       await flushPending();
       if (unreadableKeys().length) await hydrateAllGroups();
-      if (hadQueued && !hasUnsyncedChanges()) toast("Back online. Your changes are synced.");
+      // Syncs quietly: no "back online" message, it all happens behind the scenes.
     };
     window.addEventListener("offline", goOffline);
     window.addEventListener("online", goOnline);
@@ -9711,35 +9711,13 @@ ${voiceMode
 
   if (showSplash || !dataLoaded) return <SplashScreen fading={splashFading && dataLoaded} />;
 
-  // Rendered on both the signed-in dashboard and the sign-in/onboarding screens — it used to live
-  // only in the dashboard view, so every toast fired before sign-in (e.g. "Check your email to
-  // confirm your account") silently never appeared.
-  // Above every overlay, including voice mode (1200). Toasts carry the undo for an action KROFT
-  // just took — and a misheard amount is far likelier by voice than by typing, so burying the
-  // undo behind the voice overlay hid it exactly where it mattered most. aria-live so toasts are
-  // announced rather than shown only; "polite" waits for a pause instead of cutting across
-  // whatever is being read.
-  // Placed where it never sits over a control, and it ignores taps either way: above the bottom
-  // navigation in the app, at the top on the sign-in screens (nothing there to cover), and not at
-  // all in the chat, which shows its own note above the message box instead.
-  const offlineBanner = !online && !(step === "dashboard" && tab === "nova") && (
-    <div role="status" style={{ position:"fixed", left:"50%", transform:"translateX(-50%)", zIndex:1350, pointerEvents:"none",
-      ...(step === "dashboard" ? { bottom:"calc(96px + env(safe-area-inset-bottom))" } : { top:"calc(10px + env(safe-area-inset-top))" }),
-      display:"flex", alignItems:"center", gap:8, maxWidth:"calc(100vw - 32px)", boxSizing:"border-box", padding:"8px 14px", borderRadius:999,
-      background:C.text, color:C.bg, fontSize:13, fontWeight:600, fontFamily:APP_FONT, boxShadow:"0 8px 24px rgba(0,0,0,.18)" }}>
-      <svg viewBox="0 0 24 24" width={15} height={15} aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink:0 }}>
-        <path d="M3 3l18 18M8.5 16.5a5 5 0 0 1 7 0M5 13a10 10 0 0 1 4.3-2.6M19 13a10 10 0 0 0-2.2-1.6M1.5 9.5a15 15 0 0 1 4.6-3M22.5 9.5A15 15 0 0 0 11 5.1M12 20h.01" />
-      </svg>
-      <span style={{ overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
-        {step === "dashboard" ? "You're offline. Changes will sync later." : "You're offline. Connect to sign in."}
-      </span>
-    </div>
-  );
+  // No offline banner: going offline is handled behind the scenes (changes queue on the phone and
+  // sync when the connection returns), so nothing pops up over the app.
 
   const toastStack = (
     <div role="status" aria-live="polite" aria-atomic="false"
-      style={{ position:"fixed", ...(step === "dashboard" && tab === "nova" ? { top:"calc(env(safe-area-inset-top, 0px) + 64px)" } : { bottom:`calc(env(safe-area-inset-bottom, 0px) + ${(online ? 100 : 146) + (floatingNudge ? 210 : 0)}px)` }), left:"50%", transform:"translateX(-50%)", width:"min(340px, calc(100vw - 32px))", zIndex:1400, display:"flex", flexDirection:"column-reverse", alignItems:"center", gap:7, pointerEvents:"none" }}>
-      {/* Centred just above the bottom bar (and above the offline note when it shows), so they
+      style={{ position:"fixed", ...(step === "dashboard" && tab === "nova" ? { top:"calc(env(safe-area-inset-top, 0px) + 64px)" } : { bottom:`calc(env(safe-area-inset-bottom, 0px) + ${100 + (floatingNudge ? 210 : 0)}px)` }), left:"50%", transform:"translateX(-50%)", width:"min(340px, calc(100vw - 32px))", zIndex:1400, display:"flex", flexDirection:"column-reverse", alignItems:"center", gap:7, pointerEvents:"none" }}>
+      {/* Centred just above the bottom bar, so they
           never cover the header's buttons (help, Ask Kroft, Back) or the tabs under it; the newest
           sits nearest the bar. In the chat, whose message box is at the bottom, they sit under
           the header instead.
@@ -9762,7 +9740,6 @@ ${voiceMode
     <div key={themeTick} style={{ fontFamily:APP_FONT, overflowX:"hidden", maxWidth:"100vw", touchAction:"pan-y" }}>
       <style>{G}</style>
       {toastStack}
-      {offlineBanner}
       {appLockOverlay}
 
       {step === "welcome" && (
@@ -10514,7 +10491,6 @@ ${voiceMode
 
       {toastStack}
       {floatingNudge}
-      {offlineBanner}
       {appLockOverlay}
 
       {showConfetti && <Confetti onDone={() => setShowConfetti(false)} />}
@@ -13265,12 +13241,6 @@ ${voiceMode
                   handleAiAttach(e, "image");
                   if (took) setAiInput(v => v.trim() ? v : "Log this receipt as an expense.");
                 }} />
-                {!online && (
-                  <div role="status" style={{ display:"flex", alignItems:"center", gap:8, margin:"0 4px 8px", fontSize:13, color:C.soft }}>
-                    <span aria-hidden="true" style={{ width:8, height:8, borderRadius:"50%", background:C.warning, flexShrink:0 }} />
-                    You're offline. KROFT can answer again once you're back online.
-                  </div>
-                )}
                 {aiAttachments.length > 0 && (
                   <div style={{ display:"flex", flexWrap:"wrap", gap:6, marginBottom:8, padding:"0 4px" }}>
                     {aiAttachments.map(a => (
