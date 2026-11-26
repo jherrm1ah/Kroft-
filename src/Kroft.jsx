@@ -1830,7 +1830,7 @@ function ReminderAlarmScreen({ reminder, onDismiss, onSnooze }) {
   );
 }
 
-function VoiceMode({ state, transcript, reply, error, onStart, onStop, onClose, onOpenSettings, subtitles, supported, levelRef, primed, subscribed, turnsLeft }) {
+function VoiceMode({ state, transcript, reply, error, onStart, onStop, onClose, onOpenSettings, subtitles, supported, levelRef, primed, subscribed, turnsLeft, live }) {
   // Keeps the tail of a long streaming reply in view without the person having to scroll.
   const replyEndRef = useRef(null);
   useEffect(() => { replyEndRef.current?.scrollIntoView?.({ block:"end" }); }, [reply]);
@@ -1889,7 +1889,7 @@ function VoiceMode({ state, transcript, reply, error, onStart, onStop, onClose, 
       <div style={{ width:"100%", maxWidth:460, display:"flex", gap:10 }}>
         {state === "idle"
           ? <button onClick={onStart} disabled={!supported} style={{ flex:1, minHeight:52, borderRadius:16, border:"none", background:supported?C.text:C.surface, color:supported?C.card:C.muted, fontSize:15, fontWeight:700, fontFamily:APP_FONT, cursor:supported?"pointer":"not-allowed" }}>{primed ? "Start talking" : "Allow microphone"}</button>
-          : <button onClick={onStop} style={{ flex:1, minHeight:52, borderRadius:16, border:`1px solid ${C.border}`, background:"transparent", color:C.text, fontSize:15, fontWeight:700, fontFamily:APP_FONT, cursor:"pointer" }}>{state==="speaking" ? "Interrupt" : state==="thinking" ? "Cancel" : "Stop"}</button>}
+          : <button onClick={onStop} style={{ flex:1, minHeight:52, borderRadius:16, border:`1px solid ${C.border}`, background:"transparent", color:C.text, fontSize:15, fontWeight:700, fontFamily:APP_FONT, cursor:"pointer" }}>{live ? "End conversation" : state==="speaking" ? "Interrupt" : state==="thinking" ? "Cancel" : "Stop"}</button>}
       </div>
     </div>
   );
@@ -7176,6 +7176,14 @@ function KroftApp({ onFullReset } = {}) {
   const voiceAbortRef = useRef(null);   // cancels an in-flight generation
   const voiceOpenRef = useRef(false);
   voiceOpenRef.current = voiceOpen;
+  // Live conversation (OpenAI Realtime, see src/realtime.js): the running session, whether one is
+  // starting, and whether live is off for the rest of this visit (it failed once, or today's
+  // live conversations are used up) so the standard voice mode below takes over.
+  const liveRef = useRef(null);
+  const liveStartingRef = useRef(false);
+  const liveOffRef = useRef(false);
+  const [liveOn, setLiveOn] = useState(false);
+  const liveCapable = isSupabaseConfigured && typeof window !== "undefined" && !!window.RTCPeerConnection && !!navigator.mediaDevices?.getUserMedia;
   const SRSupported = typeof window !== "undefined" && !!(window.SpeechRecognition || window.webkitSpeechRecognition);
 
   // Mic level drives the orb's deformation. Read from an AnalyserNode rather than from the
@@ -7210,6 +7218,8 @@ function KroftApp({ onFullReset } = {}) {
   };
 
   const voiceListen = () => {
+    if (liveRef.current || liveStartingRef.current) return;
+    if (liveCapable && !liveOffRef.current) { startLiveVoice(); return; }
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) { setVoiceError("Live speech recognition isn't available in this browser."); return; }
     // Guard against starting a second recognizer. The silence retry fires on a timer while the
@@ -7437,7 +7447,59 @@ function KroftApp({ onFullReset } = {}) {
     };
   }, [voiceOpen]);
 
+  // Starts a live, natural conversation: Kroft hears the person continuously, answers in about
+  // half a second, can be interrupted mid-sentence, and saves things through the same actions as
+  // typed chat. Anything that stops it from starting (not set up, today's limit, no connection)
+  // falls back to the standard voice mode for the rest of the visit.
+  const startLiveVoice = async () => {
+    liveStartingRef.current = true;
+    setVoiceError(""); setVoiceTranscript(""); setVoiceReply(""); setVoiceState("thinking");
+    try {
+      const session = await startLiveSession({
+        instructions: krofSysPrompt(true),
+        authHeaders: async () => {
+          const { data: { session: s } = {} } = await supabase.auth.getSession();
+          return s ? { Authorization: `Bearer ${s.access_token}`, "X-Kroft-Client": getClientHeader() } : {};
+        },
+        onState: st => { if (voiceOpenRef.current) setVoiceState(st); },
+        onUserText: t => { setVoiceTranscript(t); setVoiceReply(""); setAiMessages(p => [...p, { role:"user", content:t }]); },
+        onAssistantText: t => setVoiceReply(t),
+        onAssistantDone: t => { if (t.trim()) setAiMessages(p => [...p, { role:"assistant", content:t.trim() }]); },
+        onToolCall: async (name, args) => {
+          const action = name === "kroft_action" ? args?.action : null;
+          if (!action || typeof action !== "object") return { result: "Nothing was changed." };
+          if (CONFIRM_ACTION_TYPES.has(action.type)) return { result: "Not done: deleting or sending needs the person to confirm it in the app." };
+          const r = applyAiActionRef.current(action);
+          if (r) toast(r.label, r.undo);
+          return { result: r?.label || "Nothing was changed." };
+        },
+        onError: msg => { if (voiceOpenRef.current) setVoiceError(msg); },
+        onEnd: reason => {
+          liveRef.current = null; setLiveOn(false); stopMeter();
+          if (!voiceOpenRef.current) return;
+          setVoiceState("idle");
+          if (reason === "time_limit") setVoiceError("That's the time limit for one live conversation. Tap to start another.");
+          else if (reason === "disconnected") setVoiceError("The live connection dropped. Tap to start again.");
+        },
+      });
+      liveStartingRef.current = false;
+      if (!voiceOpenRef.current) { session.stop("closed"); return; }
+      liveRef.current = session; setLiveOn(true); setMicPrimed(true);
+      startMeter();
+    } catch (err) {
+      liveStartingRef.current = false;
+      if (!voiceOpenRef.current) return;
+      setVoiceState("idle");
+      if (err?.code === "mic_denied") { setVoiceError("Kroft needs the microphone to talk. Allow it in your browser or phone settings."); return; }
+      liveOffRef.current = true;
+      if (err?.code === "daily_limit") toast("You've had today's live conversations. Kroft will use standard voice mode until tomorrow.");
+      voiceListen();
+    }
+  };
+
   const voiceStop = () => {
+    // A live conversation ends outright (interrupting happens by just talking over Kroft).
+    if (liveRef.current) { liveRef.current.stop("stopped"); liveRef.current = null; }
     // Barge-in: cuts speech, listening, or an in-flight reply immediately and returns to idle.
     voiceAbortRef.current?.abort(); voiceAbortRef.current = null;
     voiceStopRef.current?.(); voiceStopRef.current = null;
@@ -7984,6 +8046,8 @@ ${voiceMode
   // confirm-gated action reaching here is ignored rather than silently executed with no one able
   // to confirm it. Only voiceAnswer uses this; the text chat's own confirm/cancel card is the
   // real gate for everyone else.
+  const applyAiActionRef = useRef(null);
+  applyAiActionRef.current = applyAiAction;
   const applyAutoAction = action => (action && CONFIRM_ACTION_TYPES.has(action.type)) ? null : applyAiAction(action);
 
   const findBy = (list, field, value) => list.find(x => (x[field]||"").toLowerCase().includes(value.toLowerCase()));
@@ -10325,7 +10389,8 @@ ${voiceMode
           error={voiceError}
           levelRef={voiceLevelRef}
           primed={micPrimed}
-          supported={SRSupported}
+          supported={SRSupported || liveCapable}
+          live={liveOn}
           onStart={voiceListen}
           onStop={voiceStop}
           onClose={closeVoice}
