@@ -1309,7 +1309,7 @@ const chatHistoryGroup = ts => {
   return "Older";
 };
 
-function WelcomeScreen({ onPhone, onGoogle, onEmail, onLogIn, googleLoading }) {
+function WelcomeScreen({ onGoogle, onEmail, onLogIn, googleLoading }) {
   const pill = { width:"100%", height:56, borderRadius:999, display:"flex", alignItems:"center", justifyContent:"center", gap:12, fontSize:"clamp(14px, 4.4vw, 17px)", whiteSpace:"nowrap", fontWeight:600, fontFamily:APP_FONT, cursor:"pointer", letterSpacing:-.1 };
   // KROFT's own light palette (see LIGHT): warm cream background, near-black ink, warm beige
   // borders, indigo accent for the one link. Matches the splash before it and the account
@@ -1326,17 +1326,13 @@ function WelcomeScreen({ onPhone, onGoogle, onEmail, onLogIn, googleLoading }) {
       <div style={{ width:"100%", maxWidth:480, margin:"0 auto", boxSizing:"border-box", padding:"0 clamp(16px, 6vw, 28px) calc(18px + env(safe-area-inset-bottom))", display:"flex", flexDirection:"column", gap:12 }}>
         {/* The one filled button is KROFT indigo, the brand accent, so the welcome screen carries the
             brand colour rather than a generic black. White on #4f5389 is about 7:1 contrast. */}
-        <button onClick={onPhone} style={{ ...pill, background:LIGHT.accent, color:"#fff", border:"none", boxShadow:"0 10px 24px rgba(79,83,137,.28)" }}>
-          <svg viewBox="0 0 24 24" width={20} height={20} aria-hidden="true"><path fill="#fff" d="M6.6 3h2.7c.4 0 .8.3.9.7l1 3.6c.1.4 0 .8-.3 1L9.2 9.8a13 13 0 0 0 5 5l1.5-1.7c.3-.3.7-.4 1-.3l3.6 1c.4.1.7.5.7.9v2.7c0 1-.8 1.8-1.8 1.8C10.4 19.2 3.8 12.6 3.8 4.8 3.8 3.8 4.6 3 5.6 3z" /></svg>
-          Continue with phone number
+        <button onClick={onEmail} style={{ ...pill, background:LIGHT.accent, color:"#fff", border:"none", boxShadow:"0 10px 24px rgba(79,83,137,.28)" }}>
+          <svg viewBox="0 0 24 24" width={22} height={22} aria-hidden="true"><rect x="2" y="5" width="20" height="14" rx="2" fill="#fff" /><path d="M3.2 6.4 12 13l8.8-6.6" stroke={LIGHT.accent} strokeWidth="1.7" fill="none" strokeLinejoin="round" /></svg>
+          Sign up with email
         </button>
         <button onClick={onGoogle} disabled={googleLoading} style={{ ...outlinePill, cursor:googleLoading?"wait":"pointer" }}>
           {googleLoading ? <Spinner size={20} color={ink} thickness={2} /> : <GoogleG size={22} />}
           Continue with Google
-        </button>
-        <button onClick={onEmail} style={outlinePill}>
-          <svg viewBox="0 0 24 24" width={22} height={22} aria-hidden="true"><rect x="2" y="5" width="20" height="14" rx="2" fill={ink} /><path d="M3.2 6.4 12 13l8.8-6.6" stroke={paper} strokeWidth="1.7" fill="none" strokeLinejoin="round" /></svg>
-          Sign up with email
         </button>
         <button onClick={onLogIn} style={{ marginTop:4, padding:"8px", background:"none", border:"none", cursor:"pointer", fontFamily:APP_FONT, fontSize:14.5, color:LIGHT.muted }}>
           Already have an account? <span style={{ color:LIGHT.accent, fontWeight:700, textDecoration:"underline" }}>Log in</span>
@@ -1671,10 +1667,6 @@ const AuthDivider = ({ pal = LIGHT }) => (
   <div style={{ display:"flex", alignItems:"center", gap:12, margin:"24px 0" }}>
     <div style={{ flex:1, height:1, background:pal.cardB }} /><span style={{ fontSize:13.5, color:pal.muted }}>or</span><div style={{ flex:1, height:1, background:pal.cardB }} />
   </div>
-);
-
-const PhoneGlyph = ({ color, size = 20 }) => (
-  <svg viewBox="0 0 24 24" width={size} height={size} aria-hidden="true"><path fill={color} d="M6.6 3h2.7c.4 0 .8.3.9.7l1 3.6c.1.4 0 .8-.3 1L9.2 9.8a13 13 0 0 0 5 5l1.5-1.7c.3-.3.7-.4 1-.3l3.6 1c.4.1.7.5.7.9v2.7c0 1-.8 1.8-1.8 1.8C10.4 19.2 3.8 12.6 3.8 4.8 3.8 3.8 4.6 3 5.6 3z" /></svg>
 );
 
 // Press-and-hold to reveal an item's actions. Destructive actions used to sit permanently on
@@ -4891,13 +4883,8 @@ function KroftApp({ onFullReset } = {}) {
   // spinner and can't be double-submitted by an impatient extra click.
   const [authLoading, setAuthLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
-  // Phone sign-in runs as one "phone" step in three stages: enter the number, enter the texted
-  // code, then (new accounts only) say what KROFT should call you.
-  const [phoneStage, setPhoneStage] = useState("number");
-  const [phoneInput, setPhoneInput] = useState("");
-  const [otpInput, setOtpInput] = useState("");
+  // Error on the "what should KROFT call you?" screen a new Google account sees (step "phone").
   const [phoneError, setPhoneError] = useState("");
-  const [phoneLoading, setPhoneLoading] = useState(false);
   const [user, setUser] = useState({ name:"", email:"", password:"", phone:"", photo:null, businessName:"", businessType:"", currency:"USD", connected:{gmail:false,calendar:false,uber:false,outlookMail:false,outlookCalendar:false} });
   // Real Google connection state, as reported by api/google/status.js — the actual source of
   // truth for whether Gmail/Calendar are linked. user.connected.gmail/.calendar (persisted,
@@ -7009,14 +6996,14 @@ function KroftApp({ onFullReset } = {}) {
     setUser(u => ({ ...u, name: u.name || name, email: u.email || authUser?.email || "", phone: u.phone || (authUser?.phone ? `+${authUser.phone}` : "") }));
     setEditingFromProfile(false);
     if (name) setStep("photo");
-    else { setPhoneStage("name"); setPhoneError(""); setStep("phone"); }
+    else { setPhoneError(""); setStep("phone"); }
   };
 
   const signInWithGoogle = async () => {
     if (!isSupabaseConfigured) { toast("Google sign-in isn't available in local-only mode. Use email instead."); return; }
     setGoogleLoading(true);
     const settings = await getAuthSettings();
-    if (settings && !settings.external?.google) { setGoogleLoading(false); toast("Google sign-in isn't set up yet. Use your phone number or email for now."); return; }
+    if (settings && !settings.external?.google) { setGoogleLoading(false); toast("Google sign-in isn't set up yet. Use your email for now."); return; }
     // Leaves the app for Google; the return trip (tokens in the URL hash) is picked up by the
     // mount-time effect, since supabaseClient.js has detectSessionInUrl turned off.
     // In the Android app Google refuses to sign in inside the app's WebView, so the Google page
@@ -7031,39 +7018,6 @@ function KroftApp({ onFullReset } = {}) {
     }
     const { error } = await supabase.auth.signInWithOAuth({ provider:"google", options:{ redirectTo: window.location.origin } });
     if (error) { setGoogleLoading(false); toast("Couldn't start Google sign-in. Try again."); }
-  };
-
-  const openPhoneSignIn = () => {
-    if (!isSupabaseConfigured) { toast("Phone sign-in isn't available in local-only mode. Use email instead."); return; }
-    setPhoneStage("number"); setOtpInput(""); setPhoneError(""); setStep("phone");
-  };
-
-  // Keeps digits and a single leading "+", so "+234 801-234 5678" becomes "+2348012345678".
-  const normalizePhone = s => { const t = s.trim(); return (t.startsWith("+") ? "+" : "") + t.replace(/\D/g, ""); };
-
-  const sendPhoneCode = async () => {
-    const phone = normalizePhone(phoneInput);
-    if (!/^\+\d{8,15}$/.test(phone)) { setPhoneError("Enter your number with its country code, e.g. +234 801 234 5678."); return; }
-    setPhoneLoading(true); setPhoneError("");
-    const settings = await getAuthSettings();
-    if (settings && !settings.external?.phone) { setPhoneLoading(false); setPhoneError("Phone sign-in isn't set up yet. Use Google or email for now."); return; }
-    const { error } = await supabase.auth.signInWithOtp({ phone });
-    setPhoneLoading(false);
-    if (error) { setPhoneError(error.message || "Couldn't send the code. Try again."); return; }
-    if (phoneStage === "code") toast("New code sent.");
-    setOtpInput(""); setPhoneStage("code");
-  };
-
-  const verifyPhoneCode = async () => {
-    const token = otpInput.replace(/\D/g, "");
-    if (token.length !== 6) { setPhoneError("Enter the 6-digit code we texted you."); return; }
-    setPhoneLoading(true); setPhoneError("");
-    const { data, error } = await supabase.auth.verifyOtp({ phone: normalizePhone(phoneInput), token, type:"sms" });
-    if (error) { setPhoneLoading(false); setPhoneError(error.message || "That code didn't work. Check it and try again."); return; }
-    // The mount-time load ran before anyone was signed in — load this account's data for real.
-    const loaded = await hydrateAllGroups({ freshChat:true });
-    setPhoneLoading(false);
-    routeAfterExternalSignIn(loaded, data.user);
   };
 
   const finishPhoneName = () => {
@@ -9775,42 +9729,15 @@ ${voiceMode
       {appLockOverlay}
 
       {step === "welcome" && (
-        <WelcomeScreen onPhone={openPhoneSignIn} onGoogle={signInWithGoogle} onEmail={() => setStep("signup")} onLogIn={() => setStep("login")} googleLoading={googleLoading} />
+        <WelcomeScreen onGoogle={signInWithGoogle} onEmail={() => setStep("signup")} onLogIn={() => setStep("login")} googleLoading={googleLoading} />
       )}
 
+      {/* After Google sign-in, a new account without a name is asked for one here. */}
       {step === "phone" && (
-        <AuthScreen
-          onBack={phoneStage === "number" ? () => { setPhoneError(""); setStep("welcome"); }
-            : phoneStage === "code" ? () => { setPhoneStage("number"); setOtpInput(""); setPhoneError(""); } : null}
-          title={phoneStage === "number" ? "What's your phone number?" : phoneStage === "code" ? "Enter the code" : "What should KROFT call you?"}
-          subtitle={phoneStage === "number" ? "We'll text you a 6-digit code to sign in or create your account."
-            : phoneStage === "code" ? <>We sent it to <b style={{ color:LIGHT.text, fontWeight:600 }}>{normalizePhone(phoneInput)}</b>.</>
-            : "Your first name is fine. You can change it later in Profile."}
-          footer={
-            <AuthButton loading={phoneLoading} onClick={phoneStage === "number" ? sendPhoneCode : phoneStage === "code" ? verifyPhoneCode : finishPhoneName}>
-              {phoneLoading ? (phoneStage === "number" ? "Sending code…" : "Checking…") : phoneStage === "number" ? "Send code" : phoneStage === "code" ? "Verify" : "Continue"}
-            </AuthButton>
-          }>
-          {phoneStage === "number" && (
-            <AuthInput label="Phone number" type="tel" inputMode="tel" autoComplete="tel" autoFocus placeholder="+234 801 234 5678" value={phoneInput} invalid={!!phoneError}
-              hint="Include your country code, for example +234 or +1."
-              onChange={e => { setPhoneInput(e.target.value); setPhoneError(""); }} onKeyDown={e => e.key === "Enter" && sendPhoneCode()} />
-          )}
-          {phoneStage === "code" && (
-            <>
-              <AuthInput label="6-digit code" inputMode="numeric" autoComplete="one-time-code" autoFocus placeholder="123456" value={otpInput} invalid={!!phoneError}
-                onChange={e => { setOtpInput(e.target.value.replace(/\D/g, "").slice(0, 6)); setPhoneError(""); }} onKeyDown={e => e.key === "Enter" && verifyPhoneCode()}
-                style={{ fontSize:24, letterSpacing:10, textAlign:"center", fontVariantNumeric:"tabular-nums" }} />
-              <div style={{ display:"flex", justifyContent:"space-between", marginTop:14 }}>
-                <AuthLink onClick={() => { setPhoneStage("number"); setOtpInput(""); setPhoneError(""); }}>Change number</AuthLink>
-                <AuthLink disabled={phoneLoading} onClick={() => !phoneLoading && sendPhoneCode()}>Resend code</AuthLink>
-              </div>
-            </>
-          )}
-          {phoneStage === "name" && (
-            <AuthInput label="Your name" autoComplete="given-name" autoFocus placeholder="Your name" value={user.name || ""} invalid={!!phoneError}
-              onChange={e => { setUser(u => ({ ...u, name:e.target.value })); setPhoneError(""); }} onKeyDown={e => e.key === "Enter" && finishPhoneName()} />
-          )}
+        <AuthScreen title="What should KROFT call you?" subtitle="Your first name is fine. You can change it later in Profile."
+          footer={<AuthButton onClick={finishPhoneName}>Continue</AuthButton>}>
+          <AuthInput label="Your name" autoComplete="given-name" autoFocus placeholder="Your name" value={user.name || ""} invalid={!!phoneError}
+            onChange={e => { setUser(u => ({ ...u, name:e.target.value })); setPhoneError(""); }} onKeyDown={e => e.key === "Enter" && finishPhoneName()} />
           {phoneError && <AuthAlert>{phoneError}</AuthAlert>}
         </AuthScreen>
       )}
@@ -9853,7 +9780,6 @@ ${voiceMode
             <AuthDivider />
             <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
               <AuthButton kind="secondary" loading={googleLoading} onClick={signInWithGoogle}>{!googleLoading && <GoogleG size={22} />}Continue with Google</AuthButton>
-              <AuthButton kind="secondary" onClick={openPhoneSignIn}><PhoneGlyph color={LIGHT.text} />Continue with phone number</AuthButton>
             </div>
           </AuthScreen>
         )
