@@ -329,10 +329,10 @@ create table if not exists public.ai_request_log (
   usage_type      text not null, -- the X-Kroft-Usage-Type pool: chat, voice, report, transcribe, ...
   model           text not null,
   streamed        boolean not null default false,
-  input_tokens    integer,       -- OpenAI usage.prompt_tokens (Gemini promptTokenCount before Nov 2026)
-  output_tokens   integer,       -- candidatesTokenCount (the visible reply)
-  thinking_tokens integer,       -- thoughtsTokenCount (billed as output)
-  cached_tokens   integer,       -- cachedContentTokenCount (billed at a discount)
+  input_tokens    integer,       -- OpenAI usage.prompt_tokens
+  output_tokens   integer,       -- usage.completion_tokens (the reply)
+  thinking_tokens integer,       -- usage.completion_tokens_details.reasoning_tokens (billed as output)
+  cached_tokens   integer,       -- usage.prompt_tokens_details.cached_tokens (billed at a discount)
   latency_ms      integer,       -- request start to last byte
   status          integer not null,  -- HTTP status KROFT returned
   error           text,          -- short error code when status is not 200; never message text
@@ -349,7 +349,7 @@ create index if not exists ai_request_log_user_created_idx on public.ai_request_
 -- No policies: only the server (service role) can read or write it.
 alter table public.ai_request_log enable row level security;
 
--- Price per million tokens, in US dollars, per model. Editable without a deploy when Google
+-- Price per million tokens, in US dollars, per model. Editable without a deploy when OpenAI
 -- changes prices; the views below use it to estimate cost.
 create table if not exists public.ai_model_prices (
   model                 text primary key,
@@ -362,13 +362,8 @@ create table if not exists public.ai_model_prices (
 
 alter table public.ai_model_prices enable row level security;
 
--- Starting values. Published prices for gemini-3.6-flash disagree between sources ($0.75/$3.75
--- vs $1.50/$7.50); the higher figure is used so estimates err on the side of caution. Check
--- https://ai.google.dev/gemini-api/docs/pricing and update these rows.
+-- Starting values. Check https://openai.com/api/pricing and update these rows.
 insert into public.ai_model_prices (model, input_per_million, output_per_million, cached_per_million, note) values
-  ('gemini-3.6-flash',      1.50, 7.50, 0.375, 'Conservative: sources disagree. Verify on Google''s pricing page.'),
-  ('gemini-2.5-flash',      0.30, 2.50, 0.075, null),
-  ('gemini-2.5-flash-lite', 0.10, 0.40, 0.025, null),
   ('gpt-4.1-mini',           0.40, 1.60, 0.10,  'Default chat model. Verify on OpenAI''s pricing page.'),
   ('gpt-4o-mini-transcribe', 1.25, 5.00, null,  'Voice notes. Verify on OpenAI''s pricing page.')
 on conflict (model) do nothing;
